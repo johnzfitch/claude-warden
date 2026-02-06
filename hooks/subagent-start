@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# subagent-start: Budget enforcement + tracking + guidance
+set -euo pipefail
+
+SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
+STATUSLINE_STATE_DIR="$HOME/.claude/.statusline"
+SUBAGENT_COUNT_FILE="$STATUSLINE_STATE_DIR/subagent-count"
+INPUT=$(cat)
+
+AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // "unknown"')
+AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // ""')
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
+
+mkdir -p "$SUBAGENT_STATE_DIR" "$STATUSLINE_STATE_DIR"
+EPOCH=$(date +%s)
+
+# Cross-platform notification
+_notify() {
+    local urgency="$1" title="$2" body="$3"
+    if command -v notify-send &>/dev/null; then
+        notify-send -u "$urgency" "$title" "$body"
+    elif command -v osascript &>/dev/null; then
+        osascript -e "display notification \"$body\" with title \"$title\""
+    fi
+}
+
+# Cross-platform file locking (mkdir is atomic on all POSIX systems)
+_with_lock() {
+    local lockfile="$1"; shift
+    local max_wait=50  # 50 * 10ms = 500ms max
+    local i=0
+    while ! mkdir "$lockfile" 2>/dev/null; do
+        i=$((i + 1))
+        (( i >= max_wait )) && break
+        sleep 0.01
+    done
+    "$@"
+    rmdir "$lockfile" 2>/dev/null || true
+}
+
+# === BUDGET ENFORCEMENT ===
+ERROR_LOG="$HOME/.claude/hook-errors.log"
+if command -v budget-cli &>/dev/null; then
+  if ! budget-cli check 2>"$ERROR_LOG.tmp"; then
+    STATS=$(budget-cli export 2>>"$ERROR_LOG" || echo '{}')
+    UTIL=$(echo "$STATS" | jq -r '.utilization // 100')
+    CONSUMED=$(echo "$STATS" | jq -r '.consumed // 0')
+    TOTAL=$(echo "$STATS" | jq -r '.total_limit // 0')
+    cat << EOF
+{
+  "continue": false,
+  "stopReason": "Budget exhausted (${UTIL}% used). ${CONSUMED}/${TOTAL} tokens. Wait for subagents or increase CONTEXT_BUDGET_TOTAL."
+}
+EOF
+    [ -s "$ERROR_LOG.tmp" ] && echo "[$(date -Iseconds)] subagent-start: budget check failed for $AGENT_ID: $(cat "$ERROR_LOG.tmp")" >> "$ERROR_LOG"
+    rm -f "$ERROR_LOG.tmp"
+    exit 0
+  fi
+  if ! budget-cli spawn "$AGENT_ID" 2>"$ERROR_LOG.tmp"; then
+    echo "[$(date -Iseconds)] subagent-start: spawn failed for $AGENT_ID: $(cat "$ERROR_LOG.tmp")" >> "$ERROR_LOG"
+  fi
+  rm -f "$ERROR_LOG.tmp"
+
+  # Check budget thresholds for alerts
+  ALERT_FILE="$STATUSLINE_STATE_DIR/budget-alert"
+  STATS=$(budget-cli export 2>/dev/null || echo '{}')
+  UTIL=$(echo "$STATS" | jq -r '.utilization // 0' | cut -d. -f1)
+
+  if [ "$UTIL" -ge 90 ]; then
+    echo "CRITICAL|$UTIL|$(date +%s)" > "$ALERT_FILE"
+    _notify critical "Claude Budget Alert" "Budget at ${UTIL}%!" || true
+  elif [ "$UTIL" -ge 75 ]; then
+    PREV_LEVEL=$(cat "$ALERT_FILE" 2>/dev/null | cut -d'|' -f1 || echo "")
+    if [ "$PREV_LEVEL" != "WARNING" ] && [ "$PREV_LEVEL" != "CRITICAL" ]; then
+      echo "WARNING|$UTIL|$(date +%s)" > "$ALERT_FILE"
+      _notify normal "Claude Budget Warning" "Budget at ${UTIL}%" || true
+    fi
+  fi
+fi
+
+# Store state for cleanup
+echo "$EPOCH" > "$SUBAGENT_STATE_DIR/$AGENT_ID.start"
+[[ -n "$SESSION_ID" ]] && echo "$AGENT_ID" > "$SUBAGENT_STATE_DIR/session-$SESSION_ID"
+echo "AGENT_TYPE=$AGENT_TYPE" > "$SUBAGENT_STATE_DIR/$AGENT_ID"
+
+# Log subagent start to unified stats
+AGENT_STATS="$HOME/.claude/agent-stats.csv"
+if [ ! -f "$AGENT_STATS" ]; then
+  echo "timestamp,agent_id,agent_category,agent_type,duration_seconds,session_id,status" > "$AGENT_STATS"
+fi
+echo "$(date -Iseconds),$AGENT_ID,subagent,$AGENT_TYPE,0,$SESSION_ID,started" >> "$AGENT_STATS"
+
+# Track active subagent count per session (with cross-platform locking)
+if [ -n "$SESSION_ID" ]; then
+  _increment_count() {
+    PREV_COUNT=0
+    if [ -f "$SUBAGENT_COUNT_FILE" ]; then
+      IFS='|' read -r PREV_SESSION PREV_COUNT _PREV_TS < "$SUBAGENT_COUNT_FILE"
+      [ "$PREV_SESSION" != "$SESSION_ID" ] && PREV_COUNT=0
+    fi
+    [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
+    printf '%s|%s|%s\n' "$SESSION_ID" "$((PREV_COUNT + 1))" "$EPOCH" > "$SUBAGENT_COUNT_FILE"
+  }
+  _with_lock "$STATUSLINE_STATE_DIR/subagent-count.lock.d" _increment_count
+fi
+
+# Inject type-specific guidance for all agent types
+GUIDANCE=""
+case "$AGENT_TYPE" in
+  Explore)
+    GUIDANCE="Pattern: tree -> Glob -> Grep -> Read. Budget: 15. Native tools only."
+    ;;
+  Plan)
+    GUIDANCE="Pattern: structure -> patterns -> proposal. Budget: 15. Read-only."
+    ;;
+  general-purpose)
+    GUIDANCE="Pattern: explore -> plan -> execute. Budget: 20. No MCP tools."
+    ;;
+  code-reviewer|security-auditor)
+    GUIDANCE="Pattern: scope -> grep -> read. Budget: 15-20. Read-only."
+    ;;
+  deep-debugger)
+    GUIDANCE="Pattern: reproduce -> narrow -> instrument. Budget: 25."
+    ;;
+  refactor|architect|strategist|nix-expert|git-ops|test-runner)
+    GUIDANCE="Follow agent-specific workflow. Check budget in agent config."
+    ;;
+esac
+
+if [[ -n "$GUIDANCE" ]]; then
+  cat << EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "SubagentStart",
+    "additionalContext": "$GUIDANCE"
+  }
+}
+EOF
+fi
+
+exit 0

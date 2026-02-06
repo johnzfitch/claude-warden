@@ -1,0 +1,218 @@
+#!/bin/bash
+# Pre-tool-use hook: Token dump prevention, command safety, subagent enforcement
+# Consolidated: pre-tool-use + ffmpeg-silent + subagent-guard (3 hooks -> 1)
+
+set -o pipefail
+
+# Cross-platform timeout wrapper (macOS lacks timeout, has gtimeout via coreutils)
+_timeout() { command -v timeout &>/dev/null && timeout "$@" || command -v gtimeout &>/dev/null && gtimeout "$@" || { shift; "$@"; }; }
+
+INPUT=$(_timeout 5 cat 2>/dev/null) || exit 0
+[[ -z "$INPUT" ]] && exit 0
+
+suppress_ok() { echo '{"suppressOutput":true}'; exit 0; }
+
+# === SINGLE JQ CALL ===
+read -r TOOL_NAME COMMAND TRANSCRIPT_PATH SESSION_ID < <(
+    printf '%s' "$INPUT" | jq -r '[.tool_name // "", .tool_input.command // "", .transcript_path // "", .session_id // ""] | @tsv' 2>/dev/null
+) || exit 0
+
+# === NON-BASH TOOLS: fast path ===
+case "$TOOL_NAME" in
+    Write)
+        CONTENT=$(printf '%s' "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null)
+        (( ${#CONTENT} > 102400 )) && { echo "BLOCKED: Write >${#CONTENT}B (>100KB)" >&2; exit 2; }
+        suppress_ok ;;
+    Edit)
+        NEW=$(printf '%s' "$INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null)
+        (( ${#NEW} > 51200 )) && { echo "BLOCKED: Edit >${#NEW}B (>50KB)" >&2; exit 2; }
+        suppress_ok ;;
+    Glob)
+        read -r PATTERN GLOB_PATH < <(printf '%s' "$INPUT" | jq -r '[.tool_input.pattern // "", .tool_input.path // ""] | @tsv' 2>/dev/null)
+        HOME_DIR_RE='^(/home/[^/]+|~|/Users/[^/]+|/root)/?$'
+        if [[ "$PATTERN" =~ \*\* ]]; then
+            if [[ "$GLOB_PATH" =~ $HOME_DIR_RE ]] || [[ -z "$GLOB_PATH" && "$PWD" =~ $HOME_DIR_RE ]]; then
+                echo "BLOCKED: Glob ** from home dir is slow. Narrow path: ~/dev/**/file or use fd" >&2
+                exit 2
+            fi
+            if [[ "$PATTERN" =~ ^(/home/[^/]+|~|/Users/[^/]+|/root)/\*\* ]]; then
+                echo "BLOCKED: Glob ** from home dir is slow. Narrow path: ~/dev/**/file or use fd" >&2
+                exit 2
+            fi
+        fi
+        suppress_ok ;;
+    Bash) ;;  # Continue to Bash checks below
+    *) suppress_ok ;;
+esac
+
+[[ -z "$COMMAND" ]] && suppress_ok
+
+# ==========================================================================
+# BASH TOOL CHECKS (all Bash-specific logic consolidated here)
+# ==========================================================================
+
+# === SUBAGENT DETECTION (from subagent-guard) ===
+IS_SUBAGENT=false
+AGENT_TYPE=""
+AGENT_ID=""
+SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
+
+if [[ "$TRANSCRIPT_PATH" == *"/subagents/"* ]]; then
+    IS_SUBAGENT=true
+    AGENT_ID=$(basename "$TRANSCRIPT_PATH" .jsonl | sed 's/^agent-//')
+    if [[ -n "$AGENT_ID" && -f "$SUBAGENT_STATE_DIR/$AGENT_ID" ]]; then
+        source "$SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null
+    fi
+fi
+
+# === SUBAGENT STRICT MODE (from subagent-guard) ===
+if [[ "$IS_SUBAGENT" == true ]]; then
+    # Budget limits per agent type
+    declare -A BUDGET_LIMITS=(
+        ["Explore"]=15 ["Plan"]=15 ["general-purpose"]=20
+        ["code-reviewer"]=15 ["security-auditor"]=20 ["deep-debugger"]=25
+    )
+    BUDGET=${BUDGET_LIMITS[$AGENT_TYPE]:-20}
+    WARN_AT=$((BUDGET * 80 / 100))
+
+    if [[ -n "$AGENT_ID" ]]; then
+        STATUSLINE_DIR="$HOME/.claude/.statusline"
+        mkdir -p "$STATUSLINE_DIR"
+        TOOL_COUNT_FILE="$STATUSLINE_DIR/tool-count-$AGENT_ID"
+        CURRENT_COUNT=0
+        [[ -f "$TOOL_COUNT_FILE" ]] && { CURRENT_COUNT=$(cat "$TOOL_COUNT_FILE" 2>/dev/null); [[ ! "$CURRENT_COUNT" =~ ^[0-9]+$ ]] && CURRENT_COUNT=0; }
+        NEW_COUNT=$((CURRENT_COUNT + 1))
+        echo "$NEW_COUNT" > "$TOOL_COUNT_FILE"
+
+        if (( NEW_COUNT >= BUDGET )); then
+            echo "BUDGET EXCEEDED: Tool call #$NEW_COUNT >= $BUDGET limit for $AGENT_TYPE agent. Stop and report findings." >&2
+            exit 2
+        elif (( NEW_COUNT >= WARN_AT )); then
+            echo "WARNING: Tool call #$NEW_COUNT/$BUDGET for $AGENT_TYPE agent. Approaching budget limit." >&2
+        fi
+    fi
+
+    # Block inefficient patterns in subagents
+    [[ "$COMMAND" =~ (^|[[:space:]]|[;&|])[[:space:]]*find[[:space:]] ]] && { echo 'Use Glob tool instead of find' >&2; exit 2; }
+    [[ "$COMMAND" =~ xargs[[:space:]]+(grep|rg) ]] && { echo 'Use Grep tool instead of xargs grep' >&2; exit 2; }
+    [[ "$COMMAND" =~ grep.*(-r|-R|--recursive) ]] && { echo 'Use Grep tool instead of grep -r' >&2; exit 2; }
+    [[ "$COMMAND" =~ ^[[:space:]]*ls[[:space:]].*(-la|-al|-lah|-lha) ]] && { echo 'Use tree -L 2 or Glob tool instead of ls -la' >&2; exit 2; }
+    [[ "$COMMAND" =~ ^[[:space:]]*cat[[:space:]].*\* ]] && { echo 'Use Glob then Read for pattern-matched files' >&2; exit 2; }
+    if [[ "$COMMAND" =~ ^[[:space:]]*cat[[:space:]].*[[:space:]] ]] && [[ ! "$COMMAND" =~ \| ]]; then
+        ARGS=$(echo "$COMMAND" | sed 's/^[[:space:]]*cat[[:space:]]*//' | tr ' ' '\n' | { rg -v '^-' || grep -v '^-'; } | wc -l)
+        (( ARGS > 2 )) && { echo 'Use Read tool for multiple files (parallel)' >&2; exit 2; }
+    fi
+fi
+
+# === FFMPEG CHECK (from ffmpeg-silent) ===
+if [[ "$COMMAND" =~ ffmpeg ]] && [[ ! "$COMMAND" =~ -nostats ]]; then
+    echo "BLOCKED: ffmpeg commands must include -nostats -loglevel error" >&2; exit 2
+fi
+
+# === FORCE OVERRIDE ===
+[[ "$COMMAND" =~ '#'[[:space:]]*'FORCE_READ' ]] && suppress_ok
+
+# === BUILD ARTIFACTS CHECK ===
+BUILD_ARTIFACT='(\.vite/build|/dist/[^/]+\.(js|css)|\.min\.(js|css)|bundle\.(js|css))'
+IS_BUILD_ARTIFACT=false
+[[ "$COMMAND" =~ $BUILD_ARTIFACT ]] && IS_BUILD_ARTIFACT=true
+
+# === QUICK ALLOW: metadata commands ===
+[[ "$COMMAND" =~ ^[[:space:]]*(wc|stat|file|du|md5sum|sha256sum|sha1sum|cksum)[[:space:]] ]] && suppress_ok
+
+# === QUICK ALLOW: piped output (NOT for build artifacts) ===
+if [[ "$IS_BUILD_ARTIFACT" == false ]] && [[ "$COMMAND" =~ \|[[:space:]]*(head|tail|wc|grep|awk|sed)[[:space:]] ]]; then
+    suppress_ok
+fi
+
+# === GIT COMMIT ===
+if [[ "$COMMAND" =~ git[[:space:]]+commit ]] && [[ ! "$COMMAND" =~ (-q|--quiet) ]]; then
+    echo "BLOCKED: Use 'git commit -q'" >&2; exit 2
+fi
+
+# === VERBOSE COMMANDS ===
+if [[ "$COMMAND" =~ ^npm[[:space:]]+(install|i)[[:space:]] ]] && [[ ! "$COMMAND" =~ (--silent|--quiet|\||'>'|'&') ]]; then
+    echo "BLOCKED: npm install needs --silent or pipe" >&2; exit 2
+fi
+if [[ "$COMMAND" =~ ^cargo[[:space:]]+build ]] && [[ ! "$COMMAND" =~ (-q|--quiet|\||'>'|'&') ]]; then
+    echo "BLOCKED: cargo build needs -q or pipe" >&2; exit 2
+fi
+if [[ "$COMMAND" =~ ^make[[:space:]] ]] && [[ ! "$COMMAND" =~ (-s|--silent|\||'>'|'&') ]]; then
+    echo "BLOCKED: make needs -s or pipe" >&2; exit 2
+fi
+# pip/poetry
+if [[ "$COMMAND" =~ ^pip[[:space:]]+(install|download) ]] && [[ ! "$COMMAND" =~ (-q|--quiet) ]]; then
+    echo "BLOCKED: pip needs -q" >&2; exit 2
+fi
+# curl without -s
+if [[ "$COMMAND" =~ ^curl[[:space:]] ]] && [[ ! "$COMMAND" =~ (-s|--silent|-o|--output) ]]; then
+    echo "BLOCKED: curl needs -s or -o" >&2; exit 2
+fi
+# wget without -q
+if [[ "$COMMAND" =~ ^wget[[:space:]] ]] && [[ ! "$COMMAND" =~ (-q|--quiet|-O) ]]; then
+    echo "BLOCKED: wget needs -q" >&2; exit 2
+fi
+# docker build/pull (very verbose)
+if [[ "$COMMAND" =~ ^docker[[:space:]]+(build|pull) ]] && [[ ! "$COMMAND" =~ (-q|--quiet|\|) ]]; then
+    echo "BLOCKED: docker build/pull needs -q or pipe" >&2; exit 2
+fi
+
+# === BUILD ARTIFACTS (minified files) ===
+if [[ "$IS_BUILD_ARTIFACT" == true ]]; then
+    if [[ "$COMMAND" =~ grep ]] && [[ ! "$COMMAND" =~ (head[[:space:]]+-c.*\|[[:space:]]*grep|-l[[:space:]]|--files-with-matches|\|[[:space:]]*wc) ]]; then
+        echo "BLOCKED: grep on minified files reads entire file. Use: Grep tool, or: head -c 50000 file.js | grep pattern" >&2; exit 2
+    fi
+    if [[ "$COMMAND" =~ (cat|head|tail)[[:space:]] ]] && [[ ! "$COMMAND" =~ (-c[[:space:]]*[0-9]+) ]]; then
+        echo "BLOCKED: Minified files have 100KB+ lines. Use: head -c 4000" >&2; exit 2
+    fi
+fi
+
+# === RECURSIVE GREP (main agent only - subagent already blocked above) ===
+if [[ "$IS_SUBAGENT" == false ]]; then
+    if [[ "$COMMAND" =~ grep.*(-r|-R|--recursive) ]] && [[ ! "$COMMAND" =~ (-l|--files-with-matches) ]]; then
+        [[ ! "$COMMAND" =~ \|[[:space:]]*(head|tail|wc) ]] && {
+            echo "BLOCKED: grep -r scans all - use rg or grep -l" >&2; exit 2
+        }
+    fi
+fi
+
+# === RECURSIVE FIND ===
+for pat in '\.claude' '\.git' 'node_modules'; do
+    if [[ "$COMMAND" =~ find.*$pat ]] && [[ ! "$COMMAND" =~ (-maxdepth[[:space:]]+[1-3]|\|[[:space:]]*(head|tail|wc)) ]]; then
+        echo "BLOCKED: find in $pat needs -maxdepth or pipe" >&2; exit 2
+    fi
+done
+
+# === BOUNDED HEAD/TAIL ===
+if [[ "$COMMAND" =~ ^[[:space:]]*(head|tail) ]]; then
+    if [[ "$COMMAND" =~ -n[[:space:]]*([0-9]+) ]] || [[ "$COMMAND" =~ -([0-9]+) ]] || [[ "$COMMAND" =~ --lines=([0-9]+) ]]; then
+        limit="${BASH_REMATCH[1]}"
+        (( limit <= 500 )) && suppress_ok
+    fi
+fi
+
+# === LARGE FILE CHECK ===
+[[ "$COMMAND" =~ -c[[:space:]]*[0-9]+ ]] && suppress_ok
+
+if [[ "$COMMAND" =~ ^[[:space:]]*(cat|head|tail|less|more|bat|batcat)[[:space:]]+ ]]; then
+    REST="${COMMAND#*"${BASH_REMATCH[0]}"}"
+    for arg in $REST; do
+        case "$arg" in '|'|'&&'|';'|'||'|'>'|'>>'|'<'|'&') break ;; esac
+        [[ "$arg" =~ ^- ]] && continue
+        expanded="${arg/#\~/$HOME}"
+        if [[ -f "$expanded" ]]; then
+            filetype=$(file -b "$expanded" 2>/dev/null | head -c 50)
+            if [[ "$filetype" =~ ^(ELF|PE32|Mach-O|data|image|audio|video|gzip|Zip|PDF|SQLite|compiled) ]]; then
+                echo "BLOCKED: $expanded is binary ($filetype). Use file, xxd, or hexdump" >&2
+                exit 2
+            fi
+            size=$(stat -c%s "$expanded" 2>/dev/null || stat -f%z "$expanded" 2>/dev/null || echo 0)
+            if (( size > 1048576 )); then
+                echo "BLOCKED: $expanded is $((size/1024))KB (>1MB). Use head -c 4000" >&2
+                exit 2
+            fi
+        fi
+    done
+fi
+
+suppress_ok

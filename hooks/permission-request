@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# permission-request: Auto-deny dangerous commands, auto-allow safe ones
+# Output JSON: "allow", "deny", or "ask" (default)
+# NOTE: Commands in settings.json allow-list never reach this hook
+
+set -euo pipefail
+
+# Cross-platform timeout wrapper
+_timeout() { command -v timeout &>/dev/null && timeout "$@" || command -v gtimeout &>/dev/null && gtimeout "$@" || { shift; "$@"; }; }
+
+INPUT=$(_timeout 5 cat 2>/dev/null) || exit 0
+[[ -z "$INPUT" ]] && exit 0
+
+read -r TOOL_NAME COMMAND < <(
+    printf '%s' "$INPUT" | jq -r '[.tool_name // "", .tool_input.command // ""] | @tsv' 2>/dev/null
+) || exit 0
+
+# Auto-deny dangerous patterns
+case "$COMMAND" in
+    *"rm -rf /"*|*"rm -rf ~"*|*"mkfs"*|*"dd if="*|*':(){:|:&};:'*|\
+    *"> /dev/sd"*|*"chmod -R 777 /"*|*"curl"*"| bash"*|*"wget"*"| bash"*)
+        echo '{"decision": "deny", "reason": "Blocked dangerous command pattern"}'
+        exit 0 ;;
+esac
+
+# Auto-allow safe read-only commands not in settings.json allow-list
+case "$COMMAND" in
+    echo\ *|whoami|hostname|type\ *|man\ *|env|printenv|locale)
+        echo '{"decision": "allow"}'
+        exit 0 ;;
+esac
+
+# Default: ask user
+echo '{"decision": "ask"}'

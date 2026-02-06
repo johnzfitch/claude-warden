@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# stop: Handle stop events with duration tracking
+set -euo pipefail
+
+LOG_FILE="$HOME/.claude/session-log.txt"
+INPUT=$(cat)
+
+REASON=$(echo "$INPUT" | jq -r '.reason // "unknown"' 2>/dev/null || echo "unknown")
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+# Calculate session duration
+DURATION="unknown"
+SESSION_TIME_FILE="$HOME/.claude/.session-times/$SESSION_ID.start"
+if [ -n "$SESSION_ID" ] && [ -f "$SESSION_TIME_FILE" ]; then
+  START_TIME=$(cat "$SESSION_TIME_FILE")
+  END_TIME=$(date +%s)
+  DURATION_SECS=$((END_TIME - START_TIME))
+  DURATION="${DURATION_SECS}s"
+fi
+
+# Log stop event with duration
+if [[ -n "$TOOL_NAME" ]]; then
+  echo "[$TIMESTAMP] Stop: $REASON (tool: $TOOL_NAME, duration: $DURATION)" >> "$LOG_FILE"
+else
+  echo "[$TIMESTAMP] Stop: $REASON (duration: $DURATION)" >> "$LOG_FILE"
+fi
+
+exit 0

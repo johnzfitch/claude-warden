@@ -1,0 +1,58 @@
+#!/bin/bash
+# Read guard: Block reads on large/bundled files
+# Prevents agents from getting stuck on massive bundled JS files
+#
+# Input: JSON via stdin with tool_input.file_path
+# Exit 0: Allow read
+# Exit 2: Block read (message fed back to Claude)
+
+set -euo pipefail
+
+# Config
+MAX_SIZE_MB=2
+MAX_SIZE_BYTES=$((MAX_SIZE_MB * 1024 * 1024))
+
+# Read JSON from stdin
+INPUT=$(cat)
+
+# Extract file_path from tool_input
+FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+
+if [[ -z "$FILE_PATH" ]]; then
+    exit 0  # No file_path, let it through
+fi
+
+# Check for bundled/generated file patterns
+BUNDLED_PATTERNS=(
+    "node_modules/"
+    "/dist/"
+    "/build/"
+    "\.min\.js$"
+    "\.bundle\.js$"
+    "expo-downloads/"
+    "\.chunk\.js$"
+    "/vendor/"
+    "/__generated__/"
+)
+
+for pattern in "${BUNDLED_PATTERNS[@]}"; do
+    if echo "$FILE_PATH" | grep -qE "$pattern"; then
+        echo "Blocked: '$FILE_PATH' appears to be a bundled/generated file. These are not source code - search for the original source instead." >&2
+        exit 2
+    fi
+done
+
+# Check file size (if file exists)
+if [[ -f "$FILE_PATH" ]]; then
+    # Cross-platform stat (Linux || macOS)
+    FILE_SIZE=$(stat -c%s "$FILE_PATH" 2>/dev/null || stat -f%z "$FILE_PATH" 2>/dev/null || echo "0")
+
+    if [[ "$FILE_SIZE" -gt "$MAX_SIZE_BYTES" ]]; then
+        # bc may not be available everywhere; use awk as fallback
+        SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $FILE_SIZE / 1024 / 1024 }" 2>/dev/null || echo "?")
+        echo "Blocked: '$FILE_PATH' is ${SIZE_MB}MB (max ${MAX_SIZE_MB}MB). Large files are typically bundled/minified - find the original source code instead." >&2
+        exit 2
+    fi
+fi
+
+exit 0

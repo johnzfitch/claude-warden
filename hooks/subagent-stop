@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# subagent-stop: Budget reclamation + metrics + DELAYED cleanup (24hr)
+set -euo pipefail
+
+SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
+STATUSLINE_STATE_DIR="$HOME/.claude/.statusline"
+SUBAGENT_COUNT_FILE="$STATUSLINE_STATE_DIR/subagent-count"
+INPUT=$(cat)
+
+AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // "unknown"' 2>/dev/null || echo "unknown")
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+
+# Cross-platform file locking (mkdir is atomic on all POSIX systems)
+_with_lock() {
+    local lockfile="$1"; shift
+    local max_wait=50  # 50 * 10ms = 500ms max
+    local i=0
+    while ! mkdir "$lockfile" 2>/dev/null; do
+        i=$((i + 1))
+        (( i >= max_wait )) && break
+        sleep 0.01
+    done
+    "$@"
+    rmdir "$lockfile" 2>/dev/null || true
+}
+
+# === BUDGET RECLAMATION ===
+ERROR_LOG="$HOME/.claude/hook-errors.log"
+if command -v budget-cli &>/dev/null; then
+  # Before complete, estimate token usage from duration (rough: ~100 tokens/sec)
+  START_FILE="$HOME/.claude/.subagent-state/$AGENT_ID.start"
+  if [ -f "$START_FILE" ]; then
+    START_TIME=$(cat "$START_FILE")
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    if [ "$DURATION" -gt 0 ]; then
+      budget-cli update "$AGENT_ID" $((DURATION * 100)) 2>/dev/null || true
+    fi
+  fi
+
+  if ! budget-cli complete "$AGENT_ID" 2>"$ERROR_LOG.tmp"; then
+    echo "[$(date -Iseconds)] subagent-stop: complete failed for $AGENT_ID: $(cat "$ERROR_LOG.tmp")" >> "$ERROR_LOG"
+  fi
+  rm -f "$ERROR_LOG.tmp"
+fi
+
+# === METRICS COLLECTION ===
+START_FILE="$SUBAGENT_STATE_DIR/$AGENT_ID.start"
+if [ -f "$START_FILE" ]; then
+  START_TIME=$(cat "$START_FILE")
+  END_TIME=$(date +%s)
+  DURATION=$((END_TIME - START_TIME))
+  AGENT_TYPE=$(grep 'AGENT_TYPE=' "$SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null | cut -d= -f2 || echo "unknown")
+
+  # Log to unified agent-stats.csv
+  AGENT_STATS="$HOME/.claude/agent-stats.csv"
+  if [ ! -f "$AGENT_STATS" ]; then
+    echo "timestamp,agent_id,agent_category,agent_type,duration_seconds,session_id,status" > "$AGENT_STATS"
+  fi
+  echo "$(date -Iseconds),$AGENT_ID,subagent,$AGENT_TYPE,$DURATION,$SESSION_ID,completed" >> "$AGENT_STATS"
+fi
+
+# Decrement active subagent count (with cross-platform locking)
+if [ -n "$SESSION_ID" ] && [ -f "$SUBAGENT_COUNT_FILE" ]; then
+  _decrement_count() {
+    IFS='|' read -r PREV_SESSION PREV_COUNT _PREV_TS < "$SUBAGENT_COUNT_FILE"
+    if [ "$PREV_SESSION" = "$SESSION_ID" ]; then
+      [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
+      [ "$PREV_COUNT" -gt 0 ] && PREV_COUNT=$((PREV_COUNT - 1))
+      printf '%s|%s|%s\n' "$SESSION_ID" "$PREV_COUNT" "$(date +%s)" > "$SUBAGENT_COUNT_FILE"
+    fi
+  }
+  _with_lock "$STATUSLINE_STATE_DIR/subagent-count.lock.d" _decrement_count
+fi
+
+# NOTE: NO immediate cleanup - state files retained for debugging
+# Cleanup handled by cron after 24hr
+
+exit 0

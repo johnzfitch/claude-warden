@@ -1,0 +1,46 @@
+#!/bin/bash
+# tool-error: Error logging + notifications
+# Runs on PostToolUseFailure
+#
+# All output goes to stderr or log files - NOT stdout
+# (stdout could cause issues depending on how this event is processed)
+
+set -euo pipefail
+
+INPUT=$(cat)
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"')
+ERROR_MSG=$(echo "$INPUT" | jq -r '.tool_error // .error // "unknown error"')
+
+# === ERROR LOGGING (to file) ===
+{
+  echo "=== Tool Error ==="
+  echo "Time: $(date)"
+  echo "Tool: $TOOL_NAME"
+  echo "Error: $ERROR_MSG"
+  echo "PWD: $PWD"
+  echo "Git: $(git symbolic-ref --short HEAD 2>/dev/null || echo 'N/A')"
+  echo ""
+} >> "$HOME/.claude/errors.log"
+
+# Keep only last 1000 errors
+tail -1000 "$HOME/.claude/errors.log" > "$HOME/.claude/errors.log.tmp" 2>/dev/null && \
+  mv "$HOME/.claude/errors.log.tmp" "$HOME/.claude/errors.log" 2>/dev/null || true
+
+# === HINTS TO STDERR (if we want Claude to see them) ===
+case "$TOOL_NAME" in
+  Bash)
+    if echo "$ERROR_MSG" | grep -qi "permission denied"; then
+      echo "Hint: May need sudo or file permissions check" >&2
+    fi
+    if echo "$ERROR_MSG" | grep -qi "command not found"; then
+      echo "Hint: Check if command is installed or PATH is set" >&2
+    fi
+    ;;
+  Edit|Write)
+    if echo "$ERROR_MSG" | grep -qi "read-only"; then
+      echo "Hint: File may be read-only or in a protected directory" >&2
+    fi
+    ;;
+esac
+
+exit 0

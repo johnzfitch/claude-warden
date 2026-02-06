@@ -1,0 +1,101 @@
+#!/bin/bash
+# read-compress: Summarize large file reads to reduce tokens
+# Extracts structural info (imports, functions, classes) to reduce tokens
+#
+# Activates for:
+# - Read tool results
+# - Subagents: files >100 lines
+# - Main agent: files >500 lines
+
+set -o pipefail
+
+# Cross-platform timeout wrapper
+_timeout() { command -v timeout &>/dev/null && timeout "$@" || command -v gtimeout &>/dev/null && gtimeout "$@" || { shift; "$@"; }; }
+
+INPUT=$(_timeout 5 cat 2>/dev/null) || exit 0
+[[ -z "$INPUT" ]] && exit 0
+
+# Parse tool info - detect subagent via transcript_path
+read -r TOOL_NAME TRANSCRIPT_PATH < <(
+    printf '%s' "$INPUT" | jq -r '[.tool_name // "", .transcript_path // ""] | @tsv' 2>/dev/null
+) || exit 0
+
+[[ "$TOOL_NAME" != "Read" ]] && exit 0
+
+# Detect subagent via transcript_path patterns
+IS_SUBAGENT=false
+[[ "$TRANSCRIPT_PATH" == *"/subagents/"* ]] && IS_SUBAGENT=true
+[[ "$TRANSCRIPT_PATH" == *"/tmp/"* ]] && IS_SUBAGENT=true
+
+# Get file content
+CONTENT=$(printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+[[ -z "$CONTENT" ]] && exit 0
+
+# Count lines (fast)
+LINES=$(printf '%s' "$CONTENT" | wc -l)
+
+# Threshold depends on agent type: subagent=100, main=500
+if [[ "$IS_SUBAGENT" == true ]]; then
+    (( LINES <= 100 )) && exit 0
+else
+    (( LINES <= 500 )) && exit 0
+fi
+
+# Extract structural elements based on content patterns
+# Includes: imports, exports, function/class/struct definitions, interfaces, type definitions
+# Note: Be careful not to match comments (# in Python is comment, ## in Markdown is header)
+SUMMARY=$(printf '%s' "$CONTENT" | awk '
+    # Python - imports and definitions (not comments starting with just #)
+    /^import [a-zA-Z]/ { print; next }
+    /^from [a-zA-Z].* import / { print; next }
+    /^class [a-zA-Z]/ { print; next }
+    /^def [a-zA-Z]/ { print; next }
+    /^async def [a-zA-Z]/ { print; next }
+    # JavaScript/TypeScript
+    /^import .* from / { print; next }
+    /^export (default |const |let |function |class |interface |type |enum )/ { print; next }
+    /^const [a-zA-Z].*=/ { print; next }
+    /^function [a-zA-Z]/ { print; next }
+    /^async function [a-zA-Z]/ { print; next }
+    /^class [a-zA-Z]/ { print; next }
+    /^interface [a-zA-Z]/ { print; next }
+    /^type [a-zA-Z]/ { print; next }
+    # Rust
+    /^use [a-zA-Z]/ { print; next }
+    /^pub (fn |struct |enum |trait |mod |type |use |const )/ { print; next }
+    /^fn [a-zA-Z]/ { print; next }
+    /^impl [a-zA-Z]/ { print; next }
+    /^struct [a-zA-Z]/ { print; next }
+    /^enum [a-zA-Z]/ { print; next }
+    /^trait [a-zA-Z]/ { print; next }
+    /^mod [a-zA-Z]/ { print; next }
+    # Go
+    /^package [a-zA-Z]/ { print; next }
+    /^import \(/ { print; next }
+    /^func [a-zA-Z\(]/ { print; next }
+    /^type [a-zA-Z]/ { print; next }
+    # PHP
+    /^<\?php/ { print; next }
+    /^namespace [a-zA-Z]/ { print; next }
+    /^class [a-zA-Z]/ { print; next }
+    /^function [a-zA-Z]/ { print; next }
+    /^interface [a-zA-Z]/ { print; next }
+    /^trait [a-zA-Z]/ { print; next }
+    # Markdown headers (## and deeper, not single #)
+    /^#{2,4} / { print; next }
+    # Indented definitions (methods in classes)
+    /^[[:space:]]+(pub fn |async fn |def |async def |public function |private function |protected function )/ { print }
+    /^[[:space:]]+(public |private |protected )[a-zA-Z].*\(/ { print }
+' | head -200)
+
+SUMMARY_LINES=$(printf '%s' "$SUMMARY" | wc -l)
+
+# Only output modified content if we actually compressed
+(( SUMMARY_LINES >= LINES )) && exit 0
+
+# Build summary output
+jq -n --arg text "$SUMMARY
+
+[Structure extracted: $LINES lines -> $SUMMARY_LINES signatures]
+[Use Read with offset/limit for implementation details]" \
+    '{"modifyOutput":$text}'
