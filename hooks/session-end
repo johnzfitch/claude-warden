@@ -15,6 +15,8 @@ INPUT=$(cat)
 # Extract session info
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"' 2>/dev/null || echo "unknown")
 REASON=$(echo "$INPUT" | jq -r '.reason // ""' 2>/dev/null || echo "")
+# Sanitize: only safe characters (used in file paths)
+[[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && SESSION_ID="unknown"
 
 # Calculate terminal agent duration
 SESSION_START_FILE="$HOME/.claude/.session-times/$SESSION_ID.start"

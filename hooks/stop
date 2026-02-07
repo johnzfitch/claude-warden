@@ -8,6 +8,8 @@ INPUT=$(cat)
 REASON=$(echo "$INPUT" | jq -r '.reason // "unknown"' 2>/dev/null || echo "unknown")
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+# Sanitize: only safe characters (used in file paths)
+[[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && SESSION_ID=""
 
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 

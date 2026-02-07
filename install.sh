@@ -72,6 +72,16 @@ for tool in rg fd; do
     fi
 done
 
+# === Security: verify ~/.claude/ ownership ===
+if [[ -d "$CLAUDE_DIR" ]]; then
+    CLAUDE_OWNER=$(stat -c %u "$CLAUDE_DIR" 2>/dev/null || stat -f %u "$CLAUDE_DIR" 2>/dev/null || echo "")
+    if [[ -n "$CLAUDE_OWNER" && "$CLAUDE_OWNER" != "$(id -u)" ]]; then
+        error "$CLAUDE_DIR is owned by uid $CLAUDE_OWNER, not current user ($(id -u))."
+        error "This could indicate tampering. Aborting."
+        exit 1
+    fi
+fi
+
 # === Platform detection ===
 PLATFORM="unknown"
 case "$(uname -s)" in

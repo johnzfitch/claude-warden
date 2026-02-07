@@ -60,6 +60,10 @@ SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
 if [[ "$TRANSCRIPT_PATH" == *"/subagents/"* ]]; then
     IS_SUBAGENT=true
     AGENT_ID=$(basename "$TRANSCRIPT_PATH" .jsonl | sed 's/^agent-//')
+    # Sanitize AGENT_ID: only allow safe characters (prevent path traversal via source)
+    if [[ ! "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        AGENT_ID=""
+    fi
     if [[ -n "$AGENT_ID" && -f "$SUBAGENT_STATE_DIR/$AGENT_ID" ]]; then
         source "$SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null
     fi

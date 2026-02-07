@@ -10,18 +10,31 @@ INPUT=$(cat)
 AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // "unknown"' 2>/dev/null || echo "unknown")
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
 
+# Sanitize IDs: only allow safe characters (prevent path traversal in file ops)
+[[ ! "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && AGENT_ID="unknown"
+[[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && SESSION_ID=""
+
 # Cross-platform file locking (mkdir is atomic on all POSIX systems)
 _with_lock() {
     local lockfile="$1"; shift
     local max_wait=50  # 50 * 10ms = 500ms max
     local i=0
+    # Break stale locks older than 5 seconds
+    if [[ -d "$lockfile" ]]; then
+        local lock_age
+        lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile" 2>/dev/null || stat -f %m "$lockfile" 2>/dev/null || echo 0) ))
+        (( lock_age > 5 )) && rmdir "$lockfile" 2>/dev/null || true
+    fi
     while ! mkdir "$lockfile" 2>/dev/null; do
         i=$((i + 1))
         (( i >= max_wait )) && break
         sleep 0.01
     done
-    "$@"
+    # Ensure lock is cleaned up even if protected operation fails
+    local _lock_rc=0
+    "$@" || _lock_rc=$?
     rmdir "$lockfile" 2>/dev/null || true
+    return $_lock_rc
 }
 
 # === BUDGET RECLAMATION ===

@@ -16,10 +16,28 @@ read -r TOOL_NAME COMMAND < <(
 ) || exit 0
 
 # Auto-deny dangerous patterns
-case "$COMMAND" in
-    *"rm -rf /"*|*"rm -rf ~"*|*"mkfs"*|*"dd if="*|*':(){:|:&};:'*|\
-    *"> /dev/sd"*|*"chmod -R 777 /"*|*"curl"*"| bash"*|*"wget"*"| bash"*)
-        echo '{"decision": "deny", "reason": "Blocked dangerous command pattern"}'
+# Normalize whitespace for matching (collapse runs, trim)
+NORM_CMD=$(echo "$COMMAND" | tr -s '[:space:]' ' ')
+
+case "$NORM_CMD" in
+    # Destructive filesystem operations
+    *"rm -rf /"*|*"rm -fr /"*|*"rm -rf ~"*|*"rm -fr ~"*|\
+    *"rm -rf --no-preserve-root"*|\
+    *"mkfs"*|*"dd if="*|\
+    *"> /dev/sd"*|*"> /dev/nvme"*|\
+    *"chmod -R 777 /"*|*"chown -R"*"/"*)
+        echo '{"decision": "deny", "reason": "Blocked destructive command"}'
+        exit 0 ;;
+    # Fork bombs
+    *':(){:|:&};:'*|*':(){ :|:&};:'*)
+        echo '{"decision": "deny", "reason": "Blocked fork bomb"}'
+        exit 0 ;;
+    # Remote code execution via pipe
+    *"curl"*"|"*"bash"*|*"curl"*"|"*"sh"*|\
+    *"wget"*"|"*"bash"*|*"wget"*"|"*"sh"*|\
+    *"bash <(curl"*|*"sh <(curl"*|\
+    *"bash <(wget"*|*"sh <(wget"*)
+        echo '{"decision": "deny", "reason": "Blocked remote code execution"}'
         exit 0 ;;
 esac
 
