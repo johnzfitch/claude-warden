@@ -1,3 +1,7 @@
 *.bak
 *.bak.*
 *.tmp
+
+# Internal security reports
+*-threat-model.md
+*-security-audit.md
