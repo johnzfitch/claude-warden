@@ -2,6 +2,16 @@
 
 Token-saving hooks for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Prevents verbose output, blocks binary reads, enforces subagent budgets, truncates large outputs, and provides a rich statusline -- saving thousands of tokens per session.
 
+Pair with [claude-usage-helper](https://github.com/johnzfitch/claude-usage-helper) for budget tracking, cost telemetry, and session analytics. Warden enforces; usage-helper accounts.
+
+## Architecture
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/architecture-light.png">
+  <img alt="Architecture: claude-warden (enforcement) feeds into claude-usage-helper (accounting) in a closed loop" src="assets/architecture-dark.png" width="800">
+</picture>
+
 ## What it does
 
 claude-warden installs a set of shell hooks that intercept Claude Code tool calls at every stage of execution. Each hook enforces token-efficient patterns and blocks common waste.
@@ -36,12 +46,12 @@ PreToolUse ──> [tool executes] ──> PostToolUse
 
 - **Required**: `jq` (JSON processing)
 - **Recommended**: `rg` (ripgrep), `fd` (fd-find)
-- **Optional**: `budget-cli` (token budget tracking)
+- **Optional**: `budget-cli` (token budget tracking -- from [claude-usage-helper](https://github.com/johnzfitch/claude-usage-helper))
 
 ## Install
 
 ```bash
-git clone https://github.com/your-username/claude-warden.git ~/dev/claude-warden
+git clone https://github.com/johnzfitch/claude-warden.git ~/dev/claude-warden
 cd ~/dev/claude-warden
 ./install.sh
 ```
@@ -152,6 +162,12 @@ Claude Code supports [hooks](https://docs.anthropic.com/en/docs/claude-code/hook
 - **Output JSON**: Modify tool output (`{"modifyOutput":"..."}`) or suppress it
 
 claude-warden hooks are pure bash with a single dependency (`jq`). They run in milliseconds and add negligible latency to tool calls. All paths use `$HOME` for portability -- no hardcoded user directories.
+
+## Related
+
+| Project | What it does |
+|---|---|
+| [claude-usage-helper](https://github.com/johnzfitch/claude-usage-helper) | Budget tracking, context compression, cost telemetry. Provides `budget-cli` that warden hooks call for budget enforcement. |
 
 ## License
 
