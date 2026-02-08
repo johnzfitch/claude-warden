@@ -13,10 +13,11 @@ MAX_SIZE_MB=2
 MAX_SIZE_BYTES=$((MAX_SIZE_MB * 1024 * 1024))
 
 # Read JSON from stdin
-INPUT=$(cat)
+read -r -t 5 -d '' INPUT || true
+[[ -z "$INPUT" ]] && exit 0
 
 # Extract file_path from tool_input
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty')
 
 if [[ -z "$FILE_PATH" ]]; then
     exit 0  # No file_path, let it through
@@ -33,6 +34,14 @@ BUNDLED_PATTERNS=(
     "\.chunk\.js$"
     "/vendor/"
     "/__generated__/"
+    "package-lock\.json$"
+    "yarn\.lock$"
+    "pnpm-lock\.yaml$"
+    "Cargo\.lock$"
+    "poetry\.lock$"
+    "composer\.lock$"
+    "Gemfile\.lock$"
+    "go\.sum$"
 )
 
 for pattern in "${BUNDLED_PATTERNS[@]}"; do

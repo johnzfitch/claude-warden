@@ -9,15 +9,12 @@
 
 set -o pipefail
 
-# Cross-platform timeout wrapper
-_timeout() { command -v timeout &>/dev/null && timeout "$@" || command -v gtimeout &>/dev/null && gtimeout "$@" || { shift; "$@"; }; }
-
-INPUT=$(_timeout 5 cat 2>/dev/null) || exit 0
+read -r -t 5 -d '' INPUT || true
 [[ -z "$INPUT" ]] && exit 0
 
-# Parse tool info - detect subagent via transcript_path
-read -r TOOL_NAME TRANSCRIPT_PATH < <(
-    printf '%s' "$INPUT" | jq -r '[.tool_name // "", .transcript_path // ""] | @tsv' 2>/dev/null
+# Parse tool info - detect subagent via transcript_path, get file path for type detection
+IFS=$'\t' read -r TOOL_NAME TRANSCRIPT_PATH FILE_PATH < <(
+    printf '%s' "$INPUT" | jq -r '[.tool_name // "", .transcript_path // "", .tool_input.file_path // ""] | @tsv' 2>/dev/null
 ) || exit 0
 
 [[ "$TOOL_NAME" != "Read" ]] && exit 0
@@ -34,14 +31,76 @@ CONTENT=$(printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>
 # Count lines (fast)
 LINES=$(printf '%s' "$CONTENT" | wc -l)
 
-# Threshold depends on agent type: subagent=100, main=500
+# Detect agent type for threshold adjustment
+AGENT_TYPE=""
+if [[ "$IS_SUBAGENT" == true && "$TRANSCRIPT_PATH" == *"/subagents/"* ]]; then
+    AGENT_ID=$(basename "$TRANSCRIPT_PATH" .jsonl | sed 's/^agent-//')
+    [[ "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]] || AGENT_ID=""
+    SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
+    if [[ -n "$AGENT_ID" && -f "$SUBAGENT_STATE_DIR/$AGENT_ID" ]]; then
+        AGENT_TYPE=$(grep 'AGENT_TYPE=' "$SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null | cut -d= -f2)
+    fi
+fi
+
+# Threshold depends on agent type: code-reviewer/security-auditor=300, subagent=100, main=500
 if [[ "$IS_SUBAGENT" == true ]]; then
-    (( LINES <= 100 )) && exit 0
+    if [[ "$AGENT_TYPE" == "code-reviewer" || "$AGENT_TYPE" == "security-auditor" ]]; then
+        (( LINES <= 300 )) && exit 0
+    else
+        (( LINES <= 100 )) && exit 0
+    fi
 else
     (( LINES <= 500 )) && exit 0
 fi
 
-# Extract structural elements based on content patterns
+# Config/data file extraction (by extension, before code extraction)
+FILE_EXT="${FILE_PATH##*.}"
+case "$FILE_EXT" in
+    json)
+        # Extract top-level and one-deep keys
+        SUMMARY=$(printf '%s' "$CONTENT" | awk '
+            /^[[:space:]]{0,4}"[^"]+":/ { print }
+        ' | head -150)
+        ;;
+    yml|yaml)
+        # Extract top-level keys and document markers
+        SUMMARY=$(printf '%s' "$CONTENT" | awk '
+            /^---/ { print; next }
+            /^[a-zA-Z_][a-zA-Z0-9_-]*:/ { print; next }
+            /^- [a-zA-Z]/ { print }
+        ' | head -150)
+        ;;
+    toml|cfg|ini)
+        # Extract section headers and root-level keys
+        SUMMARY=$(printf '%s' "$CONTENT" | awk '
+            /^\[/ { print; next }
+            /^[a-zA-Z_][a-zA-Z0-9_-]* *=/ { print }
+        ' | head -150)
+        ;;
+    xml|svg|html)
+        # Extract opening tags with attributes
+        SUMMARY=$(printf '%s' "$CONTENT" | awk '
+            /^[[:space:]]*<[a-zA-Z][^>]*>/ { print }
+        ' | head -100)
+        ;;
+    *)
+        SUMMARY=""
+        ;;
+esac
+
+# If config extraction produced results, use them
+if [[ -n "$SUMMARY" ]]; then
+    SUMMARY_LINES=$(printf '%s' "$SUMMARY" | wc -l)
+    (( SUMMARY_LINES >= LINES )) && exit 0
+    jq -n --arg text "$SUMMARY
+
+[Structure extracted: $LINES lines -> $SUMMARY_LINES keys/sections]
+[Use Read with offset/limit for full content]" \
+        '{"modifyOutput":$text}'
+    exit 0
+fi
+
+# Extract structural elements from code files
 # Includes: imports, exports, function/class/struct definitions, interfaces, type definitions
 # Note: Be careful not to match comments (# in Python is comment, ## in Markdown is header)
 SUMMARY=$(printf '%s' "$CONTENT" | awk '

@@ -5,3 +5,7 @@
 # Internal security reports
 *-threat-model.md
 *-security-audit.md
+
+# Demo artifacts
+demo/claude-warden-demo.mp4
+demo/mock-inputs/pre-tool-use-write-large.json

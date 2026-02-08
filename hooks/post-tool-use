@@ -6,8 +6,31 @@ set -o pipefail
 
 suppress_ok() { echo '{"suppressOutput":true}'; exit 0; }
 
-# Cross-platform timeout wrapper
-_timeout() { command -v timeout &>/dev/null && timeout "$@" || command -v gtimeout &>/dev/null && gtimeout "$@" || { shift; "$@"; }; }
+# Warden TUI: emit JSONL event for post-tool-use accounting
+_emit_event() {
+  local etype="$1" orig_bytes="$2" final_bytes="$3" rule="${4:-}"
+  local saved=$(( (orig_bytes - final_bytes) / 4 ))
+  (( saved < 0 )) && saved=0
+  local now_s; now_s=$(date +%s)
+  local start_s; start_s=$(cut -d. -f1 < "$HOME/.claude/.statusline/.session_start" 2>/dev/null || echo "$now_s")
+  local ts=$((now_s - start_s))
+  local rule_field=""
+  [[ -n "$rule" ]] && rule_field="$(printf ',"rule":"%s"' "$rule")"
+  local cmd_safe="${COMMAND:0:200}"
+  cmd_safe="${cmd_safe//$'\n'/ }"
+  cmd_safe="${cmd_safe//\\/\\\\}"
+  cmd_safe="${cmd_safe//\"/\\\"}"
+  # Scrub potential secrets from logged commands
+  if [[ "$cmd_safe" =~ (-H|--header|Bearer|Authorization|token|_KEY=|_SECRET=|_TOKEN=|PASSWORD=|CREDENTIAL) ]]; then
+    cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
+      's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
+       s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/g;
+       s/([A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[A-Z_]*)=[^ ]+/\1=[REDACTED]/g')
+  fi
+  printf '{"timestamp":%d,"event_type":"%s","tool":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
+    "$ts" "$etype" "$TOOL_NAME" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
+    >> "$HOME/.claude/.statusline/events.jsonl" 2>/dev/null
+}
 
 # Cross-platform notification
 _notify() {
@@ -19,7 +42,7 @@ _notify() {
     fi
 }
 
-INPUT=$(_timeout 5 cat 2>/dev/null) || exit 0
+read -r -t 5 -d '' INPUT || true
 [[ -z "$INPUT" ]] && exit 0
 
 # Single jq call: extract all needed fields
@@ -28,7 +51,7 @@ read -r TOOL_NAME SESSION_ID OUTPUT_SIZE COMMAND < <(
         .tool_name // "",
         .session_id // "",
         (.tool_response.content[0].text // "" | length),
-        .tool_input.command // ""
+        (.tool_input.command // .tool_input.file_path // .tool_input.pattern // .tool_input.prompt // "")[0:200]
     ] | @tsv' 2>/dev/null
 ) || exit 0
 
@@ -83,32 +106,38 @@ if [[ -n "$SESSION_ID" ]]; then
     fi
 fi
 
-# Only process Bash outputs for truncation/suppression
-[[ "$TOOL_NAME" != "Bash" ]] && suppress_ok
+# Truncate large outputs from Bash, Grep, Glob, Task (Read handled by read-compress)
+case "$TOOL_NAME" in
+    Bash|Grep|Glob|Task) ;;
+    *) _emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; suppress_ok ;;
+esac
 
 # Fast path: small outputs
-(( OUTPUT_SIZE <= 20480 )) && suppress_ok
+(( OUTPUT_SIZE <= 20480 )) && { _emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; suppress_ok; }
 
 # Need actual output content for truncation - extract only when needed
 OUTPUT=$(printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
 OUTPUT_SIZE=${#OUTPUT}
 
 # Re-check after actual extraction (jq length vs bash length may differ)
-(( OUTPUT_SIZE <= 20480 )) && suppress_ok
+(( OUTPUT_SIZE <= 20480 )) && { _emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; suppress_ok; }
 
-# Binary check
-if [[ "$OUTPUT" == *$'\x00'* ]]; then
+# Binary check: pipe through grep since bash variables can't hold null bytes
+if printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | grep -qP '\x00'; then
+    _emit_event "truncated" "$OUTPUT_SIZE" 50 "binary_output"
     jq -n --arg text "[Binary output: $((OUTPUT_SIZE/1024))KB. Use 'file' or redirect.]" '{"modifyOutput":$text}'
     exit 0
 fi
 
 # >500KB: suppress entirely
 if (( OUTPUT_SIZE > 524288 )); then
+    _emit_event "truncated" "$OUTPUT_SIZE" 60 "output_suppressed"
     jq -n --arg text "[Output too large: $((OUTPUT_SIZE/1048576))MB. Use | head or redirect.]" '{"modifyOutput":$text}'
     exit 0
 fi
 
 # >20KB: truncate to 10KB (8KB head + 2KB tail)
+_emit_event "truncated" "$OUTPUT_SIZE" 10000 "output_truncated"
 HEAD="${OUTPUT:0:8000}"
 TAIL="${OUTPUT: -2000}"
 jq -n --arg text "${HEAD}

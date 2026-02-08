@@ -5,11 +5,12 @@ set -euo pipefail
 SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
 STATUSLINE_STATE_DIR="$HOME/.claude/.statusline"
 SUBAGENT_COUNT_FILE="$STATUSLINE_STATE_DIR/subagent-count"
-INPUT=$(cat)
+read -r -t 5 -d '' INPUT || true
+[[ -z "$INPUT" ]] && exit 0
 
-AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // "unknown"')
-AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // ""')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
+IFS=$'\t' read -r AGENT_ID AGENT_TYPE SESSION_ID < <(
+    printf '%s' "$INPUT" | jq -r '[.agent_id // "unknown", .agent_type // "", .session_id // ""] | @tsv' 2>/dev/null
+) || exit 0
 
 # Sanitize IDs: only allow safe characters (prevent path traversal in file ops)
 [[ ! "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && AGENT_ID="unknown"
@@ -94,7 +95,7 @@ fi
 # Store state for cleanup
 echo "$EPOCH" > "$SUBAGENT_STATE_DIR/$AGENT_ID.start"
 [[ -n "$SESSION_ID" ]] && echo "$AGENT_ID" > "$SUBAGENT_STATE_DIR/session-$SESSION_ID"
-echo "AGENT_TYPE=$AGENT_TYPE" > "$SUBAGENT_STATE_DIR/$AGENT_ID"
+printf 'AGENT_TYPE=%s\nSESSION_ID=%s\n' "$AGENT_TYPE" "$SESSION_ID" > "$SUBAGENT_STATE_DIR/$AGENT_ID"
 
 # Log subagent start to unified stats
 AGENT_STATS="$HOME/.claude/agent-stats.csv"

@@ -5,10 +5,7 @@
 
 set -euo pipefail
 
-# Cross-platform timeout wrapper
-_timeout() { command -v timeout &>/dev/null && timeout "$@" || command -v gtimeout &>/dev/null && gtimeout "$@" || { shift; "$@"; }; }
-
-INPUT=$(_timeout 5 cat 2>/dev/null) || exit 0
+read -r -t 5 -d '' INPUT || true
 [[ -z "$INPUT" ]] && exit 0
 
 read -r TOOL_NAME COMMAND < <(

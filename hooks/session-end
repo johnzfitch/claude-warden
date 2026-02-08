@@ -10,11 +10,13 @@ SESSION_BUDGET_DIR="$HOME/.claude/.session-budgets"
 SESSION_COST_LOG="$HOME/.claude/.monitoring/session-costs.csv"
 
 # Read input
-INPUT=$(cat)
+read -r -t 5 -d '' INPUT || true
+[[ -z "$INPUT" ]] && exit 0
 
 # Extract session info
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"' 2>/dev/null || echo "unknown")
-REASON=$(echo "$INPUT" | jq -r '.reason // ""' 2>/dev/null || echo "")
+IFS=$'\t' read -r SESSION_ID REASON < <(
+    printf '%s' "$INPUT" | jq -r '[.session_id // "unknown", .reason // ""] | @tsv' 2>/dev/null
+) || exit 0
 # Sanitize: only safe characters (used in file paths)
 [[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && SESSION_ID="unknown"
 
@@ -58,6 +60,32 @@ else
 fi
 
 END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+
+# === GHOST SUBAGENT REAPER ===
+# Force-complete orphaned subagents from THIS session only (safe with concurrent sessions)
+SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
+if [[ -d "$SUBAGENT_STATE_DIR" ]] && command -v budget-cli &>/dev/null; then
+    for state_file in "$SUBAGENT_STATE_DIR"/*; do
+        [ -f "$state_file" ] && [ ! -L "$state_file" ] || continue
+        [[ "$(basename "$state_file")" == *.* ]] && continue  # skip .start and session- files
+        grep -q "SESSION_ID=$SESSION_ID" "$state_file" 2>/dev/null || continue
+        ORPHAN_ID=$(basename "$state_file")
+        budget-cli complete "$ORPHAN_ID" 2>/dev/null || true
+        rm -f "$state_file" "$state_file.start"
+    done
+fi
+
+# === STATE FILE CLEANUP ===
+# Purge stale state files older than 24 hours
+if [[ -d "$STATUSLINE_STATE_DIR" ]]; then
+    find "$STATUSLINE_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mmin +1440 -delete 2>/dev/null || true
+    find "$STATUSLINE_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mmin +1440 -delete 2>/dev/null || true
+    find "$STATUSLINE_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mmin +1440 -delete 2>/dev/null || true
+fi
+if [[ -d "$SUBAGENT_STATE_DIR" ]]; then
+    find "$SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.start' -mmin +1440 -delete 2>/dev/null || true
+    find "$SUBAGENT_STATE_DIR" -maxdepth 1 -type f ! -name '.*' -mmin +1440 -delete 2>/dev/null || true
+fi
 
 # Log session end
 echo "[$END_TIME] Session ended: $SESSION_ID (duration: ${DURATION_MIN}m, dir: $PWD, reason: $REASON)" >> "$LOG_FILE"

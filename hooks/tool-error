@@ -7,9 +7,12 @@
 
 set -euo pipefail
 
-INPUT=$(cat)
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"')
-ERROR_MSG=$(echo "$INPUT" | jq -r '.tool_error // .error // "unknown error"')
+read -r -t 5 -d '' INPUT || true
+[[ -z "$INPUT" ]] && exit 0
+
+IFS=$'\t' read -r TOOL_NAME ERROR_MSG < <(
+    printf '%s' "$INPUT" | jq -r '[.tool_name // "unknown", (.tool_error // .error // "unknown error")] | @tsv' 2>/dev/null
+) || exit 0
 
 # === ERROR LOGGING (to file) ===
 {

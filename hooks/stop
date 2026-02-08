@@ -3,11 +3,12 @@
 set -euo pipefail
 
 LOG_FILE="$HOME/.claude/session-log.txt"
-INPUT=$(cat)
+read -r -t 5 -d '' INPUT || true
+[[ -z "$INPUT" ]] && exit 0
 
-REASON=$(echo "$INPUT" | jq -r '.reason // "unknown"' 2>/dev/null || echo "unknown")
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+IFS=$'\t' read -r REASON TOOL_NAME SESSION_ID < <(
+    printf '%s' "$INPUT" | jq -r '[.reason // "unknown", .tool_name // "", .session_id // ""] | @tsv' 2>/dev/null
+) || exit 0
 # Sanitize: only safe characters (used in file paths)
 [[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && SESSION_ID=""
 
