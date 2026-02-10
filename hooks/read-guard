@@ -8,6 +8,20 @@
 
 set -euo pipefail
 
+# Emit JSONL event for clawback accounting
+_emit_block() {
+    local rule="$1" tokens="$2"
+    local now_s; now_s=$(date +%s)
+    local start_s; start_s=$(cut -d. -f1 < "$HOME/.claude/.statusline/.session_start" 2>/dev/null || echo "$now_s")
+    local ts=$((now_s - start_s))
+    local cmd_safe="${FILE_PATH:0:200}"
+    cmd_safe="${cmd_safe//\\/\\\\}"
+    cmd_safe="${cmd_safe//\"/\\\"}"
+    printf '{"timestamp":%d,"event_type":"blocked","tool":"Read","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
+        "$ts" "$cmd_safe" "$rule" "$tokens" \
+        >> "$HOME/.claude/.statusline/events.jsonl" 2>/dev/null
+}
+
 # Config
 MAX_SIZE_MB=2
 MAX_SIZE_BYTES=$((MAX_SIZE_MB * 1024 * 1024))
@@ -46,6 +60,7 @@ BUNDLED_PATTERNS=(
 
 for pattern in "${BUNDLED_PATTERNS[@]}"; do
     if echo "$FILE_PATH" | grep -qE "$pattern"; then
+        _emit_block "read_bundled" 8000
         echo "Blocked: '$FILE_PATH' appears to be a bundled/generated file. These are not source code - search for the original source instead." >&2
         exit 2
     fi
@@ -59,6 +74,7 @@ if [[ -f "$FILE_PATH" ]]; then
     if [[ "$FILE_SIZE" -gt "$MAX_SIZE_BYTES" ]]; then
         # bc may not be available everywhere; use awk as fallback
         SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $FILE_SIZE / 1024 / 1024 }" 2>/dev/null || echo "?")
+        _emit_block "read_oversize" 25000
         echo "Blocked: '$FILE_PATH' is ${SIZE_MB}MB (max ${MAX_SIZE_MB}MB). Large files are typically bundled/minified - find the original source code instead." >&2
         exit 2
     fi

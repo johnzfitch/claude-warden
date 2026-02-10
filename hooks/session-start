@@ -21,6 +21,9 @@ if [ -n "$SESSION_ID" ]; then
   # Snapshot budget at session start (if budget-cli is installed)
   if command -v budget-cli &>/dev/null; then
     budget-cli export > "$SESSION_BUDGET_DIR/$SESSION_ID.start.json" 2>/dev/null || true
+    # Refresh Prometheus textfile metrics
+    BUDGET_EXPORTER="$HOME/dev/claude-code-monitoring-guide/budget-exporter.sh"
+    [[ -x "$BUDGET_EXPORTER" ]] && "$BUDGET_EXPORTER" 2>/dev/null &
   fi
 
   # Initialize unified agent stats CSV with header if needed

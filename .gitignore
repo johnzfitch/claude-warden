@@ -1,9 +1,15 @@
 *.bak
 *.bak.*
 *.tmp
+.venv/
+
+# Internal design docs
+DESIGN-*.md
 
 # Internal security reports
 *-threat-model.md
+CLAUDE.md
+info.md
 *-security-audit.md
 
 # Demo artifacts

@@ -209,13 +209,22 @@ if [ -n "$SESSION_ID" ] && [ -n "$PREV_SESSION" ] && [ "$SESSION_ID" != "$PREV_S
 fi
 
 PREV_TOTAL=$((PREV_TOTAL_IN + PREV_TOTAL_OUT))
-if [ "$PREV_TOTAL" -gt 0 ] && [ "$TOTAL" -lt "$PREV_TOTAL" ]; then
+SAME_SESSION=0
+if [ -n "$SESSION_ID" ] && [ "$PREV_SESSION" = "$SESSION_ID" ]; then
+    SAME_SESSION=1
+fi
+
+# Token reset and context clear only valid within the same session.
+# The state file is shared across concurrent sessions — without this
+# guard, a new session with lower tokens/context falsely triggers
+# resets when it reads another session's higher values.
+if [ "$SAME_SESSION" -eq 1 ] && [ "$PREV_TOTAL" -gt 0 ] && [ "$TOTAL" -lt "$PREV_TOTAL" ]; then
     RESET_NOW=1
     RESET_REASON="reset"
 fi
 
 CTX_CLEAR_NOW=0
-if [ "$PREV_CTX" -gt 0 ] && [ "$CTX_USED" -lt "$PREV_CTX" ]; then
+if [ "$SAME_SESSION" -eq 1 ] && [ "$PREV_CTX" -gt 0 ] && [ "$CTX_USED" -lt "$PREV_CTX" ]; then
     DELTA=$((PREV_CTX - CTX_USED))
     if [ "$DELTA" -ge 2000 ]; then
         RESET_NOW=1
@@ -232,38 +241,45 @@ fi
 CLR_COUNT=0
 CLR_CTX_LOST=0
 CLR_COST_AT_CLEAR="0"
-CLR_FILE="$STATE_DIR/clears-$SESSION_ID"
 
 # Reset clears on session change
 if [ -n "$SESSION_ID" ] && [ -n "$PREV_SESSION" ] && [ "$SESSION_ID" != "$PREV_SESSION" ]; then
     rm -f "$STATE_DIR/clears-$PREV_SESSION" "$STATE_DIR/peak-$PREV_SESSION"
 fi
 
-if [ -n "$SESSION_ID" ] && [ -f "$CLR_FILE" ]; then
-    IFS='|' read -r CLR_COUNT CLR_CTX_LOST CLR_COST_AT_CLEAR < "$CLR_FILE" 2>/dev/null
-    CLR_COUNT=$(num_or_zero "$CLR_COUNT")
-    CLR_CTX_LOST=$(num_or_zero "$CLR_CTX_LOST")
-    CLR_COST_AT_CLEAR="${CLR_COST_AT_CLEAR:-0}"
-fi
+if [ -n "$SESSION_ID" ]; then
+    CLR_FILE="$STATE_DIR/clears-$SESSION_ID"
+    if [ -f "$CLR_FILE" ]; then
+        IFS='|' read -r CLR_COUNT CLR_CTX_LOST CLR_COST_AT_CLEAR < "$CLR_FILE" 2>/dev/null
+        CLR_COUNT=$(num_or_zero "$CLR_COUNT")
+        CLR_CTX_LOST=$(num_or_zero "$CLR_CTX_LOST")
+        CLR_COST_AT_CLEAR="${CLR_COST_AT_CLEAR:-0}"
+    fi
 
-if [ "$CTX_CLEAR_NOW" -eq 1 ] && [ -n "$SESSION_ID" ]; then
-    CLR_COUNT=$((CLR_COUNT + 1))
-    CLR_CTX_LOST=$((CLR_CTX_LOST + DELTA))
-    CLR_COST_AT_CLEAR="$COST_USD"
-    printf '%s|%s|%s\n' "$CLR_COUNT" "$CLR_CTX_LOST" "$CLR_COST_AT_CLEAR" > "$CLR_FILE"
+    if [ "$CTX_CLEAR_NOW" -eq 1 ]; then
+        CLR_COUNT=$((CLR_COUNT + 1))
+        CLR_CTX_LOST=$((CLR_CTX_LOST + DELTA))
+        CLR_COST_AT_CLEAR="$COST_USD"
+        printf '%s|%s|%s\n' "$CLR_COUNT" "$CLR_CTX_LOST" "$CLR_COST_AT_CLEAR" > "$CLR_FILE.tmp.$$" && mv "$CLR_FILE.tmp.$$" "$CLR_FILE"
+    fi
 fi
 
 printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
     "$SESSION_ID" "$TOTAL_INPUT" "$TOTAL_OUTPUT" "$CTX_USED" "$CONTEXT_SIZE" \
     "$COST_USD" "$DURATION_MS" "$API_DURATION_MS" "$LINES_ADDED" "$LINES_REMOVED" \
-    "$CACHE_READ" "$CACHE_CREATE" "$MODEL" "$RESET_TS" "$RESET_REASON" > "$STATE_FILE"
+    "$CACHE_READ" "$CACHE_CREATE" "$MODEL" "$RESET_TS" "$RESET_REASON" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
 
 RESET_LABEL=""
 RESET_WINDOW=45
 SHOW_RESET=0
 
 if [ "$RESET_TS" -gt 0 ] && [ $((NOW_TS - RESET_TS)) -le "$RESET_WINDOW" ]; then
-    SHOW_RESET=1
+    # Only show for genuine token anomalies ("reset"). Session changes
+    # are normal (especially with concurrent sessions sharing state),
+    # and context clears are already covered by Clr:N.
+    if [ "$RESET_REASON" = "reset" ]; then
+        SHOW_RESET=1
+    fi
 fi
 
 if [ -f "$REASON_FILE" ]; then
@@ -322,13 +338,6 @@ fi
 
 CTX_USED_FMT="$(format_tokens "$CTX_USED")"
 CTX_TOTAL_FMT="$(format_tokens "$CONTEXT_SIZE")"
-CTX_LEFT_FMT="$(format_tokens "$CTX_LEFT")"
-IO_IN_FMT="$(format_tokens "$TOTAL_INPUT")"
-IO_OUT_FMT="$(format_tokens "$TOTAL_OUTPUT")"
-MSG_IN_FMT="$(format_tokens "$CURR_IN")"
-MSG_OUT_FMT="$(format_tokens "$CURR_OUT")"
-CACHE_CREATE_FMT="$(format_tokens "$CACHE_CREATE")"
-CACHE_READ_FMT="$(format_tokens "$CACHE_READ")"
 
 # --- Computed metrics ---
 
@@ -339,12 +348,12 @@ TOTAL_COST_FMT=""
 TURN_COST_FMT=""
 HAS_VALID_DELTA=0
 if [[ "$COST_USD" =~ ^[0-9]*\.?[0-9]+$ ]] && [ "$COST_USD" != "0" ]; then
-    TOTAL_COST_FMT=$(printf '%.2f' "$COST_USD")
+    TOTAL_COST_FMT=$(LC_NUMERIC=C printf '%.2f' "$COST_USD")
     if [ "$PREV_SESSION" = "$SESSION_ID" ] && [[ "$PREV_COST_USD" =~ ^[0-9]*\.?[0-9]+$ ]] && [ "$PREV_COST_USD" != "0" ]; then
-        TURN_COST=$(awk "BEGIN {v=$COST_USD-$PREV_COST_USD; printf \"%.4f\", (v<0?0:v)}" 2>/dev/null)
+        TURN_COST=$(LC_NUMERIC=C awk -v cost="$COST_USD" -v prev="$PREV_COST_USD" 'BEGIN {v=cost-prev; printf "%.4f", (v<0?0:v)}' 2>/dev/null)
         HAS_VALID_DELTA=1
     fi
-    TURN_COST_FMT=$(printf '%.2f' "$TURN_COST")
+    TURN_COST_FMT=$(LC_NUMERIC=C printf '%.2f' "$TURN_COST")
 fi
 
 # Peak turn cost tracking (per session, only from real deltas)
@@ -353,35 +362,31 @@ if [ -n "$SESSION_ID" ] && [ "$HAS_VALID_DELTA" = "1" ]; then
     PEAK_FILE="$STATE_DIR/peak-$SESSION_ID"
     PEAK_COST="0"
     if [ -f "$PEAK_FILE" ]; then
-        PEAK_COST=$(cat "$PEAK_FILE" 2>/dev/null || echo "0")
+        PEAK_COST=$(<"$PEAK_FILE" 2>/dev/null || echo "0")
+        [[ "$PEAK_COST" =~ ^[0-9]*\.?[0-9]+$ ]] || PEAK_COST="0"
     fi
-    IS_PEAK=$(awk "BEGIN {print ($TURN_COST > $PEAK_COST) ? 1 : 0}" 2>/dev/null)
+    IS_PEAK=$(LC_NUMERIC=C awk -v turn="$TURN_COST" -v peak="$PEAK_COST" 'BEGIN {print (turn > peak) ? 1 : 0}' 2>/dev/null)
     if [ "$IS_PEAK" = "1" ]; then
         PEAK_COST="$TURN_COST"
-        printf '%.4f' "$PEAK_COST" > "$PEAK_FILE"
+        LC_NUMERIC=C printf '%.4f' "$PEAK_COST" > "$PEAK_FILE.tmp.$$" && mv "$PEAK_FILE.tmp.$$" "$PEAK_FILE"
     fi
-    PEAK_COST_FMT=$(printf '%.2f' "$PEAK_COST")
+    PEAK_COST_FMT=$(LC_NUMERIC=C printf '%.2f' "$PEAK_COST")
 elif [ -n "$SESSION_ID" ]; then
     # Read existing peak even if this turn has no valid delta
     PEAK_FILE="$STATE_DIR/peak-$SESSION_ID"
     if [ -f "$PEAK_FILE" ]; then
-        PEAK_COST=$(cat "$PEAK_FILE" 2>/dev/null || echo "0")
-        PEAK_COST_FMT=$(printf '%.2f' "$PEAK_COST")
+        PEAK_COST=$(<"$PEAK_FILE" 2>/dev/null || echo "0")
+        [[ "$PEAK_COST" =~ ^[0-9]*\.?[0-9]+$ ]] || PEAK_COST="0"
+        PEAK_COST_FMT=$(LC_NUMERIC=C printf '%.2f' "$PEAK_COST")
     fi
 fi
 # Sanity check: peak turn cost can never exceed total session cost
 if [ -n "$PEAK_COST_FMT" ] && [ -n "$TOTAL_COST_FMT" ]; then
-    PEAK_SANE=$(awk "BEGIN {print ($PEAK_COST_FMT <= $TOTAL_COST_FMT) ? 1 : 0}" 2>/dev/null)
+    PEAK_SANE=$(LC_NUMERIC=C awk -v peak="$PEAK_COST_FMT" -v total="$TOTAL_COST_FMT" 'BEGIN {print (peak <= total) ? 1 : 0}' 2>/dev/null)
     if [ "$PEAK_SANE" != "1" ]; then
         PEAK_COST_FMT=""
         [ -n "${PEAK_FILE:-}" ] && rm -f "$PEAK_FILE"
     fi
-fi
-
-# Most expensive I/O this turn: output tokens are the main cost driver
-TURN_OUT_FMT=""
-if [ "$CURR_OUT" -gt 0 ]; then
-    TURN_OUT_FMT="$(format_tokens "$CURR_OUT")out"
 fi
 
 # Cache hit rate

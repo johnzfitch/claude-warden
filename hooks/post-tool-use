@@ -9,7 +9,8 @@ suppress_ok() { echo '{"suppressOutput":true}'; exit 0; }
 # Warden TUI: emit JSONL event for post-tool-use accounting
 _emit_event() {
   local etype="$1" orig_bytes="$2" final_bytes="$3" rule="${4:-}"
-  local saved=$(( (orig_bytes - final_bytes) / 4 ))
+  # ~3.5 bytes/token avg across code, prose, structured output (benchmarked)
+  local saved=$(( (orig_bytes - final_bytes) * 10 / 35 ))
   (( saved < 0 )) && saved=0
   local now_s; now_s=$(date +%s)
   local start_s; start_s=$(cut -d. -f1 < "$HOME/.claude/.statusline/.session_start" 2>/dev/null || echo "$now_s")
@@ -27,9 +28,20 @@ _emit_event() {
        s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/g;
        s/([A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[A-Z_]*)=[^ ]+/\1=[REDACTED]/g')
   fi
+  local events_file="$HOME/.claude/.statusline/events.jsonl"
   printf '{"timestamp":%d,"event_type":"%s","tool":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
     "$ts" "$etype" "$TOOL_NAME" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
-    >> "$HOME/.claude/.statusline/events.jsonl" 2>/dev/null
+    >> "$events_file" 2>/dev/null
+
+  # Background API token counting: set WARDEN_TOKEN_COUNT=api to enable
+  # Appends a correction event with the delta between estimate and real count
+  if [[ "${WARDEN_TOKEN_COUNT:-}" == "api" && "$etype" == "truncated" && -n "${_EMIT_ORIG_TEXT:-}" && -n "${_EMIT_FINAL_TEXT:-}" ]]; then
+    local _tmpdir; _tmpdir=$(mktemp -d "/tmp/warden-tc.XXXXXX")
+    printf '%s' "$_EMIT_ORIG_TEXT" > "$_tmpdir/orig"
+    printf '%s' "$_EMIT_FINAL_TEXT" > "$_tmpdir/final"
+    local _counter="${BASH_SOURCE[0]%/*}/_token-count-bg"
+    ("${WARDEN_PYTHON:-python3}" "$_counter" "$ts" "$TOOL_NAME" "$cmd_safe" "$saved" "$rule" "$events_file" "$_tmpdir/orig" "$_tmpdir/final" &)
+  fi
 }
 
 # Cross-platform notification
@@ -106,21 +118,100 @@ if [[ -n "$SESSION_ID" ]]; then
     fi
 fi
 
+# === SYSTEM REMINDER STRIP (all tools) ===
+# <system-reminder> blocks are injected into tool_response text by Claude Code infra.
+# They repeat per-call and compound across sessions. Strip before any further processing.
+REMINDER_PRE_STRIPPED=false
+if (( OUTPUT_SIZE > 50 )); then
+    _RAW=$(printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+    case "$_RAW" in
+        *'<system-reminder>'*)
+            _CLEANED=$(printf '%s' "$_RAW" | sed '/^<system-reminder>/,/^<\/system-reminder>/d')
+            # Also strip trailing blank lines left by removal
+            _CLEANED=$(printf '%s' "$_CLEANED" | sed -e :a -e '/^[[:space:]]*$/{ $d; N; ba; }')
+            _CLEANED_SIZE=${#_CLEANED}
+            _STRIPPED=$(( ${#_RAW} - _CLEANED_SIZE ))
+            if (( _STRIPPED > 0 )); then
+                _EMIT_ORIG_TEXT="$_RAW" _EMIT_FINAL_TEXT="$_CLEANED" \
+                _emit_event "truncated" "$OUTPUT_SIZE" "$_CLEANED_SIZE" "system_reminder"
+                case "$TOOL_NAME" in
+                    Bash|Grep|Glob|Task)
+                        # Pre-clean for downstream truncation logic
+                        OUTPUT="$_CLEANED"
+                        OUTPUT_SIZE="$_CLEANED_SIZE"
+                        REMINDER_PRE_STRIPPED=true
+                        ;;
+                    *)
+                        # All other tools (Read/Write/Edit/etc): emit cleaned output, done
+                        jq -n --arg text "$_CLEANED" '{"modifyOutput":$text}'
+                        exit 0
+                        ;;
+                esac
+            fi
+            ;;
+    esac
+    unset _RAW _CLEANED _CLEANED_SIZE _STRIPPED
+fi
+
 # Truncate large outputs from Bash, Grep, Glob, Task (Read handled by read-compress)
 case "$TOOL_NAME" in
     Bash|Grep|Glob|Task) ;;
     *) _emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; suppress_ok ;;
 esac
 
+# Helper: emit cleaned output if reminders were stripped, else suppress (pass through)
+_exit_clean_or_suppress() {
+    if [[ "$REMINDER_PRE_STRIPPED" == true ]]; then
+        jq -n --arg text "$OUTPUT" '{"modifyOutput":$text}'
+        exit 0
+    fi
+    suppress_ok
+}
+
+# Task-specific: extract structured lines instead of blind head+tail
+# Agent results are prose-heavy but the useful content is bullets, steps, headers, file refs
+# Runs BEFORE fast path since agent results (6-15KB) fall under the 20KB generic threshold
+if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
+    # Need actual content for structured extraction
+    if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
+        OUTPUT=$(printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+        OUTPUT_SIZE=${#OUTPUT}
+    fi
+    if (( OUTPUT_SIZE > 6144 )); then
+        STRUCTURED=$(printf '%s' "$OUTPUT" | awk '
+            /^[-*] /           { print; next }   # bullet points
+            /^[0-9]+[.)]/      { print; next }   # numbered items
+            /^#{1,4} /         { print; next }   # markdown headers
+            /^[|]/             { print; next }   # table rows
+            /^[[:space:]]*[-*] / { print; next } # indented bullets
+            /^[a-zA-Z_.\/ ]*\.[a-z]{1,4}:[0-9]/ { print; next }  # standalone file:line refs
+        ' | head -120)
+        STRUCT_SIZE=${#STRUCTURED}
+        if (( STRUCT_SIZE > 200 && STRUCT_SIZE < OUTPUT_SIZE )); then
+            _EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="$STRUCTURED" \
+            _emit_event "truncated" "$OUTPUT_SIZE" "$STRUCT_SIZE" "task_structured"
+            jq -n --arg text "${STRUCTURED}
+
+[Agent output compressed: $((OUTPUT_SIZE/1024))KB -> $((STRUCT_SIZE/1024))KB structured lines]" \
+                '{"modifyOutput":$text}'
+            exit 0
+        fi
+    fi
+    # Fall through to generic truncation if structured extraction yielded too little
+fi
+
 # Fast path: small outputs
-(( OUTPUT_SIZE <= 20480 )) && { _emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; suppress_ok; }
+(( OUTPUT_SIZE <= 20480 )) && { _emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _exit_clean_or_suppress; }
 
 # Need actual output content for truncation - extract only when needed
-OUTPUT=$(printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
-OUTPUT_SIZE=${#OUTPUT}
+# Skip re-extraction if reminder strip already populated OUTPUT
+if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
+    OUTPUT=$(printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+    OUTPUT_SIZE=${#OUTPUT}
 
-# Re-check after actual extraction (jq length vs bash length may differ)
-(( OUTPUT_SIZE <= 20480 )) && { _emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; suppress_ok; }
+    # Re-check after actual extraction (jq length vs bash length may differ)
+    (( OUTPUT_SIZE <= 20480 )) && { _emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _exit_clean_or_suppress; }
+fi
 
 # Binary check: pipe through grep since bash variables can't hold null bytes
 if printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | grep -qP '\x00'; then
@@ -137,9 +228,10 @@ if (( OUTPUT_SIZE > 524288 )); then
 fi
 
 # >20KB: truncate to 10KB (8KB head + 2KB tail)
-_emit_event "truncated" "$OUTPUT_SIZE" 10000 "output_truncated"
 HEAD="${OUTPUT:0:8000}"
 TAIL="${OUTPUT: -2000}"
+_EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="${HEAD}${TAIL}" \
+_emit_event "truncated" "$OUTPUT_SIZE" 10000 "output_truncated"
 jq -n --arg text "${HEAD}
 ... [$((OUTPUT_SIZE/1024))KB truncated to 10KB] ...
 ${TAIL}" '{"modifyOutput":$text}'

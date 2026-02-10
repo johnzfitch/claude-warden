@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Background token counter for warden hooks.
+Reads original and final text from temp files, counts tokens via API,
+appends a correction event to events.jsonl.
+
+Usage: _token-count-bg <ts> <tool> <cmd> <estimated> <rule> <events_file> <orig_file> <final_file>
+Env: WARDEN_TOKEN_MODEL (default: claude-sonnet-4-20250514)
+     WARDEN_PYTHON (default: python3) - python with anthropic package installed
+     ANTHROPIC_API_KEY - required for API access (set by Claude Code)
+
+Temp files and their parent dir are cleaned up after reading."""
+
+import sys, json, os, shutil
+
+def main():
+    if len(sys.argv) < 9:
+        return
+
+    ts, tool, cmd, estimated, rule, events_file, orig_file, final_file = sys.argv[1:9]
+    estimated = int(estimated)
+    tmpdir = os.path.dirname(orig_file)
+
+    try:
+        orig = open(orig_file).read() if os.path.exists(orig_file) else ""
+        final = open(final_file).read() if os.path.exists(final_file) else ""
+    finally:
+        # Clean up temp dir (contains orig + final files)
+        if tmpdir and tmpdir.startswith("/tmp/warden-tc."):
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    if not orig:
+        return
+
+    try:
+        from anthropic import Anthropic
+    except ImportError:
+        return
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return
+
+    try:
+        client = Anthropic()
+        model = os.environ.get("WARDEN_TOKEN_MODEL", "claude-sonnet-4-20250514")
+        orig_tokens = client.messages.count_tokens(
+            model=model, messages=[{"role": "user", "content": orig}]
+        ).input_tokens
+        final_tokens = client.messages.count_tokens(
+            model=model, messages=[{"role": "user", "content": final}]
+        ).input_tokens if final else 0
+
+        real_saved = orig_tokens - final_tokens
+        correction = real_saved - estimated
+        if correction != 0:
+            evt = {
+                "timestamp": int(ts),
+                "event_type": "allowed",
+                "tool": tool,
+                "original_cmd": cmd[:200],
+                "tokens_saved": correction,
+                "original_output_bytes": 0,
+                "final_output_bytes": 0,
+                "rule": "token_count_correction"
+            }
+            with open(events_file, "a") as f:
+                f.write(json.dumps(evt, separators=(",", ":")) + "\n")
+    except Exception:
+        pass  # Silent fail -- estimate stands
+
+if __name__ == "__main__":
+    main()

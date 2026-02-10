@@ -122,22 +122,22 @@ fi
 GUIDANCE=""
 case "$AGENT_TYPE" in
   Explore)
-    GUIDANCE="Pattern: tree -> Glob -> Grep -> Read. Budget: 15. Native tools only. BATCH: issue multiple Read/Glob/Grep calls in a single response when targets are independent."
+    GUIDANCE="Pattern: tree -> Glob -> Grep -> Read. Budget: 15. Native tools only. BATCH: issue multiple Read/Glob/Grep calls in a single response when targets are independent. OUTPUT: max 1500 tokens. Bullet list only: '- path/file.ext: one-sentence finding'. No prose preamble, no summary paragraphs, no boilerplate."
     ;;
   Plan)
-    GUIDANCE="Pattern: structure -> patterns -> proposal. Budget: 15. Read-only. BATCH: issue multiple Read calls in a single response."
+    GUIDANCE="Pattern: structure -> patterns -> proposal. Budget: 15. Read-only. BATCH: issue multiple Read calls in a single response. OUTPUT: max 2000 tokens. Numbered implementation steps only. No background, rationale, or 'here is my analysis' sections."
     ;;
   general-purpose)
-    GUIDANCE="Pattern: explore -> plan -> execute. Budget: 20. No MCP tools. BATCH: issue multiple independent tool calls in a single response to reduce turns."
+    GUIDANCE="Pattern: explore -> plan -> execute. Budget: 20. No MCP tools. BATCH: issue multiple independent tool calls in a single response to reduce turns. OUTPUT: max 2000 tokens. Concise results only, no narration."
     ;;
   code-reviewer|security-auditor)
-    GUIDANCE="Pattern: scope -> grep -> read. Budget: 15-20. Read-only. BATCH: after scoping files, Read ALL target files in a single response (up to 10 parallel Read calls). Never read files one at a time. Think once after each batch, not between each file."
+    GUIDANCE="Pattern: scope -> grep -> read. Budget: 15-20. Read-only. BATCH: after scoping files, Read ALL target files in a single response (up to 10 parallel Read calls). Never read files one at a time. Think once after each batch, not between each file. OUTPUT: max 2000 tokens. Bullet findings with file:line references. No praise, no boilerplate."
     ;;
   deep-debugger)
-    GUIDANCE="Pattern: reproduce -> narrow -> instrument. Budget: 25. BATCH: issue multiple Read/Grep calls in a single response when investigating independent locations."
+    GUIDANCE="Pattern: reproduce -> narrow -> instrument. Budget: 25. BATCH: issue multiple Read/Grep calls in a single response when investigating independent locations. OUTPUT: max 2000 tokens. Root cause + evidence only."
     ;;
   refactor|architect|strategist|nix-expert|git-ops|test-runner)
-    GUIDANCE="Follow agent-specific workflow. Check budget in agent config. BATCH: issue multiple independent tool calls in a single response."
+    GUIDANCE="Follow agent-specific workflow. Check budget in agent config. BATCH: issue multiple independent tool calls in a single response. OUTPUT: max 2000 tokens. Concise deliverables only."
     ;;
 esac
 

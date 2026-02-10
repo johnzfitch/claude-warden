@@ -51,6 +51,10 @@ if [ -f "$SESSION_START_FILE" ]; then
     # Log session cost
     echo "$(date -Iseconds),$SESSION_ID,$DURATION,$START_CONSUMED,$END_CONSUMED,$DELTA,$SUBAGENT_COUNT" >> "$SESSION_COST_LOG"
 
+    # Refresh Prometheus textfile metrics
+    BUDGET_EXPORTER="$HOME/dev/claude-code-monitoring-guide/budget-exporter.sh"
+    [[ -x "$BUDGET_EXPORTER" ]] && "$BUDGET_EXPORTER" 2>/dev/null &
+
     # Cleanup budget snapshot
     rm -f "$START_BUDGET_FILE"
   fi

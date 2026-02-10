@@ -9,6 +9,35 @@
 
 set -o pipefail
 
+# Emit JSONL event for clawback accounting (mirrors post-tool-use schema)
+_emit_event() {
+    local etype="$1" orig_bytes="$2" final_bytes="$3" rule="${4:-}"
+    # ~3.5 bytes/token avg across code, prose, structured output (benchmarked)
+    local saved=$(( (orig_bytes - final_bytes) * 10 / 35 ))
+    (( saved < 0 )) && saved=0
+    local now_s; now_s=$(date +%s)
+    local start_s; start_s=$(cut -d. -f1 < "$HOME/.claude/.statusline/.session_start" 2>/dev/null || echo "$now_s")
+    local ts=$((now_s - start_s))
+    local rule_field=""
+    [[ -n "$rule" ]] && rule_field="$(printf ',"rule":"%s"' "$rule")"
+    local cmd_safe="${FILE_PATH:0:200}"
+    cmd_safe="${cmd_safe//\\/\\\\}"
+    cmd_safe="${cmd_safe//\"/\\\"}"
+    local events_file="$HOME/.claude/.statusline/events.jsonl"
+    printf '{"timestamp":%d,"event_type":"%s","tool":"Read","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
+        "$ts" "$etype" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
+        >> "$events_file" 2>/dev/null
+
+    # Background API token counting: set WARDEN_TOKEN_COUNT=api to enable
+    if [[ "${WARDEN_TOKEN_COUNT:-}" == "api" && "$etype" == "truncated" && -n "${_EMIT_ORIG_TEXT:-}" && -n "${_EMIT_FINAL_TEXT:-}" ]]; then
+        local _tmpdir; _tmpdir=$(mktemp -d "/tmp/warden-tc.XXXXXX")
+        printf '%s' "$_EMIT_ORIG_TEXT" > "$_tmpdir/orig"
+        printf '%s' "$_EMIT_FINAL_TEXT" > "$_tmpdir/final"
+        local _counter="${BASH_SOURCE[0]%/*}/_token-count-bg"
+        ("${WARDEN_PYTHON:-python3}" "$_counter" "$ts" "Read" "$cmd_safe" "$saved" "$rule" "$events_file" "$_tmpdir/orig" "$_tmpdir/final" &)
+    fi
+}
+
 read -r -t 5 -d '' INPUT || true
 [[ -z "$INPUT" ]] && exit 0
 
@@ -27,6 +56,20 @@ IS_SUBAGENT=false
 # Get file content
 CONTENT=$(printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
 [[ -z "$CONTENT" ]] && exit 0
+ORIGINAL_SIZE=${#CONTENT}
+ORIGINAL_CONTENT="$CONTENT"  # Preserved for API token counting
+
+# Strip system reminders appended to Read output by Claude Code infra
+REMINDER_STRIPPED=false
+case "$CONTENT" in
+    *'<system-reminder>'*)
+        CONTENT=$(printf '%s' "$CONTENT" | sed '/^<system-reminder>/,/^<\/system-reminder>/d')
+        CONTENT=$(printf '%s' "$CONTENT" | sed -e :a -e '/^[[:space:]]*$/{ $d; N; ba; }')
+        REMINDER_STRIPPED=true
+        _EMIT_ORIG_TEXT="$ORIGINAL_CONTENT" _EMIT_FINAL_TEXT="$CONTENT" \
+        _emit_event "truncated" "$ORIGINAL_SIZE" "${#CONTENT}" "system_reminder"
+        ;;
+esac
 
 # Count lines (fast)
 LINES=$(printf '%s' "$CONTENT" | wc -l)
@@ -42,15 +85,23 @@ if [[ "$IS_SUBAGENT" == true && "$TRANSCRIPT_PATH" == *"/subagents/"* ]]; then
     fi
 fi
 
+# Helper: emit cleaned content if reminders were stripped, else pass through
+_exit_maybe_stripped() {
+    if [[ "${REMINDER_STRIPPED:-false}" == true ]]; then
+        jq -n --arg text "$CONTENT" '{"modifyOutput":$text}'
+    fi
+    exit 0
+}
+
 # Threshold depends on agent type: code-reviewer/security-auditor=300, subagent=100, main=500
 if [[ "$IS_SUBAGENT" == true ]]; then
     if [[ "$AGENT_TYPE" == "code-reviewer" || "$AGENT_TYPE" == "security-auditor" ]]; then
-        (( LINES <= 300 )) && exit 0
+        (( LINES <= 300 )) && _exit_maybe_stripped
     else
-        (( LINES <= 100 )) && exit 0
+        (( LINES <= 100 )) && _exit_maybe_stripped
     fi
 else
-    (( LINES <= 500 )) && exit 0
+    (( LINES <= 500 )) && _exit_maybe_stripped
 fi
 
 # Config/data file extraction (by extension, before code extraction)
@@ -91,12 +142,14 @@ esac
 # If config extraction produced results, use them
 if [[ -n "$SUMMARY" ]]; then
     SUMMARY_LINES=$(printf '%s' "$SUMMARY" | wc -l)
-    (( SUMMARY_LINES >= LINES )) && exit 0
-    jq -n --arg text "$SUMMARY
+    (( SUMMARY_LINES >= LINES )) && _exit_maybe_stripped
+    _FINAL="$SUMMARY
 
 [Structure extracted: $LINES lines -> $SUMMARY_LINES keys/sections]
-[Use Read with offset/limit for full content]" \
-        '{"modifyOutput":$text}'
+[Use Read with offset/limit for full content]"
+    _EMIT_ORIG_TEXT="$ORIGINAL_CONTENT" _EMIT_FINAL_TEXT="$_FINAL" \
+    _emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_config"
+    jq -n --arg text "$_FINAL" '{"modifyOutput":$text}'
     exit 0
 fi
 
@@ -150,11 +203,13 @@ SUMMARY=$(printf '%s' "$CONTENT" | awk '
 SUMMARY_LINES=$(printf '%s' "$SUMMARY" | wc -l)
 
 # Only output modified content if we actually compressed
-(( SUMMARY_LINES >= LINES )) && exit 0
+(( SUMMARY_LINES >= LINES )) && _exit_maybe_stripped
 
 # Build summary output
-jq -n --arg text "$SUMMARY
+_FINAL="$SUMMARY
 
 [Structure extracted: $LINES lines -> $SUMMARY_LINES signatures]
-[Use Read with offset/limit for implementation details]" \
-    '{"modifyOutput":$text}'
+[Use Read with offset/limit for implementation details]"
+_EMIT_ORIG_TEXT="$ORIGINAL_CONTENT" _EMIT_FINAL_TEXT="$_FINAL" \
+_emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_code"
+jq -n --arg text "$_FINAL" '{"modifyOutput":$text}'

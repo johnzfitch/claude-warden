@@ -21,14 +21,14 @@ claude-warden installs a set of shell hooks that intercept Claude Code tool call
 | Hook | Event | What it guards |
 |---|---|---|
 | `pre-tool-use` | PreToolUse | Blocks verbose commands (`npm install` without `--silent`, `cargo build` without `-q`, `pip install` without `-q`, `curl` without `-s`, `wget` without `-q`, `docker build/pull` without `-q`). Blocks binary file reads. Enforces subagent tool budgets. Blocks recursive grep/find without limits. Blocks Write >100KB, Edit >50KB. Blocks minified file access. |
-| `post-tool-use` | PostToolUse | Truncates Bash output >20KB to 10KB (8KB head + 2KB tail). Suppresses output >500KB entirely. Detects binary output. Tracks session stats. Budget alerts at 75%/90%. |
-| `read-guard` | PreToolUse (Read) | Blocks Read on bundled/generated files (`node_modules/`, `/dist/`, `.min.js`, etc.). Blocks files >2MB. |
-| `read-compress` | PostToolUse (Read) | Extracts structural signatures (imports, functions, classes) from large file reads. Subagents: >100 lines. Main agent: >500 lines. |
+| `post-tool-use` | PostToolUse | Strips `<system-reminder>` blocks from all tool results. Compresses Task/agent output >6KB to structured lines (bullets, headers, tables). Truncates Bash output >20KB to 10KB (8KB head + 2KB tail). Suppresses output >500KB entirely. Detects binary output. Tracks session stats. Budget alerts at 75%/90%. |
+| `read-guard` | PreToolUse (Read) | Blocks Read on bundled/generated files (`node_modules/`, `/dist/`, `.min.js`, etc.). Blocks files >2MB. Reports blocked reads to events.jsonl. |
+| `read-compress` | PostToolUse (Read) | Strips `<system-reminder>` blocks from Read results. Extracts structural signatures (imports, functions, classes) from large file reads. Subagents: >100 lines. Main agent: >500 lines. Reports compression savings to events.jsonl. |
 | `permission-request` | PermissionRequest | Auto-denies dangerous commands (`rm -rf /`, `mkfs`, `curl \| bash`). Auto-allows safe read-only commands. |
 | `stop` | Stop | Logs session stop events with duration. |
 | `session-start` | SessionStart | Initializes session timing and budget snapshots. |
 | `session-end` | SessionEnd | Logs session duration, budget delta, subagent counts. |
-| `subagent-start` | SubagentStart | Enforces budget-cli limits. Tracks active subagent count. Injects type-specific guidance. |
+| `subagent-start` | SubagentStart | Enforces budget-cli limits. Tracks active subagent count. Injects type-specific guidance with output budgets (max token counts, format constraints). |
 | `subagent-stop` | SubagentStop | Reclaims budget. Logs subagent metrics (duration, type). |
 | `tool-error` | ToolError | Logs errors with context. Provides recovery hints. |
 | `statusline.sh` | StatusLine | Displays model, context %, IO tokens, cache stats, tool count, hottest output, active subagents, budget utilization. |
@@ -47,6 +47,7 @@ PreToolUse ──> [tool executes] ──> PostToolUse
 - **Required**: `jq` (JSON processing)
 - **Recommended**: `rg` (ripgrep), `fd` (fd-find)
 - **Optional**: `budget-cli` (token budget tracking -- from [claude-usage-helper](https://github.com/johnzfitch/claude-usage-helper))
+- **Optional**: `python3` with `anthropic` package (exact token counting via API -- see [Token savings accounting](#token-savings-accounting))
 
 ## Install
 
@@ -107,6 +108,30 @@ Edit the hook scripts directly (in symlink mode, edit the repo files):
 - **Subagent budgets**: `pre-tool-use` -- `BUDGET_LIMITS` associative array
 - **Binary detection**: `pre-tool-use` -- regex pattern for `file` command output
 
+### Token savings accounting
+
+All hooks report token savings to `~/.claude/.statusline/events.jsonl` using the standard warden event schema. By default, token counts are estimated at ~3.5 bytes/token (benchmarked against Claude's tokenizer across code, prose, and structured output).
+
+For exact counts, set the `WARDEN_TOKEN_COUNT` environment variable:
+
+```bash
+export WARDEN_TOKEN_COUNT=api
+```
+
+When enabled, each truncation event spawns a background process that calls the [Anthropic token counting API](https://docs.anthropic.com/en/docs/build-with-claude/token-counting) (free, separate rate limits) and appends a correction event to events.jsonl. The hook returns immediately -- zero added latency.
+
+Requirements for API mode:
+- `ANTHROPIC_API_KEY` in environment (set automatically by Claude Code)
+- `python3` with the `anthropic` package installed
+
+If `python3` on your PATH doesn't have `anthropic`, set `WARDEN_PYTHON` to one that does:
+
+```bash
+export WARDEN_PYTHON=/path/to/venv/bin/python3
+```
+
+Graceful degradation: if the API key is missing, `anthropic` isn't installed, or the network is unavailable, the background process silently exits and the estimate stands.
+
 ### Disabling specific guards
 
 To disable a specific guard category, remove or comment out the corresponding matcher in `settings.hooks.json` and re-run `./install.sh`. For example, to disable read compression:
@@ -161,7 +186,7 @@ Claude Code supports [hooks](https://docs.anthropic.com/en/docs/claude-code/hook
 - **Exit 2**: Block the tool call (stderr message is fed back to Claude as feedback)
 - **Output JSON**: Modify tool output (`{"modifyOutput":"..."}`) or suppress it
 
-claude-warden hooks are pure bash with a single dependency (`jq`). They run in milliseconds and add negligible latency to tool calls. All paths use `$HOME` for portability -- no hardcoded user directories.
+claude-warden hooks are pure bash with a single dependency (`jq`). They run in milliseconds and add negligible latency to tool calls. All paths use `$HOME` for portability -- no hardcoded user directories. Every filtering decision (block, truncate, compress, strip) is logged to `~/.claude/.statusline/events.jsonl` with token savings estimates for downstream consumers like [clawback](https://github.com/johnzfitch/clawback).
 
 ## Related
 
