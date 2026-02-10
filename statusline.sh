@@ -369,6 +369,14 @@ elif [ -n "$SESSION_ID" ]; then
         PEAK_COST_FMT=$(printf '%.2f' "$PEAK_COST")
     fi
 fi
+# Sanity check: peak turn cost can never exceed total session cost
+if [ -n "$PEAK_COST_FMT" ] && [ -n "$TOTAL_COST_FMT" ]; then
+    PEAK_SANE=$(awk "BEGIN {print ($PEAK_COST_FMT <= $TOTAL_COST_FMT) ? 1 : 0}" 2>/dev/null)
+    if [ "$PEAK_SANE" != "1" ]; then
+        PEAK_COST_FMT=""
+        [ -n "${PEAK_FILE:-}" ] && rm -f "$PEAK_FILE"
+    fi
+fi
 
 # Most expensive I/O this turn: output tokens are the main cost driver
 TURN_OUT_FMT=""
@@ -409,53 +417,63 @@ if [ -f "$BUDGET_CACHE" ]; then
     fi
 fi
 
-# --- Build segments ---
-# Separator: dim pipe with single space each side (spaces OUTSIDE dim)
-S=" ${DIM}|${RESET} "
+# --- Build 3 segment groups ---
+# HIG: simplicity first, progressive disclosure, group related info
 
-segments=()
-segments+=("[${MODEL}]")
-
-# Cost: turn cost (total) peak — shows spend velocity
-if [ -n "$TOTAL_COST_FMT" ]; then
-    cost_seg="\$${TURN_COST_FMT}"
-    # Show output tokens as the expensive part of this turn
-    if [ -n "$TURN_OUT_FMT" ]; then
-        cost_seg="${cost_seg} ${DIM}${TURN_OUT_FMT}${RESET}"
-    fi
-    cost_seg="${cost_seg} ${DIM}(\$${TOTAL_COST_FMT}"
-    if [ -n "$PEAK_COST_FMT" ] && [ "$PEAK_COST_FMT" != "0.00" ]; then
-        cost_seg="${cost_seg} pk \$${PEAK_COST_FMT}"
-    fi
-    cost_seg="${cost_seg})${RESET}"
-    segments+=("$cost_seg")
-fi
-
-# Context
-ctx_seg="Ctx ${COLOR}${USED_PCT_DISPLAY}%${RESET}"
+# Group 1: Session identity (always shown, minimal)
+# [Model] {pct}%/{ctx_size} ${total}
+g1="[${MODEL}] ${COLOR}${USED_PCT_DISPLAY}%${RESET}"
 if [ "$CONTEXT_SIZE" -gt 0 ]; then
-    ctx_seg="${ctx_seg} ${DIM}${CTX_LEFT_FMT} left${RESET}"
+    g1="${g1}/${CTX_TOTAL_FMT}"
 fi
-segments+=("$ctx_seg")
+if [ -n "$TOTAL_COST_FMT" ]; then
+    g1="${g1} \$${TOTAL_COST_FMT}"
+fi
 
-# IO
-segments+=("IO ${IO_IN_FMT}/${IO_OUT_FMT}")
-
-# Cache hit rate
+# Group 2: Turn details (shown when any turn data exists)
+# +${turn} pk:${peak} T:{n} Cache:{pct}% +added/-removed API:{pct}%
+g2=""
+if [ -n "$TOTAL_COST_FMT" ] && [ "$HAS_VALID_DELTA" = "1" ]; then
+    g2="${DIM}+\$${TURN_COST_FMT}${RESET}"
+fi
+if [ -n "$PEAK_COST_FMT" ] && [ "$PEAK_COST_FMT" != "0.00" ]; then
+    if [ -n "$g2" ]; then g2="${g2} "; fi
+    g2="${g2}${DIM}pk:\$${PEAK_COST_FMT}${RESET}"
+fi
+if [ -n "$TOOL_COUNT" ] && [ "$TOOL_COUNT" != "0" ]; then
+    if [ -n "$g2" ]; then g2="${g2} "; fi
+    g2="${g2}T:${TOOL_COUNT}"
+fi
 if [ -n "$CACHE_HIT_PCT" ]; then
+    if [ -n "$g2" ]; then g2="${g2} "; fi
     if [ "$CACHE_HIT_PCT" -ge 60 ]; then
-        segments+=("Cache \033[32m${CACHE_HIT_PCT}%${RESET}")
+        g2="${g2}Cache:\033[32m${CACHE_HIT_PCT}%${RESET}"
     elif [ "$CACHE_HIT_PCT" -le 30 ]; then
-        segments+=("Cache ${YELLOW}${CACHE_HIT_PCT}%${RESET}")
+        g2="${g2}Cache:${YELLOW}${CACHE_HIT_PCT}%${RESET}"
     else
-        segments+=("Cache ${CACHE_HIT_PCT}%")
+        g2="${g2}Cache:${CACHE_HIT_PCT}%"
+    fi
+fi
+if [ "$LINES_ADDED" -gt 0 ] || [ "$LINES_REMOVED" -gt 0 ]; then
+    if [ -n "$g2" ]; then g2="${g2} "; fi
+    g2="${g2}\033[32m+${LINES_ADDED}${RESET}/${RED}-${LINES_REMOVED}${RESET}"
+fi
+if [ -n "$API_PCT" ]; then
+    if [ -n "$g2" ]; then g2="${g2} "; fi
+    if [ "$API_PCT" -le 40 ]; then
+        g2="${g2}API:${YELLOW}${API_PCT}%${RESET}"
+    else
+        g2="${g2}${DIM}API:${API_PCT}%${RESET}"
     fi
 fi
 
-# Context clears: count + cumulative shrinkage
+# Group 3: Subagents + Warnings (shown when any item has data)
+# Sub:{n} Clr:{n} Bgt:{pct}% Reset {label}
+g3=""
+if [ "$SUB_COUNT" -gt 0 ]; then
+    g3="Sub:${SUB_COUNT}"
+fi
 if [ "$CLR_COUNT" -gt 0 ]; then
-    CLR_LOST_FMT="$(format_tokens "$CLR_CTX_LOST")"
-    # Color: 1=green (normal), 2=yellow (watch it), 3+=red (session too long)
     if [ "$CLR_COUNT" -ge 3 ]; then
         CLR_COLOR="${RED}"
     elif [ "$CLR_COUNT" -ge 2 ]; then
@@ -463,67 +481,35 @@ if [ "$CLR_COUNT" -gt 0 ]; then
     else
         CLR_COLOR="\033[32m"
     fi
-    # Show cost of summarization: delta between total cost at last clear and cost at prior clear
-    clr_seg="${CLR_COLOR}Clr ${CLR_COUNT}${RESET} ${DIM}-${CLR_LOST_FMT} ctx${RESET}"
-    segments+=("$clr_seg")
+    if [ -n "$g3" ]; then g3="${g3} "; fi
+    g3="${g3}${CLR_COLOR}Clr:${CLR_COUNT}${RESET}"
 fi
-
-# LOC
-if [ "$LINES_ADDED" -gt 0 ] || [ "$LINES_REMOVED" -gt 0 ]; then
-    segments+=("\033[32m+${LINES_ADDED}${RESET}/${RED}-${LINES_REMOVED}${RESET}")
-fi
-
-# Tools
-if [ -n "$TOOL_COUNT" ] && [ "$TOOL_COUNT" != "0" ]; then
-    segments+=("${DIM}T${RESET}${TOOL_COUNT}")
-fi
-
-# API efficiency
-if [ -n "$API_PCT" ]; then
-    if [ "$API_PCT" -le 40 ]; then
-        segments+=("API ${YELLOW}${API_PCT}%${RESET}")
-    else
-        segments+=("${DIM}API ${API_PCT}%${RESET}")
-    fi
-fi
-
-# Hot file
-if [ -n "$HOT_LABEL" ] && [ "$HOT_SIZE_KB" -gt 0 ]; then
-    segments+=("Hot ${HOT_LABEL} ${HOT_SIZE_KB}KB")
-fi
-
-# Subagents
-if [ "$SUB_COUNT" -gt 0 ]; then
-    segments+=("Sub ${SUB_COUNT}")
-fi
-
-# Budget
 if [ -n "$BUDGET_PCT" ]; then
+    if [ -n "$g3" ]; then g3="${g3} "; fi
     if [ "$BUDGET_PCT" -ge 90 ]; then
-        segments+=("${RED}Bgt ${BUDGET_PCT}%${RESET}")
+        g3="${g3}${RED}Bgt:${BUDGET_PCT}%${RESET}"
     elif [ "$BUDGET_PCT" -ge 75 ]; then
-        segments+=("${YELLOW}Bgt ${BUDGET_PCT}%${RESET}")
+        g3="${g3}${YELLOW}Bgt:${BUDGET_PCT}%${RESET}"
     else
-        segments+=("Bgt ${BUDGET_PCT}%")
+        g3="${g3}Bgt:${BUDGET_PCT}%"
     fi
 fi
-
-# Reset
 if [ "$SHOW_RESET" -eq 1 ]; then
+    if [ -n "$g3" ]; then g3="${g3} "; fi
     if [ -n "$RESET_LABEL" ]; then
-        segments+=("${YELLOW}Reset ${RESET_LABEL}${RESET}")
+        g3="${g3}${YELLOW}Reset ${RESET_LABEL}${RESET}"
     else
-        segments+=("${YELLOW}Reset${RESET}")
+        g3="${g3}${YELLOW}Reset${RESET}"
     fi
 fi
 
-# --- Render: join with separator ---
-out=""
-for i in "${!segments[@]}"; do
-    if [ "$i" -gt 0 ]; then
-        out="${out}${S}"
-    fi
-    out="${out}${segments[$i]}"
-done
+# --- Render: join non-empty groups by " | " ---
+out="$g1"
+if [ -n "$g2" ]; then
+    out="${out} | ${g2}"
+fi
+if [ -n "$g3" ]; then
+    out="${out} | ${g3}"
+fi
 
 printf '%b\n' "$out"
