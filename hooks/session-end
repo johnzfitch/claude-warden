@@ -2,23 +2,22 @@
 # session-end: Track terminal agent completion and session cleanup
 set -euo pipefail
 
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
 LOG_FILE="$HOME/.claude/session-log.txt"
-STATUSLINE_STATE_DIR="$HOME/.claude/.statusline"
-RESET_REASON_FILE="$STATUSLINE_STATE_DIR/reset-reason"
+RESET_REASON_FILE="$WARDEN_STATE_DIR/reset-reason"
 AGENT_STATS="$HOME/.claude/agent-stats.csv"
-SESSION_BUDGET_DIR="$HOME/.claude/.session-budgets"
 SESSION_COST_LOG="$HOME/.claude/.monitoring/session-costs.csv"
 
-# Read input
-read -r -t 5 -d '' INPUT || true
-[[ -z "$INPUT" ]] && exit 0
+_warden_read_input || exit 0
 
 # Extract session info
 IFS=$'\t' read -r SESSION_ID REASON < <(
-    printf '%s' "$INPUT" | jq -r '[.session_id // "unknown", .reason // ""] | @tsv' 2>/dev/null
+    printf '%s' "$WARDEN_INPUT" | jq -r '[.session_id // "unknown", .reason // ""] | @tsv' 2>/dev/null
 ) || exit 0
-# Sanitize: only safe characters (used in file paths)
-[[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && SESSION_ID="unknown"
+SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
+[[ -z "$SESSION_ID" ]] && SESSION_ID="unknown"
 
 # Calculate terminal agent duration
 SESSION_START_FILE="$HOME/.claude/.session-times/$SESSION_ID.start"
@@ -32,7 +31,7 @@ if [ -f "$SESSION_START_FILE" ]; then
   echo "$(date -Iseconds),terminal-$SESSION_ID,terminal,main,$DURATION,$SESSION_ID,completed" >> "$AGENT_STATS"
 
   # Track budget delta for this session (if budget-cli is installed)
-  START_BUDGET_FILE="$SESSION_BUDGET_DIR/$SESSION_ID.start.json"
+  START_BUDGET_FILE="$WARDEN_SESSION_BUDGET_DIR/$SESSION_ID.start.json"
   if [ -f "$START_BUDGET_FILE" ] && command -v budget-cli &>/dev/null; then
     START_CONSUMED=$(jq -r '.consumed // 0' "$START_BUDGET_FILE" 2>/dev/null || echo 0)
     END_JSON=$(budget-cli export 2>/dev/null || echo '{"consumed":0}')
@@ -53,7 +52,7 @@ if [ -f "$SESSION_START_FILE" ]; then
 
     # Refresh Prometheus textfile metrics
     BUDGET_EXPORTER="$HOME/dev/claude-code-monitoring-guide/budget-exporter.sh"
-    [[ -x "$BUDGET_EXPORTER" ]] && "$BUDGET_EXPORTER" 2>/dev/null &
+    [[ -x "$BUDGET_EXPORTER" ]] && { "$BUDGET_EXPORTER" 2>/dev/null & disown; }
 
     # Cleanup budget snapshot
     rm -f "$START_BUDGET_FILE"
@@ -68,11 +67,11 @@ END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
 # === GHOST SUBAGENT REAPER ===
 # Force-complete orphaned subagents from THIS session only (safe with concurrent sessions)
 SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
-if [[ -d "$SUBAGENT_STATE_DIR" ]] && command -v budget-cli &>/dev/null; then
-    for state_file in "$SUBAGENT_STATE_DIR"/*; do
+if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]] && command -v budget-cli &>/dev/null; then
+    for state_file in "$WARDEN_SUBAGENT_STATE_DIR"/*; do
         [ -f "$state_file" ] && [ ! -L "$state_file" ] || continue
         [[ "$(basename "$state_file")" == *.* ]] && continue  # skip .start and session- files
-        grep -q "SESSION_ID=$SESSION_ID" "$state_file" 2>/dev/null || continue
+        grep -q "^SESSION_ID=${SESSION_ID}$" "$state_file" 2>/dev/null || continue
         ORPHAN_ID=$(basename "$state_file")
         budget-cli complete "$ORPHAN_ID" 2>/dev/null || true
         rm -f "$state_file" "$state_file.start"
@@ -81,14 +80,14 @@ fi
 
 # === STATE FILE CLEANUP ===
 # Purge stale state files older than 24 hours
-if [[ -d "$STATUSLINE_STATE_DIR" ]]; then
-    find "$STATUSLINE_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mmin +1440 -delete 2>/dev/null || true
-    find "$STATUSLINE_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mmin +1440 -delete 2>/dev/null || true
-    find "$STATUSLINE_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mmin +1440 -delete 2>/dev/null || true
+if [[ -d "$WARDEN_STATE_DIR" ]]; then
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mmin +1440 -delete 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mmin +1440 -delete 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mmin +1440 -delete 2>/dev/null || true
 fi
-if [[ -d "$SUBAGENT_STATE_DIR" ]]; then
-    find "$SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.start' -mmin +1440 -delete 2>/dev/null || true
-    find "$SUBAGENT_STATE_DIR" -maxdepth 1 -type f ! -name '.*' -mmin +1440 -delete 2>/dev/null || true
+if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]]; then
+    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.start' -mmin +1440 -delete 2>/dev/null || true
+    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f ! -name '.*' -mmin +1440 -delete 2>/dev/null || true
 fi
 
 # Log session end
@@ -96,7 +95,7 @@ echo "[$END_TIME] Session ended: $SESSION_ID (duration: ${DURATION_MIN}m, dir: $
 
 # Record reset reason for statusline
 if [ -n "$REASON" ]; then
-    mkdir -p "$STATUSLINE_STATE_DIR"
+    mkdir -p "$WARDEN_STATE_DIR"
     printf '%s|%s|%s\n' "$(date +%s)" "$REASON" "$SESSION_ID" > "$RESET_REASON_FILE"
 fi
 

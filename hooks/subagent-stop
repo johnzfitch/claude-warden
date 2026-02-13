@@ -2,19 +2,20 @@
 # subagent-stop: Budget reclamation + metrics + DELAYED cleanup (24hr)
 set -euo pipefail
 
-SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
-STATUSLINE_STATE_DIR="$HOME/.claude/.statusline"
-SUBAGENT_COUNT_FILE="$STATUSLINE_STATE_DIR/subagent-count"
-read -r -t 5 -d '' INPUT || true
-[[ -z "$INPUT" ]] && exit 0
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count"
+
+_warden_read_input || exit 0
 
 IFS=$'\t' read -r AGENT_ID SESSION_ID < <(
-    printf '%s' "$INPUT" | jq -r '[.agent_id // "unknown", .session_id // ""] | @tsv' 2>/dev/null
+    printf '%s' "$WARDEN_INPUT" | jq -r '[.agent_id // "unknown", .session_id // ""] | @tsv' 2>/dev/null
 ) || exit 0
 
-# Sanitize IDs: only allow safe characters (prevent path traversal in file ops)
-[[ ! "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && AGENT_ID="unknown"
-[[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && SESSION_ID=""
+AGENT_ID=$(_warden_sanitize_id "$AGENT_ID")
+SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
+[[ -z "$AGENT_ID" ]] && AGENT_ID="unknown"
 
 # Cross-platform file locking (mkdir is atomic on all POSIX systems)
 _with_lock() {
@@ -24,7 +25,7 @@ _with_lock() {
     # Break stale locks older than 5 seconds
     if [[ -d "$lockfile" ]]; then
         local lock_age
-        lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile" 2>/dev/null || stat -f %m "$lockfile" 2>/dev/null || echo 0) ))
+        lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile" 2>/dev/null || stat -f %m "$lockfile" 2>/dev/null || date +%s) ))
         (( lock_age > 5 )) && rmdir "$lockfile" 2>/dev/null || true
     fi
     while ! mkdir "$lockfile" 2>/dev/null; do
@@ -60,12 +61,12 @@ if command -v budget-cli &>/dev/null; then
 fi
 
 # === METRICS COLLECTION ===
-START_FILE="$SUBAGENT_STATE_DIR/$AGENT_ID.start"
+START_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.start"
 if [ -f "$START_FILE" ]; then
   START_TIME=$(cat "$START_FILE")
   END_TIME=$(date +%s)
   DURATION=$((END_TIME - START_TIME))
-  AGENT_TYPE=$(grep 'AGENT_TYPE=' "$SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null | cut -d= -f2 || echo "unknown")
+  AGENT_TYPE=$(grep 'AGENT_TYPE=' "$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null | head -1 | cut -d= -f2 || echo "unknown")
 
   # Log to unified agent-stats.csv
   AGENT_STATS="$HOME/.claude/agent-stats.csv"
@@ -85,7 +86,7 @@ if [ -n "$SESSION_ID" ] && [ -f "$SUBAGENT_COUNT_FILE" ]; then
       printf '%s|%s|%s\n' "$SESSION_ID" "$PREV_COUNT" "$(date +%s)" > "$SUBAGENT_COUNT_FILE"
     fi
   }
-  _with_lock "$STATUSLINE_STATE_DIR/subagent-count.lock.d" _decrement_count
+  _with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _decrement_count
 fi
 
 # NOTE: NO immediate cleanup - state files retained for debugging

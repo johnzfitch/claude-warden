@@ -2,32 +2,23 @@
 # subagent-start: Budget enforcement + tracking + guidance
 set -euo pipefail
 
-SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
-STATUSLINE_STATE_DIR="$HOME/.claude/.statusline"
-SUBAGENT_COUNT_FILE="$STATUSLINE_STATE_DIR/subagent-count"
-read -r -t 5 -d '' INPUT || true
-[[ -z "$INPUT" ]] && exit 0
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count"
+
+_warden_read_input || exit 0
 
 IFS=$'\t' read -r AGENT_ID AGENT_TYPE SESSION_ID < <(
-    printf '%s' "$INPUT" | jq -r '[.agent_id // "unknown", .agent_type // "", .session_id // ""] | @tsv' 2>/dev/null
+    printf '%s' "$WARDEN_INPUT" | jq -r '[.agent_id // "unknown", .agent_type // "", .session_id // ""] | @tsv' 2>/dev/null
 ) || exit 0
 
-# Sanitize IDs: only allow safe characters (prevent path traversal in file ops)
-[[ ! "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && AGENT_ID="unknown"
-[[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && SESSION_ID=""
+AGENT_ID=$(_warden_sanitize_id "$AGENT_ID")
+SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
+[[ -z "$AGENT_ID" ]] && AGENT_ID="unknown"
 
-mkdir -p "$SUBAGENT_STATE_DIR" "$STATUSLINE_STATE_DIR"
+mkdir -p "$WARDEN_SUBAGENT_STATE_DIR" "$WARDEN_STATE_DIR"
 EPOCH=$(date +%s)
-
-# Cross-platform notification
-_notify() {
-    local urgency="$1" title="$2" body="$3"
-    if command -v notify-send &>/dev/null; then
-        notify-send -u "$urgency" "$title" "$body"
-    elif command -v osascript &>/dev/null; then
-        osascript -e "display notification \"$body\" with title \"$title\""
-    fi
-}
 
 # Cross-platform file locking (mkdir is atomic on all POSIX systems)
 _with_lock() {
@@ -37,7 +28,7 @@ _with_lock() {
     # Break stale locks older than 5 seconds
     if [[ -d "$lockfile" ]]; then
         local lock_age
-        lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile" 2>/dev/null || stat -f %m "$lockfile" 2>/dev/null || echo 0) ))
+        lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile" 2>/dev/null || stat -f %m "$lockfile" 2>/dev/null || date +%s) ))
         (( lock_age > 5 )) && rmdir "$lockfile" 2>/dev/null || true
     fi
     while ! mkdir "$lockfile" 2>/dev/null; do
@@ -76,26 +67,26 @@ EOF
   rm -f "$ERROR_LOG.tmp"
 
   # Check budget thresholds for alerts
-  ALERT_FILE="$STATUSLINE_STATE_DIR/budget-alert"
+  ALERT_FILE="$WARDEN_STATE_DIR/budget-alert"
   STATS=$(budget-cli export 2>/dev/null || echo '{}')
   UTIL=$(echo "$STATS" | jq -r '.utilization // 0' | cut -d. -f1)
 
   if [ "$UTIL" -ge 90 ]; then
     echo "CRITICAL|$UTIL|$(date +%s)" > "$ALERT_FILE"
-    _notify critical "Claude Budget Alert" "Budget at ${UTIL}%!" || true
+    _warden_notify critical "Claude Budget Alert" "Budget at ${UTIL}%!" || true
   elif [ "$UTIL" -ge 75 ]; then
     PREV_LEVEL=$(cat "$ALERT_FILE" 2>/dev/null | cut -d'|' -f1 || echo "")
     if [ "$PREV_LEVEL" != "WARNING" ] && [ "$PREV_LEVEL" != "CRITICAL" ]; then
       echo "WARNING|$UTIL|$(date +%s)" > "$ALERT_FILE"
-      _notify normal "Claude Budget Warning" "Budget at ${UTIL}%" || true
+      _warden_notify normal "Claude Budget Warning" "Budget at ${UTIL}%" || true
     fi
   fi
 fi
 
 # Store state for cleanup
-echo "$EPOCH" > "$SUBAGENT_STATE_DIR/$AGENT_ID.start"
-[[ -n "$SESSION_ID" ]] && echo "$AGENT_ID" > "$SUBAGENT_STATE_DIR/session-$SESSION_ID"
-printf 'AGENT_TYPE=%s\nSESSION_ID=%s\n' "$AGENT_TYPE" "$SESSION_ID" > "$SUBAGENT_STATE_DIR/$AGENT_ID"
+echo "$EPOCH" > "$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.start"
+[[ -n "$SESSION_ID" ]] && echo "$AGENT_ID" > "$WARDEN_SUBAGENT_STATE_DIR/session-$SESSION_ID"
+printf 'AGENT_TYPE=%s\nSESSION_ID=%s\n' "$AGENT_TYPE" "$SESSION_ID" > "$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID"
 
 # Log subagent start to unified stats
 AGENT_STATS="$HOME/.claude/agent-stats.csv"
@@ -115,7 +106,7 @@ if [ -n "$SESSION_ID" ]; then
     [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
     printf '%s|%s|%s\n' "$SESSION_ID" "$((PREV_COUNT + 1))" "$EPOCH" > "$SUBAGENT_COUNT_FILE"
   }
-  _with_lock "$STATUSLINE_STATE_DIR/subagent-count.lock.d" _increment_count
+  _with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _increment_count
 fi
 
 # Inject type-specific guidance for all agent types

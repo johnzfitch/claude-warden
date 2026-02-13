@@ -2,15 +2,21 @@
 # stop: Handle stop events with duration tracking
 set -euo pipefail
 
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
 LOG_FILE="$HOME/.claude/session-log.txt"
-read -r -t 5 -d '' INPUT || true
-[[ -z "$INPUT" ]] && exit 0
+_warden_read_input || exit 0
+
+# CRITICAL: Check if stop hook is already active to prevent infinite loops
+STOP_HOOK_ACTIVE=$(printf '%s' "$WARDEN_INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null)
+[[ "$STOP_HOOK_ACTIVE" == "true" ]] && exit 0
 
 IFS=$'\t' read -r REASON TOOL_NAME SESSION_ID < <(
-    printf '%s' "$INPUT" | jq -r '[.reason // "unknown", .tool_name // "", .session_id // ""] | @tsv' 2>/dev/null
+    printf '%s' "$WARDEN_INPUT" | jq -r '[.reason // "unknown", .tool_name // "", .session_id // ""] | @tsv' 2>/dev/null
 ) || exit 0
-# Sanitize: only safe characters (used in file paths)
-[[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9_-]+$ ]] && SESSION_ID=""
+
+SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
 
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 

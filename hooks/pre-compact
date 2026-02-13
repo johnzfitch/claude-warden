@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# pre-compact: Inject warden state summary before context compaction
+# Ensures budget tracking and session state survive compaction
+set -euo pipefail
+
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+_warden_read_input || exit 0
+
+SESSION_ID=$(_warden_parse_session_id)
+SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
+[[ -z "$SESSION_ID" ]] && exit 0
+
+# === GATHER SESSION STATE ===
+STATE_FILE="$WARDEN_STATE_DIR/session-$SESSION_ID"
+SESSION_START_FILE="$HOME/.claude/.session-times/$SESSION_ID.start"
+
+# Tool call count
+TOOL_COUNT=0
+if [[ -f "$STATE_FILE" ]]; then
+    IFS='|' read -r TOOL_COUNT _REST < "$STATE_FILE" 2>/dev/null
+    [[ "$TOOL_COUNT" =~ ^[0-9]+$ ]] || TOOL_COUNT=0
+fi
+
+# Session duration
+DURATION_MIN="unknown"
+if [[ -f "$SESSION_START_FILE" ]]; then
+    START_TIME=$(cat "$SESSION_START_FILE")
+    NOW=$(date +%s)
+    DURATION_SEC=$((NOW - START_TIME))
+    DURATION_MIN=$((DURATION_SEC / 60))
+fi
+
+# Active subagent count
+SUBAGENT_COUNT=0
+SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count"
+if [[ -f "$SUBAGENT_COUNT_FILE" ]]; then
+    IFS='|' read -r COUNT_SESSION COUNT _REST < "$SUBAGENT_COUNT_FILE" 2>/dev/null
+    if [[ "$COUNT_SESSION" == "$SESSION_ID" && "$COUNT" =~ ^[0-9]+$ ]]; then
+        SUBAGENT_COUNT="$COUNT"
+    fi
+fi
+
+# Budget state (if budget-cli available)
+BUDGET_STATUS="N/A"
+if command -v budget-cli &>/dev/null; then
+    BUDGET_JSON=$(budget-cli export 2>/dev/null || echo '{}')
+    UTIL=$(echo "$BUDGET_JSON" | jq -r '.utilization // 0' | cut -d. -f1)
+    CONSUMED=$(echo "$BUDGET_JSON" | jq -r '.consumed // 0')
+    TOTAL=$(echo "$BUDGET_JSON" | jq -r '.total_limit // 0')
+    BUDGET_STATUS="${UTIL}% (${CONSUMED}/${TOTAL})"
+fi
+
+# === CONSTRUCT SUMMARY ===
+SUMMARY="[Warden Session State]
+- Tool calls: $TOOL_COUNT
+- Duration: ${DURATION_MIN}m
+- Active subagents: $SUBAGENT_COUNT
+- Budget: $BUDGET_STATUS"
+
+# === INJECT INTO COMPACTION CONTEXT ===
+cat << EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreCompact",
+    "additionalContext": "$SUMMARY"
+  }
+}
+EOF
+
+exit 0

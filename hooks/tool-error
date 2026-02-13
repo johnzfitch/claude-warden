@@ -7,14 +7,16 @@
 
 set -euo pipefail
 
-read -r -t 5 -d '' INPUT || true
-[[ -z "$INPUT" ]] && exit 0
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
-IFS=$'\t' read -r TOOL_NAME ERROR_MSG < <(
-    printf '%s' "$INPUT" | jq -r '[.tool_name // "unknown", (.tool_error // .error // "unknown error")] | @tsv' 2>/dev/null
-) || exit 0
+_warden_read_input || exit 0
+
+TOOL_NAME=$(_warden_parse_tool_name)
+ERROR_MSG=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_error // .error // "unknown error"' 2>/dev/null)
 
 # === ERROR LOGGING (to file) ===
+ERROR_LOG="$HOME/.claude/errors.log"
 {
   echo "=== Tool Error ==="
   echo "Time: $(date)"
@@ -23,11 +25,13 @@ IFS=$'\t' read -r TOOL_NAME ERROR_MSG < <(
   echo "PWD: $PWD"
   echo "Git: $(git symbolic-ref --short HEAD 2>/dev/null || echo 'N/A')"
   echo ""
-} >> "$HOME/.claude/errors.log"
+} >> "$ERROR_LOG"
 
-# Keep only last 1000 errors
-tail -1000 "$HOME/.claude/errors.log" > "$HOME/.claude/errors.log.tmp" 2>/dev/null && \
-  mv "$HOME/.claude/errors.log.tmp" "$HOME/.claude/errors.log" 2>/dev/null || true
+# BUG FIX #4: Atomic log rotation (prevent race condition)
+if [[ -f "$ERROR_LOG" ]] && [[ $(wc -l < "$ERROR_LOG" 2>/dev/null || echo 0) -gt 1500 ]]; then
+  ERROR_LOG_TMP=$(mktemp "$ERROR_LOG.XXXXXX")
+  tail -1000 "$ERROR_LOG" > "$ERROR_LOG_TMP" 2>/dev/null && mv "$ERROR_LOG_TMP" "$ERROR_LOG" 2>/dev/null || rm -f "$ERROR_LOG_TMP"
+fi
 
 # === HINTS TO STDERR (if we want Claude to see them) ===
 case "$TOOL_NAME" in

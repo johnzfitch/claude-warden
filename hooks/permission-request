@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # permission-request: Auto-deny dangerous commands, auto-allow safe ones
-# Output JSON: "allow", "deny", or "ask" (default)
+# Output: hookSpecificOutput JSON (allow/deny) or suppressOutput (ask/default)
 # NOTE: Commands in settings.json allow-list never reach this hook
 
 set -euo pipefail
 
-read -r -t 5 -d '' INPUT || true
-[[ -z "$INPUT" ]] && exit 0
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
-read -r TOOL_NAME COMMAND < <(
-    printf '%s' "$INPUT" | jq -r '[.tool_name // "", .tool_input.command // ""] | @tsv' 2>/dev/null
-) || exit 0
+_warden_read_input || exit 0
+
+TOOL_NAME=$(_warden_parse_tool_name)
+IFS=$'\t' read -r COMMAND < <(_warden_parse_tool_input command)
 
 # Auto-deny dangerous patterns
 # Normalize whitespace for matching (collapse runs, trim)
@@ -23,27 +24,45 @@ case "$NORM_CMD" in
     *"mkfs"*|*"dd if="*|\
     *"> /dev/sd"*|*"> /dev/nvme"*|\
     *"chmod -R 777 /"*|*"chown -R"*"/"*)
-        echo '{"decision": "deny", "reason": "Blocked destructive command"}'
+        printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Blocked destructive command"}}}\n'
         exit 0 ;;
     # Fork bombs
     *':(){:|:&};:'*|*':(){ :|:&};:'*)
-        echo '{"decision": "deny", "reason": "Blocked fork bomb"}'
+        printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Blocked fork bomb"}}}\n'
         exit 0 ;;
     # Remote code execution via pipe
     *"curl"*"|"*"bash"*|*"curl"*"|"*"sh"*|\
     *"wget"*"|"*"bash"*|*"wget"*"|"*"sh"*|\
     *"bash <(curl"*|*"sh <(curl"*|\
     *"bash <(wget"*|*"sh <(wget"*)
-        echo '{"decision": "deny", "reason": "Blocked remote code execution"}'
+        printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Blocked remote code execution"}}}\n'
         exit 0 ;;
 esac
 
-# Auto-allow safe read-only commands not in settings.json allow-list
+# Auto-allow safe read-only commands not in settings.json allow-list.
+# NOTE: Avoid auto-allowing commands that can dump secrets from the environment.
 case "$COMMAND" in
-    echo\ *|whoami|hostname|type\ *|man\ *|env|printenv|locale)
-        echo '{"decision": "allow"}'
+    whoami|hostname|type\ *|man\ *|locale)
+        printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
         exit 0 ;;
 esac
 
-# Default: ask user
-echo '{"decision": "ask"}'
+# Special-case echo: allow only constant literals (no expansion, no shell metacharacters).
+# This prevents `echo $SECRET` / `echo "$(cmd)"` from being auto-approved.
+if [[ "$NORM_CMD" == "echo" || "$NORM_CMD" == "echo -n" || "$NORM_CMD" == echo\ * || "$NORM_CMD" == "echo -n "* ]]; then
+    payload="$NORM_CMD"
+    payload="${payload#echo}"
+    payload="${payload# -n}"
+    payload="${payload# }"
+
+    case "$payload" in
+        *'$'*|*'`'*|*\\*|*'('*|*')'*|*'{'*|*'}'*|*'['*|*']'*|*'*'*|*'?'*|*';'*|*'|'*|*'&'*|*'<'*|*'>'*)
+            : ;;
+        *)
+            printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+            exit 0 ;;
+    esac
+fi
+
+# Default: let Claude Code show normal permission dialog
+echo '{"suppressOutput":true}'

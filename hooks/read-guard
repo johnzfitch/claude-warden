@@ -8,63 +8,30 @@
 
 set -euo pipefail
 
-# Emit JSONL event for clawback accounting
-_emit_block() {
-    local rule="$1" tokens="$2"
-    local now_s; now_s=$(date +%s)
-    local start_s; start_s=$(cut -d. -f1 < "$HOME/.claude/.statusline/.session_start" 2>/dev/null || echo "$now_s")
-    local ts=$((now_s - start_s))
-    local cmd_safe="${FILE_PATH:0:200}"
-    cmd_safe="${cmd_safe//\\/\\\\}"
-    cmd_safe="${cmd_safe//\"/\\\"}"
-    printf '{"timestamp":%d,"event_type":"blocked","tool":"Read","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
-        "$ts" "$cmd_safe" "$rule" "$tokens" \
-        >> "$HOME/.claude/.statusline/events.jsonl" 2>/dev/null
-}
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
 # Config
 MAX_SIZE_MB=2
 MAX_SIZE_BYTES=$((MAX_SIZE_MB * 1024 * 1024))
 
-# Read JSON from stdin
-read -r -t 5 -d '' INPUT || true
-[[ -z "$INPUT" ]] && exit 0
+_warden_read_input || exit 0
 
 # Extract file_path from tool_input
-FILE_PATH=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty')
+IFS=$'\t' read -r FILE_PATH < <(_warden_parse_tool_input file_path)
 
 if [[ -z "$FILE_PATH" ]]; then
     exit 0  # No file_path, let it through
 fi
 
-# Check for bundled/generated file patterns
-BUNDLED_PATTERNS=(
-    "node_modules/"
-    "/dist/"
-    "/build/"
-    "\.min\.js$"
-    "\.bundle\.js$"
-    "expo-downloads/"
-    "\.chunk\.js$"
-    "/vendor/"
-    "/__generated__/"
-    "package-lock\.json$"
-    "yarn\.lock$"
-    "pnpm-lock\.yaml$"
-    "Cargo\.lock$"
-    "poetry\.lock$"
-    "composer\.lock$"
-    "Gemfile\.lock$"
-    "go\.sum$"
-)
+# PHASE 3 OPTIMIZATION: Compile patterns into single regex (1 match instead of 17)
+BUNDLED_PATTERN_RE='(node_modules/|/dist/|/build/|\.min\.js$|\.bundle\.js$|expo-downloads/|\.chunk\.js$|/vendor/|/__generated__/|package-lock\.json$|yarn\.lock$|pnpm-lock\.yaml$|Cargo\.lock$|poetry\.lock$|composer\.lock$|Gemfile\.lock$|go\.sum$)'
 
-for pattern in "${BUNDLED_PATTERNS[@]}"; do
-    if echo "$FILE_PATH" | grep -qE "$pattern"; then
-        _emit_block "read_bundled" 8000
-        echo "Blocked: '$FILE_PATH' appears to be a bundled/generated file. These are not source code - search for the original source instead." >&2
-        exit 2
-    fi
-done
+if [[ "$FILE_PATH" =~ $BUNDLED_PATTERN_RE ]]; then
+    WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" _warden_emit_block "read_bundled" 8000
+    echo "Blocked: '$FILE_PATH' appears to be a bundled/generated file. These are not source code - search for the original source instead." >&2
+    exit 2
+fi
 
 # Check file size (if file exists)
 if [[ -f "$FILE_PATH" ]]; then
@@ -74,7 +41,7 @@ if [[ -f "$FILE_PATH" ]]; then
     if [[ "$FILE_SIZE" -gt "$MAX_SIZE_BYTES" ]]; then
         # bc may not be available everywhere; use awk as fallback
         SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $FILE_SIZE / 1024 / 1024 }" 2>/dev/null || echo "?")
-        _emit_block "read_oversize" 25000
+        WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" _warden_emit_block "read_oversize" 25000
         echo "Blocked: '$FILE_PATH' is ${SIZE_MB}MB (max ${MAX_SIZE_MB}MB). Large files are typically bundled/minified - find the original source code instead." >&2
         exit 2
     fi

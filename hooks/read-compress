@@ -4,47 +4,20 @@
 #
 # Activates for:
 # - Read tool results
-# - Subagents: files >100 lines
+# - Subagents: files >300 lines
 # - Main agent: files >500 lines
 
 set -o pipefail
 
-# Emit JSONL event for clawback accounting (mirrors post-tool-use schema)
-_emit_event() {
-    local etype="$1" orig_bytes="$2" final_bytes="$3" rule="${4:-}"
-    # ~3.5 bytes/token avg across code, prose, structured output (benchmarked)
-    local saved=$(( (orig_bytes - final_bytes) * 10 / 35 ))
-    (( saved < 0 )) && saved=0
-    local now_s; now_s=$(date +%s)
-    local start_s; start_s=$(cut -d. -f1 < "$HOME/.claude/.statusline/.session_start" 2>/dev/null || echo "$now_s")
-    local ts=$((now_s - start_s))
-    local rule_field=""
-    [[ -n "$rule" ]] && rule_field="$(printf ',"rule":"%s"' "$rule")"
-    local cmd_safe="${FILE_PATH:0:200}"
-    cmd_safe="${cmd_safe//\\/\\\\}"
-    cmd_safe="${cmd_safe//\"/\\\"}"
-    local events_file="$HOME/.claude/.statusline/events.jsonl"
-    printf '{"timestamp":%d,"event_type":"%s","tool":"Read","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
-        "$ts" "$etype" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
-        >> "$events_file" 2>/dev/null
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
-    # Background API token counting: set WARDEN_TOKEN_COUNT=api to enable
-    if [[ "${WARDEN_TOKEN_COUNT:-}" == "api" && "$etype" == "truncated" && -n "${_EMIT_ORIG_TEXT:-}" && -n "${_EMIT_FINAL_TEXT:-}" ]]; then
-        local _tmpdir; _tmpdir=$(mktemp -d "/tmp/warden-tc.XXXXXX")
-        printf '%s' "$_EMIT_ORIG_TEXT" > "$_tmpdir/orig"
-        printf '%s' "$_EMIT_FINAL_TEXT" > "$_tmpdir/final"
-        local _counter="${BASH_SOURCE[0]%/*}/_token-count-bg"
-        ("${WARDEN_PYTHON:-python3}" "$_counter" "$ts" "Read" "$cmd_safe" "$saved" "$rule" "$events_file" "$_tmpdir/orig" "$_tmpdir/final" &)
-    fi
-}
-
-read -r -t 5 -d '' INPUT || true
-[[ -z "$INPUT" ]] && exit 0
+_warden_read_input || exit 0
 
 # Parse tool info - detect subagent via transcript_path, get file path for type detection
-IFS=$'\t' read -r TOOL_NAME TRANSCRIPT_PATH FILE_PATH < <(
-    printf '%s' "$INPUT" | jq -r '[.tool_name // "", .transcript_path // "", .tool_input.file_path // ""] | @tsv' 2>/dev/null
-) || exit 0
+TOOL_NAME=$(_warden_parse_tool_name)
+TRANSCRIPT_PATH=$(_warden_parse_transcript_path)
+IFS=$'\t' read -r FILE_PATH < <(_warden_parse_tool_input file_path)
 
 [[ "$TOOL_NAME" != "Read" ]] && exit 0
 
@@ -54,7 +27,7 @@ IS_SUBAGENT=false
 [[ "$TRANSCRIPT_PATH" == *"/tmp/"* ]] && IS_SUBAGENT=true
 
 # Get file content
-CONTENT=$(printf '%s' "$INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+CONTENT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
 [[ -z "$CONTENT" ]] && exit 0
 ORIGINAL_SIZE=${#CONTENT}
 ORIGINAL_CONTENT="$CONTENT"  # Preserved for API token counting
@@ -63,11 +36,10 @@ ORIGINAL_CONTENT="$CONTENT"  # Preserved for API token counting
 REMINDER_STRIPPED=false
 case "$CONTENT" in
     *'<system-reminder>'*)
-        CONTENT=$(printf '%s' "$CONTENT" | sed '/^<system-reminder>/,/^<\/system-reminder>/d')
-        CONTENT=$(printf '%s' "$CONTENT" | sed -e :a -e '/^[[:space:]]*$/{ $d; N; ba; }')
+        CONTENT=$(_warden_strip_reminders CONTENT)
         REMINDER_STRIPPED=true
-        _EMIT_ORIG_TEXT="$ORIGINAL_CONTENT" _EMIT_FINAL_TEXT="$CONTENT" \
-        _emit_event "truncated" "$ORIGINAL_SIZE" "${#CONTENT}" "system_reminder"
+        WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
+        _warden_emit_event "truncated" "$ORIGINAL_SIZE" "${#CONTENT}" "system_reminder"
         ;;
 esac
 
@@ -77,11 +49,10 @@ LINES=$(printf '%s' "$CONTENT" | wc -l)
 # Detect agent type for threshold adjustment
 AGENT_TYPE=""
 if [[ "$IS_SUBAGENT" == true && "$TRANSCRIPT_PATH" == *"/subagents/"* ]]; then
-    AGENT_ID=$(basename "$TRANSCRIPT_PATH" .jsonl | sed 's/^agent-//')
-    [[ "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]] || AGENT_ID=""
-    SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
-    if [[ -n "$AGENT_ID" && -f "$SUBAGENT_STATE_DIR/$AGENT_ID" ]]; then
-        AGENT_TYPE=$(grep 'AGENT_TYPE=' "$SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null | cut -d= -f2)
+    AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
+    if [[ -n "$AGENT_ID" ]]; then
+        # BUG FIX #1: Add head -1 to prevent multiple line returns from grep
+        AGENT_TYPE=$(grep 'AGENT_TYPE=' "$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null | head -1 | cut -d= -f2)
     fi
 fi
 
@@ -93,19 +64,22 @@ _exit_maybe_stripped() {
     exit 0
 }
 
-# Threshold depends on agent type: code-reviewer/security-auditor=300, subagent=100, main=500
+# Skip compression entirely for non-code files (structural extraction is meaningless)
+FILE_EXT="${FILE_PATH##*.}"
+case "$FILE_EXT" in
+    txt|md|markdown|rst|log|csv|tsv|env|conf|gitignore|dockerignore)
+        _exit_maybe_stripped ;;
+esac
+
+# BUG FIX #2: Removed dead if/else (both branches identical)
+# Threshold: subagent=300, main=500
 if [[ "$IS_SUBAGENT" == true ]]; then
-    if [[ "$AGENT_TYPE" == "code-reviewer" || "$AGENT_TYPE" == "security-auditor" ]]; then
-        (( LINES <= 300 )) && _exit_maybe_stripped
-    else
-        (( LINES <= 100 )) && _exit_maybe_stripped
-    fi
+    (( LINES <= 300 )) && _exit_maybe_stripped
 else
     (( LINES <= 500 )) && _exit_maybe_stripped
 fi
 
 # Config/data file extraction (by extension, before code extraction)
-FILE_EXT="${FILE_PATH##*.}"
 case "$FILE_EXT" in
     json)
         # Extract top-level and one-deep keys
@@ -147,8 +121,8 @@ if [[ -n "$SUMMARY" ]]; then
 
 [Structure extracted: $LINES lines -> $SUMMARY_LINES keys/sections]
 [Use Read with offset/limit for full content]"
-    _EMIT_ORIG_TEXT="$ORIGINAL_CONTENT" _EMIT_FINAL_TEXT="$_FINAL" \
-    _emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_config"
+    WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
+    _warden_emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_config"
     jq -n --arg text "$_FINAL" '{"modifyOutput":$text}'
     exit 0
 fi
@@ -210,6 +184,6 @@ _FINAL="$SUMMARY
 
 [Structure extracted: $LINES lines -> $SUMMARY_LINES signatures]
 [Use Read with offset/limit for implementation details]"
-_EMIT_ORIG_TEXT="$ORIGINAL_CONTENT" _EMIT_FINAL_TEXT="$_FINAL" \
-_emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_code"
+WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
+_warden_emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_code"
 jq -n --arg text "$_FINAL" '{"modifyOutput":$text}'
