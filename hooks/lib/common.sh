@@ -16,7 +16,12 @@ export WARDEN_EVENTS_FILE="$WARDEN_STATE_DIR/events.jsonl"
 # Session start timestamp (cached for this invocation)
 if [[ -f "$WARDEN_STATE_DIR/.session_start" ]]; then
     _WARDEN_SESSION_START_NS=$(cat "$WARDEN_STATE_DIR/.session_start" 2>/dev/null)
-    _WARDEN_SESSION_START_S=$(cut -d. -f1 <<< "$_WARDEN_SESSION_START_NS")
+    # Handle both formats: seconds-only and seconds.nanoseconds
+    if [[ "$_WARDEN_SESSION_START_NS" == *.* ]]; then
+        _WARDEN_SESSION_START_S=$(cut -d. -f1 <<< "$_WARDEN_SESSION_START_NS")
+    else
+        _WARDEN_SESSION_START_S="$_WARDEN_SESSION_START_NS"
+    fi
 else
     _WARDEN_SESSION_START_S=$(date +%s)
 fi

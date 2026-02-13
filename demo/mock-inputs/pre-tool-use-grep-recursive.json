@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"grep -r 'TODO' /home/user/project/src/"},"session_id":"demo-session","transcript_path":"/home/user/.claude/projects/demo/abc123.jsonl"}

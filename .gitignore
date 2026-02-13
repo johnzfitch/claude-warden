@@ -12,6 +12,22 @@ CLAUDE.md
 info.md
 *-security-audit.md
 
+# Internal analysis reports (generated locally)
+docs/ANALYSIS.md
+docs/ANALYSIS-*.md
+
+# Python bytecode (optional token counting helper validation)
+__pycache__/
+*.py[cod]
+
+# Claude Code local settings (keep the repo clean by default)
+.claude/settings.local.json
+
+# Common editor/OS noise
+.DS_Store
+.idea/
+.vscode/
+
 # Demo artifacts
 demo/claude-warden-demo.mp4
 demo/mock-inputs/pre-tool-use-write-large.json

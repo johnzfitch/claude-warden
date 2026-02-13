@@ -1,0 +1,20 @@
+{
+  "session_id": "demo-session",
+  "model": {
+    "display_name": "Claude Opus 4",
+    "id": "claude-opus-4-20250514"
+  },
+  "context_window": {
+    "context_window_size": 200000,
+    "total_input_tokens": 234500,
+    "total_output_tokens": 45200,
+    "used_percentage": "42.3",
+    "current_usage": {
+      "input_tokens": 78500,
+      "output_tokens": 6200,
+      "cache_creation_input_tokens": 12400,
+      "cache_read_input_tokens": 67800
+    }
+  },
+  "tool_count": 47
+}

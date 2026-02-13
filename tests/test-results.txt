@@ -1,0 +1,90 @@
+==========================================
+Claude-Warden Hooks Test Suite
+==========================================
+
+[0;34m[TEST][0m Testing shared library functions
+[0;32m[PASS][0m Sanitize ID: valid input
+[0;32m[PASS][0m Sanitize ID: path traversal blocked
+[0;32m[PASS][0m Sanitize ID: special chars blocked
+[0;32m[PASS][0m Is subagent: subagents path
+[0;32m[PASS][0m Is subagent: tmp path
+[0;32m[PASS][0m Is subagent: regular path (correctly not detected)
+
+[0;34m[TEST][0m Testing pre-tool-use hook
+[0;32m[PASS][0m Allow safe ls command
+[0;32m[PASS][0m Block rm -rf /
+[0;32m[PASS][0m Deny reason includes 'destructive'
+[0;32m[PASS][0m Block ffmpeg without -nostats
+[0;32m[PASS][0m Allow ffmpeg with -nostats
+[0;32m[PASS][0m Block git commit without -q
+[0;32m[PASS][0m Allow git commit with -q
+[0;32m[PASS][0m Block npm install without --silent
+[0;32m[PASS][0m Non-Bash tool passes through
+[0;31m[FAIL][0m Block Write >100KB - Expected to find: '"permissionDecision":"deny"'
+[0;31m[FAIL][0m Block Edit >50KB - Expected to find: '"permissionDecision":"deny"'
+
+[0;34m[TEST][0m Testing read-guard hook
+[0;32m[PASS][0m Allow normal source file
+[0;31m[FAIL][0m Block node_modules file - Expected exit code 2, got 0
+[0;32m[PASS][0m Error message mentions bundled
+[0;31m[FAIL][0m Block minified file - Expected exit code 2, got 0
+[0;31m[FAIL][0m Block package-lock.json - Expected exit code 2, got 0
+[1;33m[INFO][0m Compiled pattern test: checking all patterns work in single regex
+[0;31m[FAIL][0m Compiled pattern failed for: node_modules/
+[0;31m[FAIL][0m Compiled pattern failed for: /dist/
+[0;31m[FAIL][0m Compiled pattern failed for: /build/
+[0;31m[FAIL][0m Compiled pattern failed for: .min.js
+[0;31m[FAIL][0m Compiled pattern failed for: .bundle.js
+[0;31m[FAIL][0m Compiled pattern failed for: package-lock.json
+[0;31m[FAIL][0m Compiled pattern failed for: yarn.lock
+[0;31m[FAIL][0m Compiled pattern failed for: Cargo.lock
+
+[0;34m[TEST][0m Testing permission-request hook
+[0;32m[PASS][0m Auto-deny rm -rf /
+[0;31m[FAIL][0m Auto-deny fork bomb - Expected to find: '"decision":{"behavior":"deny"'
+[0;32m[PASS][0m Auto-deny curl | bash
+[0;32m[PASS][0m Auto-allow whoami
+[0;32m[PASS][0m Default: ask user
+
+[0;34m[TEST][0m Testing stop hook
+[0;32m[PASS][0m Stop hook exits 0
+[0;32m[PASS][0m Stop hook respects stop_hook_active
+[0;32m[PASS][0m No output when stop_hook_active=true
+
+[0;34m[TEST][0m Testing tool-error hook
+[0;32m[PASS][0m Hint mentions sudo for permission denied
+[0;32m[PASS][0m Hint mentions installing for command not found
+[0;32m[PASS][0m Hint mentions read-only
+
+[0;34m[TEST][0m Testing session-lifecycle hook
+[0;32m[PASS][0m SessionStart exits 0
+[0;32m[PASS][0m SessionEnd exits 0
+
+[0;34m[TEST][0m Testing pre-compact hook
+[0;32m[PASS][0m PreCompact injects state summary
+[0;32m[PASS][0m State includes tool count
+[0;32m[PASS][0m State includes budget info
+
+[0;34m[TEST][0m Verifying bug fixes
+[1;33m[INFO][0m Bug #1: Verified by code inspection (head -1 added)
+[0;32m[PASS][0m Bug #1: read-compress AGENT_TYPE extraction
+[1;33m[INFO][0m Bug #2: Verified by code inspection (dead branch removed)
+[0;32m[PASS][0m Bug #2: read-compress threshold logic
+[1;33m[INFO][0m Bug #3: Verified by code inspection (rg only, no || grep)
+[0;32m[PASS][0m Bug #3: pre-tool-use stdin consumption
+[1;33m[INFO][0m Bug #4: Verified by code inspection (mktemp + mv pattern)
+[0;32m[PASS][0m Bug #4: tool-error atomic rotation
+[1;33m[INFO][0m Bug #5: Verified by code inspection (& disown pattern)
+[0;32m[PASS][0m Bug #5: session-start background process
+[1;33m[INFO][0m Bug #6: Verified by code inspection (& disown pattern)
+[0;32m[PASS][0m Bug #6: session-end background process
+[1;33m[INFO][0m Bug #7: Verified by code inspection ((^|[^-])> pattern in shared lib)
+[0;32m[PASS][0m Bug #7: validate-readonly BOL redirects
+
+==========================================
+Test Summary
+==========================================
+[0;32mPassed:[0m 39
+[0;31mFailed:[0m 14
+
+[0;31m✗ Some tests failed[0m

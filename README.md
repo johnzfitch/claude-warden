@@ -4,6 +4,21 @@ Token-saving hooks for [Claude Code](https://docs.anthropic.com/en/docs/claude-c
 
 Pair with [claude-usage-helper](https://github.com/johnzfitch/claude-usage-helper) for budget tracking, cost telemetry, and session analytics. Warden enforces; usage-helper accounts.
 
+## Quickstart
+
+1. Install prerequisites: `jq` (required). Optional: `rg`, `fd`, `budget-cli`.
+2. Install hooks into `~/.claude/` (symlink mode):
+   ```bash
+   ./install.sh
+   ```
+3. Start a new Claude Code session. Hooks will run automatically.
+
+Dry-run (no changes to `~/.claude/`):
+
+```bash
+./install.sh --dry-run
+```
+
 ## Architecture
 
 <picture>
@@ -178,6 +193,18 @@ Commands in the allow-list never reach the permission hook.
 - **`notify-send`**: Falls back to `osascript` (macOS), silently skips if neither available
 - **`rg`**: Falls back to `grep` where used
 
+## Project layout
+
+| Path | Purpose |
+|---|---|
+| `hooks/` | Claude Code hook scripts (bash) |
+| `statusline.sh` | Claude Code statusline script (bash) |
+| `settings.hooks.json` | Hook + statusline configuration template merged into `~/.claude/settings.json` |
+| `install.sh` | Installs hooks + statusline into `~/.claude/` (symlink or copy) and merges settings |
+| `uninstall.sh` | Removes installed hooks/statusline and restores the most recent settings backup |
+| `assets/` | README images (architecture diagram) |
+| `demo/mock-inputs/` | Small, committed JSON fixtures for exercising hooks locally |
+
 ## How it works
 
 Claude Code supports [hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) -- shell commands that run at specific points in the tool-use lifecycle. Hooks receive JSON on stdin describing the tool call and can:
@@ -187,6 +214,53 @@ Claude Code supports [hooks](https://docs.anthropic.com/en/docs/claude-code/hook
 - **Output JSON**: Modify tool output (`{"modifyOutput":"..."}`) or suppress it
 
 claude-warden hooks are pure bash with a single dependency (`jq`). They run in milliseconds and add negligible latency to tool calls. All paths use `$HOME` for portability -- no hardcoded user directories. Every filtering decision (block, truncate, compress, strip) is logged to `~/.claude/.statusline/events.jsonl` with token savings estimates for downstream consumers like [clawback](https://github.com/johnzfitch/clawback).
+
+## Testing
+
+Run the minimal test harness:
+
+```bash
+bash tests/run.sh
+```
+
+It runs shell syntax checks, validates JSON fixtures, and executes a small set of fixture-driven behavioral assertions.
+
+If you want to run checks manually:
+
+```bash
+# Shell syntax
+find hooks -maxdepth 1 -type f ! -name '_token-count-bg' -print0 | xargs -0 bash -n
+bash -n install.sh uninstall.sh statusline.sh
+
+# Optional: validate the Python helper used only for API token counting mode
+command -v python3 >/dev/null 2>&1 && python3 -m py_compile hooks/_token-count-bg
+
+# JSON validity
+jq . settings.hooks.json >/dev/null
+
+# Exercise post-tool-use fixture (system reminder stripping)
+cat demo/mock-inputs/post-tool-use-reminder-bash.json | hooks/post-tool-use | jq -r '.modifyOutput'
+```
+
+## Troubleshooting
+
+### Hooks don’t seem to run
+
+1. Confirm `~/.claude/settings.json` contains the `hooks` configuration (install merges `settings.hooks.json`).
+2. Start a fresh Claude Code session after installing.
+3. If a command is in your `permissions.allow` list, it will not reach the `permission-request` hook.
+
+### Read is being blocked unexpectedly
+
+`read-guard` blocks common bundled/generated patterns (for example `node_modules/`, `dist/`, minified JS) and blocks files larger than 2MB. Search for the original source file or use a bounded read (for example via smaller slices).
+
+## Contributing
+
+See `CONTRIBUTING.md`.
+
+## Security
+
+See `SECURITY.md` for security assumptions, data handling notes, and reporting guidance.
 
 ## Related
 

@@ -1,0 +1,27 @@
+==========================================
+Claude-Warden Hooks Test Suite
+==========================================
+
+[0;34m[TEST][0m Testing shared library functions
+[0;32m[PASS][0m Sanitize ID: valid input
+DEBUG: Completed first test, about to start second
+DEBUG: Called _warden_sanitize_id for path traversal test
+[0;32m[PASS][0m Sanitize ID: path traversal blocked
+[0;32m[PASS][0m Sanitize ID: special chars blocked
+DEBUG: About to test _warden_is_subagent
+[0;32m[PASS][0m Is subagent: subagents path
+DEBUG: Completed first _warden_is_subagent test
+[0;32m[PASS][0m Is subagent: tmp path
+[0;32m[PASS][0m Is subagent: regular path (correctly not detected)
+
+[0;34m[TEST][0m Testing pre-tool-use hook
+[0;32m[PASS][0m Allow safe ls command
+[0;32m[PASS][0m Block rm -rf /
+[0;32m[PASS][0m Deny reason includes 'destructive'
+[0;32m[PASS][0m Block ffmpeg without -nostats
+[0;32m[PASS][0m Allow ffmpeg with -nostats
+[0;32m[PASS][0m Block git commit without -q
+[0;32m[PASS][0m Allow git commit with -q
+[0;32m[PASS][0m Block npm install without --silent
+[0;32m[PASS][0m Non-Bash tool passes through
+[0;31m[FAIL][0m Block Write >100KB - Expected to find: '"permissionDecision":"deny"'

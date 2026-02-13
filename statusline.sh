@@ -34,7 +34,9 @@ parsed="$(
         (.cost.total_api_duration_ms // 0),
         (.cost.total_lines_added // 0),
         (.cost.total_lines_removed // 0)
-      ] | @tsv
+      ]
+      | map(tostring)
+      | join("\u001f")
     ' <<<"$input" 2>/dev/null
 )"
 
@@ -43,7 +45,7 @@ if [ -z "$parsed" ]; then
     exit 0
 fi
 
-IFS=$'\t' read -r \
+IFS=$'\x1f' read -r \
     SESSION_ID \
     MODEL \
     CONTEXT_SIZE \
@@ -56,7 +58,7 @@ IFS=$'\t' read -r \
     CACHE_CREATE \
     CACHE_READ \
     TOOL_COUNT_RAW \
-    COST_USD \
+    COST_RAW \
     DURATION_MS \
     API_DURATION_MS \
     LINES_ADDED \
@@ -106,6 +108,47 @@ format_percent_from_tenths() {
     fi
 }
 
+normalize_cost_usd() {
+    # Claude Code has shipped at least two representations here:
+    # - dollars as a float (e.g. 0.127007)
+    # - microdollars as an integer (e.g. 127007)
+    #
+    # We normalize to USD (dollars) for display + delta math.
+    local raw="${1:-0}"
+    local total_tokens="${2:-0}"
+
+    raw="${raw//[[:space:]]/}"
+    if [[ ! "$raw" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        printf '0'
+        return
+    fi
+
+    # If it already has a decimal point, treat as USD.
+    if [[ "$raw" == *.* ]]; then
+        printf '%s' "$raw"
+        return
+    fi
+
+    total_tokens=$(num_or_zero "$total_tokens")
+    if [ "$total_tokens" -gt 0 ]; then
+        # If interpreted as USD, dollars/token > 1 is nonsense; treat as microdollars.
+        local looks_micro
+        looks_micro=$(LC_NUMERIC=C awk -v cost="$raw" -v tokens="$total_tokens" 'BEGIN {print (cost / tokens > 1) ? 1 : 0}' 2>/dev/null)
+        if [ "${looks_micro:-0}" = "1" ]; then
+            LC_NUMERIC=C awk -v micro="$raw" 'BEGIN {printf "%.6f", micro / 1000000}' 2>/dev/null
+            return
+        fi
+    fi
+
+    # Heuristic: large integers are overwhelmingly likely microdollars.
+    if [ "$raw" -ge 1000 ]; then
+        LC_NUMERIC=C awk -v micro="$raw" 'BEGIN {printf "%.6f", micro / 1000000}' 2>/dev/null
+        return
+    fi
+
+    printf '%s' "$raw"
+}
+
 CONTEXT_SIZE=$(num_or_zero "$CONTEXT_SIZE")
 TOTAL_INPUT=$(num_or_zero "$TOTAL_INPUT")
 TOTAL_OUTPUT=$(num_or_zero "$TOTAL_OUTPUT")
@@ -115,6 +158,7 @@ CACHE_CREATE=$(num_or_zero "$CACHE_CREATE")
 CACHE_READ=$(num_or_zero "$CACHE_READ")
 
 TOTAL=$((TOTAL_INPUT + TOTAL_OUTPUT))
+COST_USD="$(normalize_cost_usd "${COST_RAW:-0}" "$TOTAL")"
 
 CTX_USED=0
 PCT_TENTHS=0
@@ -209,6 +253,7 @@ if [ -n "$SESSION_ID" ] && [ -n "$PREV_SESSION" ] && [ "$SESSION_ID" != "$PREV_S
 fi
 
 PREV_TOTAL=$((PREV_TOTAL_IN + PREV_TOTAL_OUT))
+PREV_COST_USD="$(normalize_cost_usd "${PREV_COST_USD:-0}" "$PREV_TOTAL")"
 SAME_SESSION=0
 if [ -n "$SESSION_ID" ] && [ "$PREV_SESSION" = "$SESSION_ID" ]; then
     SAME_SESSION=1
