@@ -20,24 +20,108 @@ export WARDEN_TOOL_NAME="$TOOL_NAME"
 export WARDEN_COMMAND="$COMMAND"
 export WARDEN_SESSION_ID="$SESSION_ID"
 
+# === SUBAGENT DETECTION (applies to ALL tools) ===
+IS_SUBAGENT=false
+AGENT_TYPE=""
+AGENT_ID=""
+
+if _warden_is_subagent "$TRANSCRIPT_PATH"; then
+    IS_SUBAGENT=true
+    AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
+    if [[ -n "$AGENT_ID" ]]; then
+        AGENT_TYPE=$(_warden_get_agent_type "$AGENT_ID")
+    fi
+fi
+
+# === SUBAGENT BUDGET ENFORCEMENT (applies to ALL tools) ===
+if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
+    # Call count limits per agent type (raised: many calls are cheap Greps)
+    declare -A CALL_LIMITS=(
+        ["Explore"]=30 ["Plan"]=30 ["general-purpose"]=35
+        ["code-reviewer"]=25 ["security-auditor"]=30 ["deep-debugger"]=40
+        ["architect"]=35 ["strategist"]=35 ["nix-expert"]=35
+        ["git-ops"]=25 ["test-runner"]=30 ["refactor"]=30
+        ["Bash"]=20 ["statusline-setup"]=15 ["claude-code-guide"]=25
+    )
+    CALL_BUDGET=${CALL_LIMITS[$AGENT_TYPE]:-30}
+
+    # Cumulative output byte limits per agent type (primary brake)
+    declare -A BYTE_LIMITS=(
+        ["Explore"]=81920 ["Plan"]=81920
+        ["general-purpose"]=122880 ["architect"]=122880 ["strategist"]=122880 ["nix-expert"]=122880
+        ["deep-debugger"]=153600
+        ["code-reviewer"]=102400 ["security-auditor"]=102400
+    )
+    BYTE_BUDGET=${BYTE_LIMITS[$AGENT_TYPE]:-102400}
+
+    WARN_CALL_AT=$((CALL_BUDGET * 80 / 100))
+    WARN_BYTE_AT=$((BYTE_BUDGET * 80 / 100))
+
+    mkdir -p "$WARDEN_SUBAGENT_STATE_DIR"
+    CALL_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.calls"
+    BYTE_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.bytes"
+
+    # Read + increment call count
+    CURRENT_CALLS=0
+    if [[ -f "$CALL_FILE" ]]; then
+        RAW=$(cat "$CALL_FILE" 2>/dev/null || echo "0")
+        if [[ "$RAW" == *"|"* ]]; then
+            CURRENT_CALLS=$(echo "$RAW" | cut -d'|' -f2)
+        else
+            CURRENT_CALLS="$RAW"
+        fi
+        [[ ! "$CURRENT_CALLS" =~ ^[0-9]+$ ]] && CURRENT_CALLS=0
+    fi
+    NEW_CALLS=$((CURRENT_CALLS + 1))
+    printf '%s|%s|%s\n' "$AGENT_ID" "$NEW_CALLS" "$(date +%s)" > "$CALL_FILE"
+
+    # Read cumulative output bytes (written by post-tool-use)
+    CURRENT_BYTES=0
+    if [[ -f "$BYTE_FILE" ]]; then
+        RAW=$(cat "$BYTE_FILE" 2>/dev/null || echo "0")
+        if [[ "$RAW" == *"|"* ]]; then
+            CURRENT_BYTES=$(echo "$RAW" | cut -d'|' -f1)
+        else
+            CURRENT_BYTES="$RAW"
+        fi
+        [[ ! "$CURRENT_BYTES" =~ ^[0-9]+$ ]] && CURRENT_BYTES=0
+    fi
+
+    # Enforce call count budget
+    if (( NEW_CALLS >= CALL_BUDGET )); then
+        _warden_emit_block "budget_calls_exceeded" 2000
+        _warden_deny "BUDGET EXCEEDED: Tool call #$NEW_CALLS >= $CALL_BUDGET limit for $AGENT_TYPE agent. Stop and report findings."
+    elif (( NEW_CALLS >= WARN_CALL_AT )); then
+        echo "WARNING: Tool call #$NEW_CALLS/$CALL_BUDGET for $AGENT_TYPE agent." >&2
+    fi
+
+    # Enforce cumulative output bytes budget
+    if (( CURRENT_BYTES >= BYTE_BUDGET )); then
+        _warden_emit_block "budget_bytes_exceeded" $((CURRENT_BYTES / 4))
+        _warden_deny "BUDGET EXCEEDED: ${CURRENT_BYTES}B cumulative output >= ${BYTE_BUDGET}B limit for $AGENT_TYPE agent. Stop and report findings."
+    elif (( CURRENT_BYTES >= WARN_BYTE_AT )); then
+        echo "WARNING: ${CURRENT_BYTES}B/$((BYTE_BUDGET/1024))KB cumulative output for $AGENT_TYPE agent." >&2
+    fi
+fi
+
 # === NON-BASH TOOLS: fast path ===
 case "$TOOL_NAME" in
     Write)
-        CONTENT=$(printf '%s' "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null)
-        FILE_PATH=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
+        CONTENT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null)
+        FILE_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
         (( ${#CONTENT} > 102400 )) && { _warden_emit_block "write_oversize" 25000 "Write ${#CONTENT}B → $FILE_PATH"; _warden_deny "Write >${#CONTENT}B (>100KB)"; }
         _warden_suppress_ok ;;
     Edit)
-        NEW=$(printf '%s' "$INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null)
-        FILE_PATH=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
+        NEW=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null)
+        FILE_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
         (( ${#NEW} > 51200 )) && { _warden_emit_block "edit_oversize" 12500 "Edit ${#NEW}B → $FILE_PATH"; _warden_deny "Edit >${#NEW}B (>50KB)"; }
         _warden_suppress_ok ;;
     NotebookEdit)
-        NEW_SOURCE=$(printf '%s' "$INPUT" | jq -r '.tool_input.new_source // ""' 2>/dev/null)
+        NEW_SOURCE=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.new_source // ""' 2>/dev/null)
         (( ${#NEW_SOURCE} > 51200 )) && { _warden_emit_block "notebook_oversize" 12500 "NotebookEdit ${#NEW_SOURCE}B"; _warden_deny "NotebookEdit >${#NEW_SOURCE}B (>50KB)"; }
         _warden_suppress_ok ;;
     Glob)
-        read -r PATTERN GLOB_PATH < <(printf '%s' "$INPUT" | jq -r '[.tool_input.pattern // "", .tool_input.path // ""] | @tsv' 2>/dev/null)
+        read -r PATTERN GLOB_PATH < <(printf '%s' "$WARDEN_INPUT" | jq -r '[.tool_input.pattern // "", .tool_input.path // ""] | @tsv' 2>/dev/null)
         HOME_DIR_RE='^(/home/[^/]+|~|/Users/[^/]+|/root)/?$'
         if [[ "$PATTERN" =~ \*\* ]]; then
             if [[ "$GLOB_PATH" =~ $HOME_DIR_RE ]] || [[ -z "$GLOB_PATH" && "$PWD" =~ $HOME_DIR_RE ]]; then
@@ -76,59 +160,8 @@ case "$NORM_CMD" in
         _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution" ;;
 esac
 
-# === SUBAGENT DETECTION (from subagent-guard) ===
-IS_SUBAGENT=false
-AGENT_TYPE=""
-AGENT_ID=""
-
-if _warden_is_subagent "$TRANSCRIPT_PATH"; then
-    IS_SUBAGENT=true
-    AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
-    if [[ -n "$AGENT_ID" ]]; then
-        AGENT_TYPE=$(_warden_get_agent_type "$AGENT_ID")
-        SESSION_ID_FROM_STATE=$(grep '^SESSION_ID=' "$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null | head -1 | cut -d= -f2)
-    fi
-fi
-
-# === SUBAGENT STRICT MODE (from subagent-guard) ===
+# === SUBAGENT BASH-SPECIFIC BLOCKS ===
 if [[ "$IS_SUBAGENT" == true ]]; then
-    # Budget limits per agent type
-    declare -A BUDGET_LIMITS=(
-        ["Explore"]=15 ["Plan"]=15 ["general-purpose"]=20
-        ["code-reviewer"]=15 ["security-auditor"]=20 ["deep-debugger"]=25
-        ["architect"]=20 ["strategist"]=20 ["nix-expert"]=20
-        ["git-ops"]=15 ["test-runner"]=20 ["refactor"]=20
-        ["Bash"]=15 ["statusline-setup"]=10 ["claude-code-guide"]=15
-    )
-    BUDGET=${BUDGET_LIMITS[$AGENT_TYPE]:-20}
-    WARN_AT=$((BUDGET * 80 / 100))
-
-    if [[ -n "$AGENT_ID" ]]; then
-        STATUSLINE_DIR="$HOME/.claude/.statusline"
-        mkdir -p "$WARDEN_STATE_DIR"
-        TOOL_COUNT_FILE="$WARDEN_STATE_DIR/tool-count-$AGENT_ID"
-        CURRENT_COUNT=0
-        if [[ -f "$TOOL_COUNT_FILE" ]]; then
-            RAW=$(cat "$TOOL_COUNT_FILE" 2>/dev/null || echo "0")
-            # Handle pipe-delimited format (id|count|timestamp) from statusline
-            if [[ "$RAW" == *"|"* ]]; then
-                CURRENT_COUNT=$(echo "$RAW" | cut -d'|' -f2)
-            else
-                CURRENT_COUNT="$RAW"
-            fi
-            [[ ! "$CURRENT_COUNT" =~ ^[0-9]+$ ]] && CURRENT_COUNT=0
-        fi
-        NEW_COUNT=$((CURRENT_COUNT + 1))
-        printf '%s|%s|%s\n' "$AGENT_ID" "$NEW_COUNT" "$(date +%s)" > "$TOOL_COUNT_FILE"
-
-        if (( NEW_COUNT >= BUDGET )); then
-            _warden_emit_block "budget_exceeded" 2000; _warden_deny "BUDGET EXCEEDED: Tool call #$NEW_COUNT >= $BUDGET limit for $AGENT_TYPE agent. Stop and report findings."
-        elif (( NEW_COUNT >= WARN_AT )); then
-            echo "WARNING: Tool call #$NEW_COUNT/$BUDGET for $AGENT_TYPE agent. Approaching budget limit." >&2
-        fi
-    fi
-
-    # Block inefficient patterns in subagents
     [[ "$COMMAND" =~ (^|[[:space:]]|[;&|])[[:space:]]*find[[:space:]] ]] && { _warden_emit_block "subagent_find" 3000; _warden_deny "Use Glob tool instead of find"; }
     [[ "$COMMAND" =~ xargs[[:space:]]+(grep|rg) ]] && { _warden_emit_block "subagent_xargs_grep" 5000; _warden_deny "Use Grep tool instead of xargs grep"; }
     [[ "$COMMAND" =~ (^|[;&]|&&|\|\|)[[:space:]]*grep[[:space:]] ]] && { _warden_emit_block "subagent_grep" 5000; _warden_deny "Use Grep tool or rg instead of grep"; }

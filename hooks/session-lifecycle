@@ -112,19 +112,20 @@ if [[ "$HOOK_EVENT" == "SessionEnd" ]]; then
       grep -q "^SESSION_ID=${SESSION_ID}$" "$state_file" 2>/dev/null || continue
       ORPHAN_ID=$(basename "$state_file")
       budget-cli complete "$ORPHAN_ID" 2>/dev/null || true
-      rm -f "$state_file" "$state_file.start"
+      rm -f "$state_file" "$state_file.start" "$state_file.calls" "$state_file.bytes"
     done
   fi
 
   # === STATE FILE CLEANUP ===
   # Purge stale state files older than 24 hours
   if [[ -d "$WARDEN_STATE_DIR" ]]; then
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mmin +1440 -delete 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mmin +1440 -delete 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mmin +1440 -delete 2>/dev/null || true
   fi
   if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]]; then
     find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.start' -mmin +1440 -delete 2>/dev/null || true
+    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.calls' -mmin +1440 -delete 2>/dev/null || true
+    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.bytes' -mmin +1440 -delete 2>/dev/null || true
     find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f ! -name '.*' -mmin +1440 -delete 2>/dev/null || true
   fi
 

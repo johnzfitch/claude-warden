@@ -74,6 +74,30 @@ if [[ -n "$SESSION_ID" ]]; then
     fi
 fi
 
+# === SUBAGENT DETECTION + CUMULATIVE BYTE TRACKING ===
+TRANSCRIPT_PATH=$(_warden_parse_transcript_path)
+IS_SUBAGENT=false
+AGENT_ID=""
+
+if _warden_is_subagent "$TRANSCRIPT_PATH"; then
+    IS_SUBAGENT=true
+    AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
+fi
+
+if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
+    BYTE_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.bytes"
+    PREV_BYTES=0
+    if [[ -f "$BYTE_FILE" ]]; then
+        RAW=$(cat "$BYTE_FILE" 2>/dev/null || echo "0")
+        if [[ "$RAW" == *"|"* ]]; then
+            PREV_BYTES=$(echo "$RAW" | cut -d'|' -f1)
+        fi
+        [[ ! "$PREV_BYTES" =~ ^[0-9]+$ ]] && PREV_BYTES=0
+    fi
+    NEW_BYTES=$((PREV_BYTES + OUTPUT_SIZE))
+    printf '%s|%s|%s\n' "$NEW_BYTES" "$TOOL_NAME" "$(date +%s)" > "$BYTE_FILE"
+fi
+
 # === SYSTEM REMINDER STRIP (all tools) ===
 # <system-reminder> blocks are injected into tool_response text by Claude Code infra.
 # They repeat per-call and compound across sessions. Strip before any further processing.
@@ -110,8 +134,14 @@ if (( OUTPUT_SIZE > 50 )); then
 fi
 
 # Truncate large outputs from Bash, Grep, Glob, Task (Read handled by read-compress)
+# Subagent Reads also fall through: safety net when read-compress fails
 case "$TOOL_NAME" in
     Bash|Grep|Glob|Task) ;;
+    Read)
+        if [[ "$IS_SUBAGENT" != true ]]; then
+            _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _warden_suppress_ok
+        fi
+        ;;
     *) _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _warden_suppress_ok ;;
 esac
 
@@ -156,8 +186,12 @@ if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
     # Fall through to generic truncation if structured extraction yielded too little
 fi
 
-# Fast path: small outputs
-(( OUTPUT_SIZE <= 20480 )) && { _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _exit_clean_or_suppress; }
+# Fast path: small outputs (subagent Reads use tighter 10KB threshold)
+TRUNCATION_THRESHOLD=20480
+if [[ "$IS_SUBAGENT" == true && "$TOOL_NAME" == "Read" ]]; then
+    TRUNCATION_THRESHOLD=10240
+fi
+(( OUTPUT_SIZE <= TRUNCATION_THRESHOLD )) && { _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _exit_clean_or_suppress; }
 
 # Need actual output content for truncation - extract only when needed
 # Skip re-extraction if reminder strip already populated OUTPUT
@@ -166,7 +200,7 @@ if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
     OUTPUT_SIZE=${#OUTPUT}
 
     # Re-check after actual extraction (jq length vs bash length may differ)
-    (( OUTPUT_SIZE <= 20480 )) && { _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _exit_clean_or_suppress; }
+    (( OUTPUT_SIZE <= TRUNCATION_THRESHOLD )) && { _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _exit_clean_or_suppress; }
 fi
 
 # Binary check: pipe through grep since bash variables can't hold null bytes
