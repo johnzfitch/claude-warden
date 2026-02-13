@@ -3,10 +3,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOKS_DIR="$(cd "$SCRIPT_DIR/../hooks" && pwd)"
+# Test the ACTUAL deployment that Claude Code uses, not the repo directly
+HOOKS_DIR="$HOME/.claude/hooks"
 TESTS_PASSED=0
 TESTS_FAILED=0
 VERBOSE=${VERBOSE:-0}
+
+# Verify deployment exists
+if [[ ! -d "$HOOKS_DIR" ]]; then
+    echo "ERROR: Hooks directory $HOOKS_DIR does not exist!"
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -47,6 +54,7 @@ run_hook() {
 }
 
 # Test helper: run hook and preserve exit code
+# Note: Must be called with set +e temporarily to capture non-zero exits
 run_hook_check_exit() {
     local hook_name="$1"
     local input_json="$2"
@@ -58,6 +66,21 @@ run_hook_check_exit() {
 
     printf '%s' "$input_json" | timeout "$timeout" "$HOOKS_DIR/$hook_name" 2>&1
     return $?
+}
+
+# Test helper: run hook and capture both output and exit code safely
+# Usage: run_and_capture OUTPUT EXIT_CODE hook_name input_json
+run_and_capture() {
+    local -n output_var=$1
+    local -n exit_var=$2
+    local hook_name="$3"
+    local input_json="$4"
+    local timeout="${5:-5}"
+
+    set +e  # Temporarily disable exit-on-error
+    output_var=$(printf '%s' "$input_json" | timeout "$timeout" "$HOOKS_DIR/$hook_name" 2>&1)
+    exit_var=$?
+    set -e  # Re-enable exit-on-error
 }
 
 # Test helper: check if output contains expected string
@@ -117,6 +140,12 @@ echo ""
 log_test "Testing shared library functions"
 
 # Test _warden_sanitize_id
+# Source the deployed shared library (via symlink)
+if [[ ! -f "$HOOKS_DIR/lib/common.sh" ]]; then
+    log_fail "Shared library not found at $HOOKS_DIR/lib/common.sh"
+    echo "ERROR: Deployment incomplete - lib directory missing"
+    exit 1
+fi
 source "$HOOKS_DIR/lib/common.sh"
 
 ID_VALID=$(_warden_sanitize_id "abc123-_XYZ")
@@ -225,27 +254,23 @@ log_test "Testing read-guard hook"
 
 # Test 1: Allow normal file
 INPUT='{"tool_name":"Read","tool_input":{"file_path":"/home/user/code/main.py"}}'
-OUTPUT=$(run_hook_check_exit "read-guard" "$INPUT")
-EXIT_CODE=$?
+run_and_capture OUTPUT EXIT_CODE "read-guard" "$INPUT"
 assert_exit_code "$EXIT_CODE" 0 "Allow normal source file"
 
 # Test 2: Block node_modules
 INPUT='{"tool_name":"Read","tool_input":{"file_path":"/home/user/project/node_modules/lodash/index.js"}}'
-OUTPUT=$(run_hook_check_exit "read-guard" "$INPUT")
-EXIT_CODE=$?
+run_and_capture OUTPUT EXIT_CODE "read-guard" "$INPUT"
 assert_exit_code "$EXIT_CODE" 2 "Block node_modules file"
 assert_contains "$OUTPUT" "bundled" "Error message mentions bundled"
 
 # Test 3: Block minified file
 INPUT='{"tool_name":"Read","tool_input":{"file_path":"/home/user/dist/app.min.js"}}'
-OUTPUT=$(run_hook_check_exit "read-guard" "$INPUT")
-EXIT_CODE=$?
+run_and_capture OUTPUT EXIT_CODE "read-guard" "$INPUT"
 assert_exit_code "$EXIT_CODE" 2 "Block minified file"
 
 # Test 4: Block package-lock.json
 INPUT='{"tool_name":"Read","tool_input":{"file_path":"/home/user/project/package-lock.json"}}'
-OUTPUT=$(run_hook_check_exit "read-guard" "$INPUT")
-EXIT_CODE=$?
+run_and_capture OUTPUT EXIT_CODE "read-guard" "$INPUT"
 assert_exit_code "$EXIT_CODE" 2 "Block package-lock.json"
 
 # Test 5: Test compiled pattern (single regex match)
@@ -253,8 +278,7 @@ log_info "Compiled pattern test: checking all patterns work in single regex"
 PATTERNS=("node_modules/" "/dist/" "/build/" ".min.js" ".bundle.js" "package-lock.json" "yarn.lock" "Cargo.lock")
 for pattern in "${PATTERNS[@]}"; do
     INPUT='{"tool_name":"Read","tool_input":{"file_path":"/test/'"$pattern"'"}}'
-    OUTPUT=$(run_hook_check_exit "read-guard" "$INPUT")
-    EXIT_CODE=$?
+    run_and_capture OUTPUT EXIT_CODE "read-guard" "$INPUT"
     if [[ $EXIT_CODE -eq 2 ]]; then
         log_pass "Compiled pattern blocks: $pattern"
     else
