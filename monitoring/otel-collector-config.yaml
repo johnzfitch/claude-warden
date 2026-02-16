@@ -1,0 +1,91 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Tail claude-warden hook events
+  filelog/warden:
+    include:
+      - /var/log/claude/events.jsonl
+    start_at: end
+    operators:
+      - type: json_parser
+      # Note: the "timestamp" field in events.jsonl is relative (seconds since
+      # session start), not an epoch. We preserve it as an attribute for delta
+      # calculations but use the filelog ingestion time as the log timestamp.
+      - type: move
+        from: attributes.timestamp
+        to: attributes.session_relative_ts
+      - type: move
+        from: attributes.event_type
+        to: attributes.event.type
+      - type: move
+        from: attributes.tool
+        to: attributes.tool.name
+      - type: severity_parser
+        parse_from: attributes.event.type
+        mapping:
+          info:
+            - allowed
+            - completed
+            - tool_latency
+          warn:
+            - blocked
+            - truncated
+            - suppressed
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+  resource:
+    attributes:
+      - key: service.name
+        value: claude-code
+        action: upsert
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    send_timestamps: true
+    metric_expiration: 180m
+    enable_open_metrics: true
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  otlp_http/loki:
+    endpoint: http://localhost:3100/otlp
+    tls:
+      insecure: true
+
+  debug:
+    verbosity: basic
+    sampling_initial: 2
+    sampling_thereafter: 500
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, debug]
+    logs:
+      receivers: [otlp, filelog/warden]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_http/loki, debug]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]
+
+  extensions: []
+
+  telemetry:
+    logs:
+      level: "info"

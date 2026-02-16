@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # OTEL Collector prometheus exporter
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['localhost:8889']
+
+  # Budget-cli metrics via node-exporter textfile
+  - job_name: 'claude-budget'
+    static_configs:
+      - targets: ['localhost:9101']
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

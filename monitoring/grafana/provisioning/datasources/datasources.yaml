@@ -1,0 +1,22 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: PBFA97CFB590B2093
+    access: proxy
+    url: http://localhost:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST
+
+  - name: Loki
+    type: loki
+    uid: loki-claude-warden
+    access: proxy
+    url: http://localhost:3100
+    editable: true
+    jsonData:
+      maxLines: 1000
