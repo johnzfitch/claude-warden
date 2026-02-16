@@ -193,15 +193,110 @@ Commands in the allow-list never reach the permission hook.
 - **`notify-send`**: Falls back to `osascript` (macOS), silently skips if neither available
 - **`rg`**: Falls back to `grep` where used
 
+## Monitoring stack
+
+Warden includes an optional observability stack in `monitoring/` that persists hook events, measures per-tool latency, and emits OTLP trace spans.
+
+### Components
+
+| Service | Image | Port | Purpose |
+|---|---|---|---|
+| Loki | `grafana/loki:3.4.2` | 3100 | Log aggregation (30-day retention, TSDB filesystem storage) |
+| OTEL Collector | `otel/opentelemetry-collector-contrib` | 4317/4318 | Receives OTLP logs + traces, tails `events.jsonl`, exports to Loki |
+| Prometheus | `prom/prometheus` | 9090 | Metrics (Claude Code OTLP metrics + node-exporter textfiles) |
+| Node Exporter | `prom/node-exporter` | 9101 | Textfile collector for `budget-cli` metrics |
+| Grafana | `grafana/grafana` | 3000 | Dashboards (admin/admin) |
+
+### Setup
+
+```bash
+cd ~/dev/claude-warden/monitoring
+docker compose up -d
+```
+
+All containers use `network_mode: host` -- no port mapping conflicts, services reach each other on localhost.
+
+### Data flow
+
+```
+Claude Code ──OTLP──> OTEL Collector ──> Loki (logs)
+                           │              Prometheus (metrics)
+                           │              debug (traces)
+                           │
+hooks/events.jsonl ──filelog──> OTEL Collector ──> Loki
+
+hooks/pre-tool-use  ──records start timestamp──>  state file
+hooks/post-tool-use ──computes latency──> events.jsonl (tool_latency)
+                    ──curl OTLP/HTTP──> OTEL Collector (trace span)
+```
+
+### Per-tool latency tracking
+
+Every tool call gets wall-clock timing measured by the hooks:
+
+1. `pre-tool-use` writes a nanosecond timestamp to `$STATE_DIR/.tool-start-$TOOL-$$`
+2. `post-tool-use` reads it, computes `duration_ms`, emits a `tool_latency` event to `events.jsonl`
+3. A trace span is fired to the OTEL collector via `hooks/lib/otel-trace.sh` (fire-and-forget curl)
+
+Latency events flow through the collector into Loki and are queryable via LogQL:
+
+```
+{service_name="claude-code"} | json | event_type="tool_latency" | duration_ms > 2000
+```
+
+### Trace spans
+
+`hooks/lib/otel-trace.sh` emits one OTLP span per tool call to `localhost:4318/v1/traces`:
+
+- **trace_id**: deterministic from session ID (md5, 32 hex chars)
+- **span_id**: random 16 hex chars per call
+- **parent_span_id**: deterministic root span from session ID
+- Attributes: `tool.name`, `tool.command` (first 200 chars), `tool.output_bytes`, `tool.duration_ms`
+
+Traces currently export to `debug` (collector stdout). Add Grafana Tempo for full trace visualization.
+
+### Dashboards
+
+Two provisioned dashboards in `monitoring/grafana/dashboards/`:
+
+| Dashboard | UID | What it shows |
+|---|---|---|
+| Working Dashboard | `working-dashboard` | Cost, tokens, session duration, API metrics (Prometheus) |
+| Tool Latency & Traces | `warden-tool-latency` | Latency scatter plot, per-tool avg/p95/max bar chart, call frequency, slow call table, event log, trace span rate, event type distribution (Loki) |
+
+### Verification
+
+```bash
+# Loki healthy
+curl -s http://localhost:3100/ready
+
+# Query tool latency events
+curl -sG http://localhost:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={service_name="claude-code"} | json | event_type="tool_latency"' \
+  --data-urlencode 'limit=5' \
+  --data-urlencode "start=$(date -d '1 hour ago' +%s)" \
+  --data-urlencode "end=$(date +%s)"
+
+# Check trace spans in collector
+docker logs otel-collector --tail 10 2>&1 | grep Traces
+
+# Check latency events in events.jsonl
+grep tool_latency ~/.claude/.statusline/events.jsonl | tail -5
+```
+
 ## Project layout
 
 | Path | Purpose |
 |---|---|
 | `hooks/` | Claude Code hook scripts (bash) |
+| `hooks/lib/common.sh` | Shared library: input parsing, event emission, latency tracking |
+| `hooks/lib/otel-trace.sh` | Lightweight OTLP/HTTP trace span emitter (bash + curl) |
 | `statusline.sh` | Claude Code statusline script (bash) |
 | `settings.hooks.json` | Hook + statusline configuration template merged into `~/.claude/settings.json` |
 | `install.sh` | Installs hooks + statusline into `~/.claude/` (symlink or copy) and merges settings |
 | `uninstall.sh` | Removes installed hooks/statusline and restores the most recent settings backup |
+| `monitoring/` | Docker Compose observability stack (Loki, OTEL Collector, Prometheus, Grafana) |
+| `monitoring/grafana/` | Grafana provisioning (datasources, dashboards) |
 | `assets/` | README images (architecture diagram) |
 | `demo/mock-inputs/` | Small, committed JSON fixtures for exercising hooks locally |
 
