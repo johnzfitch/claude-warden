@@ -20,6 +20,9 @@ export WARDEN_TOOL_NAME="$TOOL_NAME"
 export WARDEN_COMMAND="$COMMAND"
 export WARDEN_SESSION_ID="$SESSION_ID"
 
+# Record tool start for latency tracking (read by post-tool-use)
+_warden_record_tool_start "$TOOL_NAME"
+
 # === SUBAGENT DETECTION (applies to ALL tools) ===
 IS_SUBAGENT=false
 AGENT_TYPE=""

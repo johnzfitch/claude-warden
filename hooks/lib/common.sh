@@ -347,6 +347,82 @@ _warden_validate_git() {
 }
 
 # ==============================================================================
+# TOOL LATENCY TRACKING
+# ==============================================================================
+
+# Record tool start timestamp for latency measurement
+# Usage: _warden_record_tool_start "$TOOL_NAME"
+# Writes nanosecond timestamp to state file
+_warden_record_tool_start() {
+    local tool_name="$1"
+    [[ -z "$tool_name" ]] && return
+    mkdir -p "$WARDEN_STATE_DIR"
+    date +%s%N > "$WARDEN_STATE_DIR/.tool-start-${tool_name}-$$" 2>/dev/null
+}
+
+# Compute tool latency from recorded start timestamp
+# Usage: _warden_compute_tool_latency "$TOOL_NAME"
+# Sets: WARDEN_TOOL_LATENCY_MS (integer ms), WARDEN_TOOL_START_NS, WARDEN_TOOL_END_NS
+# Returns: 0 if computed, 1 if no start timestamp found
+_warden_compute_tool_latency() {
+    local tool_name="$1"
+    WARDEN_TOOL_LATENCY_MS=""
+    WARDEN_TOOL_START_NS=""
+    WARDEN_TOOL_END_NS=""
+
+    # Find the most recent start file for this tool (any PID)
+    local start_file=""
+    local newest_file=""
+    local newest_mtime=0
+    for f in "$WARDEN_STATE_DIR"/.tool-start-"${tool_name}"-*; do
+        [[ -f "$f" ]] || continue
+        local mtime
+        mtime=$(_warden_stat_mtime "$f")
+        if (( mtime > newest_mtime )); then
+            newest_mtime=$mtime
+            newest_file="$f"
+        fi
+    done
+    start_file="$newest_file"
+
+    [[ -z "$start_file" || ! -f "$start_file" ]] && return 1
+
+    WARDEN_TOOL_START_NS=$(cat "$start_file" 2>/dev/null)
+    rm -f "$start_file" 2>/dev/null
+
+    [[ ! "$WARDEN_TOOL_START_NS" =~ ^[0-9]+$ ]] && return 1
+
+    WARDEN_TOOL_END_NS=$(date +%s%N)
+    local delta_ns=$(( WARDEN_TOOL_END_NS - WARDEN_TOOL_START_NS ))
+    WARDEN_TOOL_LATENCY_MS=$(( delta_ns / 1000000 ))
+
+    # Sanity: reject negative or absurdly large (>10min) values
+    if (( WARDEN_TOOL_LATENCY_MS < 0 || WARDEN_TOOL_LATENCY_MS > 600000 )); then
+        WARDEN_TOOL_LATENCY_MS=""
+        return 1
+    fi
+
+    export WARDEN_TOOL_LATENCY_MS WARDEN_TOOL_START_NS WARDEN_TOOL_END_NS
+    return 0
+}
+
+# Emit tool latency event to events.jsonl
+# Usage: _warden_emit_latency "$TOOL_NAME" "$LATENCY_MS" "$COMMAND"
+_warden_emit_latency() {
+    local tool_name="$1" latency_ms="$2" cmd="${3:-}"
+    local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+
+    local cmd_safe="${cmd:0:200}"
+    cmd_safe="${cmd_safe//$'\n'/ }"
+    cmd_safe="${cmd_safe//\\/\\\\}"
+    cmd_safe="${cmd_safe//\"/\\\"}"
+
+    printf '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}\n' \
+        "$ts" "$tool_name" "$latency_ms" "$cmd_safe" \
+        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+}
+
+# ==============================================================================
 # INITIALIZATION COMPLETE
 # ==============================================================================
 # Library loaded. Hooks can now use all _warden_* functions.

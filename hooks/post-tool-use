@@ -98,6 +98,24 @@ if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
     printf '%s|%s|%s\n' "$NEW_BYTES" "$TOOL_NAME" "$(date +%s)" > "$BYTE_FILE"
 fi
 
+# === TOOL LATENCY + TRACE SPAN ===
+if _warden_compute_tool_latency "$TOOL_NAME"; then
+    _warden_emit_latency "$TOOL_NAME" "$WARDEN_TOOL_LATENCY_MS" "$COMMAND"
+
+    # Emit OTLP trace span (fire-and-forget)
+    if [[ -f "${BASH_SOURCE[0]%/*}/lib/otel-trace.sh" ]]; then
+        source "${BASH_SOURCE[0]%/*}/lib/otel-trace.sh"
+        _warden_emit_trace_span \
+            "$TOOL_NAME" \
+            "$WARDEN_TOOL_START_NS" \
+            "$WARDEN_TOOL_END_NS" \
+            "$SESSION_ID" \
+            "$COMMAND" \
+            "$OUTPUT_SIZE" &
+        disown
+    fi
+fi
+
 # === SYSTEM REMINDER STRIP (all tools) ===
 # <system-reminder> blocks are injected into tool_response text by Claude Code infra.
 # They repeat per-call and compound across sessions. Strip before any further processing.
