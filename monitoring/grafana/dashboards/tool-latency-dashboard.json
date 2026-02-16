@@ -1,0 +1,536 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "title": "Tool Calls",
+      "description": "Total tool_latency events in the selected time range",
+      "type": "stat",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "id": 1,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 10 },
+              { "color": "yellow", "value": 100 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["sum"] } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "count_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" [$__range])",
+          "legendFormat": "calls",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Avg Latency",
+      "description": "Average tool call duration across all tools",
+      "type": "stat",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "id": 2,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2000 },
+              { "color": "red", "value": 5000 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["mean"] } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "avg_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range])",
+          "legendFormat": "avg",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Max Latency",
+      "description": "Peak tool call duration",
+      "type": "stat",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "id": 3,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5000 },
+              { "color": "red", "value": 10000 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["max"] } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "max_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range])",
+          "legendFormat": "max",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Slow Calls (>2s)",
+      "description": "Tool calls exceeding 2 second threshold",
+      "type": "stat",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "id": 4,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 15 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["sum"] } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "count_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | duration_ms > 2000 [$__range])",
+          "legendFormat": "slow",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Blocked Events",
+      "description": "Warden-blocked tool calls in the time range",
+      "type": "stat",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 0 },
+      "id": 5,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["sum"] } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "count_over_time({service_name=\"claude-code\"} | json | event_type=\"blocked\" [$__range])",
+          "legendFormat": "blocked",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Tokens Saved",
+      "description": "Estimated tokens saved by warden interventions",
+      "type": "stat",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 0 },
+      "id": 6,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 1000 },
+              { "color": "super-light-green", "value": 10000 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["sum"] } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "sum_over_time({service_name=\"claude-code\"} | json | unwrap tokens_saved [$__range])",
+          "legendFormat": "saved",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Tool Latency Over Time",
+      "description": "Per-tool duration_ms plotted over time. Each point is one tool call.",
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 5 },
+      "id": 10,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 7,
+            "showPoints": "always",
+            "lineWidth": 0,
+            "axisBorderShow": true
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2000 },
+              { "color": "red", "value": 5000 }
+            ]
+          },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "single", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "sum by (tool_name) (max_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__interval]))",
+          "legendFormat": "{{tool_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Latency by Tool (avg / p95 / max)",
+      "description": "Breakdown of latency statistics per tool type",
+      "type": "barchart",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "id": 11,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": true
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always",
+        "groupWidth": 0.7,
+        "barWidth": 0.8,
+        "stacking": "none",
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "avg_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]) by (tool_name)",
+          "legendFormat": "{{tool_name}} avg",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "quantile_over_time(0.95, {service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]) by (tool_name)",
+          "legendFormat": "{{tool_name}} p95",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "max_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]) by (tool_name)",
+          "legendFormat": "{{tool_name}} max",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "title": "Tool Call Frequency",
+      "description": "Rate of tool calls per minute, grouped by tool",
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "id": 12,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "fillOpacity": 60,
+            "stacking": { "mode": "normal" },
+            "axisBorderShow": true
+          },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["sum"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "sum by (tool_name) (count_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" [1m]))",
+          "legendFormat": "{{tool_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Warden Event Log",
+      "description": "All warden hook events: blocks, truncations, latency measurements",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+      "id": 20,
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "{service_name=\"claude-code\"} | json",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Slow Tool Calls (>2s)",
+      "description": "Table of tool calls exceeding 2 second threshold with command details",
+      "type": "table",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 32 },
+      "id": 21,
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "duration_ms" },
+            "properties": [
+              { "id": "unit", "value": "ms" },
+              { "id": "custom.width", "value": 110 },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "yellow", "value": null },
+                    { "color": "orange", "value": 5000 },
+                    { "color": "red", "value": 10000 }
+                  ]
+                }
+              },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "tool_name" },
+            "properties": [
+              { "id": "custom.width", "value": 100 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Time" },
+            "properties": [
+              { "id": "custom.width", "value": 180 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "original_cmd" },
+            "properties": [
+              { "id": "custom.width", "value": 600 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "duration_ms", "desc": true }]
+      },
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": { "source": "labels", "format": "auto" }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "id": true,
+              "tsNs": true,
+              "labels": true,
+              "Line": true,
+              "severity_number": true,
+              "severity_text": true,
+              "detected_level": true,
+              "log_file_name": true,
+              "session_relative_ts": true,
+              "timestamp": true,
+              "event_type": true,
+              "rule": true,
+              "service_name": true,
+              "tool": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "tool_name": 1,
+              "duration_ms": 2,
+              "original_cmd": 3
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "{service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | duration_ms > 2000",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Trace Spans (OTEL Collector Debug)",
+      "description": "Trace span activity from hook-emitted OTLP spans. Shows spans received by the collector over time. Full trace visualization requires adding Tempo.",
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 41 },
+      "id": 30,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "fillOpacity": 40,
+            "stacking": { "mode": "none" },
+            "axisBorderShow": true
+          },
+          "color": { "fixedColor": "purple", "mode": "fixed" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "count_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" [1m])",
+          "legendFormat": "spans/min",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Output Size vs Latency",
+      "description": "Correlation between tool output bytes and hook-measured latency. Larger outputs tend to take longer due to streaming and post-processing.",
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
+      "id": 31,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 6,
+            "showPoints": "always",
+            "lineWidth": 0,
+            "axisBorderShow": true
+          },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "max_over_time({service_name=\"claude-code\"} | json | event_type=\"allowed\" | unwrap original_output_bytes [$__interval])",
+          "legendFormat": "output bytes",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "max_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__interval])",
+          "legendFormat": "latency ms",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Event Type Distribution",
+      "description": "Breakdown of all warden event types: allowed, blocked, truncated, tool_latency",
+      "type": "piechart",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
+      "id": 32,
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["sum"] },
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "sum by (event_type) (count_over_time({service_name=\"claude-code\"} | json [$__range]))",
+          "legendFormat": "{{event_type}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["claude-code", "warden", "latency", "otel"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Warden: Tool Latency & Traces",
+  "uid": "warden-tool-latency",
+  "version": 1
+}
