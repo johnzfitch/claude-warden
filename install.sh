@@ -152,6 +152,21 @@ for hook in "${HOOK_FILES[@]}"; do
     fi
 done
 
+# === Install lib directory ===
+LIB_SRC="$WARDEN_DIR/hooks/lib"
+LIB_DST="$HOOKS_DIR/lib"
+if [[ -d "$LIB_SRC" ]]; then
+    info "Installing hooks/lib ($MODE mode)..."
+    [[ -e "$LIB_DST" || -L "$LIB_DST" ]] && run rm -rf "$LIB_DST"
+    if [[ "$MODE" == "symlink" ]]; then
+        run ln -s "$LIB_SRC" "$LIB_DST"
+        dim "lib/ -> $LIB_SRC"
+    else
+        run cp -a "$LIB_SRC" "$LIB_DST"
+        dim "lib/ (copied)"
+    fi
+fi
+
 # === Install statusline ===
 STATUSLINE_SRC="$WARDEN_DIR/statusline.sh"
 STATUSLINE_DST="$CLAUDE_DIR/statusline.sh"
@@ -174,6 +189,7 @@ fi
 # === Set executable permissions ===
 if ! $DRY_RUN; then
     chmod +x "$HOOKS_DIR"/* 2>/dev/null || true
+    [[ -d "$HOOKS_DIR/lib" ]] && chmod +x "$HOOKS_DIR/lib"/*.sh 2>/dev/null || true
     [[ -f "$STATUSLINE_DST" ]] && chmod +x "$STATUSLINE_DST"
 fi
 
@@ -231,6 +247,23 @@ if ! $DRY_RUN; then
         fi
     done
 
+    # Validate lib scripts
+    if [[ -d "$HOOKS_DIR/lib" ]]; then
+        for lib_script in "$HOOKS_DIR/lib"/*.sh; do
+            [[ -f "$lib_script" ]] || continue
+            LIB_TARGET="$lib_script"
+            if [[ -L "$lib_script" ]]; then
+                LIB_TARGET=$(readlink -f "$lib_script" 2>/dev/null || readlink "$lib_script")
+            fi
+            if bash -n "$LIB_TARGET" 2>/dev/null; then
+                dim "$(basename "$lib_script"): syntax OK"
+            else
+                error "$(basename "$lib_script"): syntax error!"
+                ERRORS=$((ERRORS + 1))
+            fi
+        done
+    fi
+
     # Validate statusline
     if [[ -f "$STATUSLINE_DST" ]]; then
         SL_TARGET="$STATUSLINE_DST"
@@ -253,7 +286,7 @@ fi
 
 info "Installation complete!"
 echo ""
-echo "  Hooks:      $HOOKS_DIR/ (${#HOOK_FILES[@]} hooks, $MODE mode)"
+echo "  Hooks:      $HOOKS_DIR/ (${#HOOK_FILES[@]} hooks + lib, $MODE mode)"
 echo "  Statusline: $STATUSLINE_DST"
 echo "  Settings:   $SETTINGS_FILE"
 if [[ -n "${BACKUP_DIR:-}" ]]; then

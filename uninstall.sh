@@ -75,6 +75,11 @@ if [[ -d "$HOOKS_DIR" ]]; then
             REMOVED=$((REMOVED + 1))
         fi
     done
+    # Remove lib directory
+    if [[ -e "$HOOKS_DIR/lib" ]] || [[ -L "$HOOKS_DIR/lib" ]]; then
+        run rm -rf "$HOOKS_DIR/lib"
+        dim "Removed: lib/"
+    fi
 else
     warn "No hooks directory found at $HOOKS_DIR"
 fi

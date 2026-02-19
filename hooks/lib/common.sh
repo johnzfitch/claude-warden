@@ -31,6 +31,11 @@ export _WARDEN_SESSION_START_S
 export _WARDEN_NOW_S=$(date +%s)
 export _WARDEN_NOW_NS=$(date +%s.%N)
 
+# Truncation thresholds (tunable via env vars)
+export WARDEN_TRUNCATE_BYTES=${WARDEN_TRUNCATE_BYTES:-20480}           # 20KB generic
+export WARDEN_SUBAGENT_READ_BYTES=${WARDEN_SUBAGENT_READ_BYTES:-10240} # 10KB subagent
+export WARDEN_SUPPRESS_BYTES=${WARDEN_SUPPRESS_BYTES:-524288}          # 500KB suppress
+
 # ==============================================================================
 # INPUT PARSING
 # ==============================================================================
@@ -152,6 +157,15 @@ _warden_get_agent_type() {
 # EVENT EMISSION
 # ==============================================================================
 
+# Scrub potential secrets from command strings
+# Usage: echo "$text" | _warden_scrub_secrets
+_warden_scrub_secrets() {
+    sed -E \
+        's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
+         s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/g;
+         s/([A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[A-Z_]*)=[^ ]+/\1=[REDACTED]/g'
+}
+
 # Emit JSONL event for blocked commands (pre-tool-use)
 # Usage: _warden_emit_block RULE TOKENS_SAVED [CMD_OVERRIDE]
 _warden_emit_block() {
@@ -166,10 +180,7 @@ _warden_emit_block() {
 
     # Scrub potential secrets
     if [[ "$cmd_safe" =~ (-H|--header|Bearer|Authorization|token|_KEY=|_SECRET=|_TOKEN=|PASSWORD=|CREDENTIAL) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
-             s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/g;
-             s/([A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[A-Z_]*)=[^ ]+/\1=[REDACTED]/g')
+        cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
     fi
 
     printf '{"timestamp":%d,"event_type":"blocked","tool":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
@@ -197,10 +208,7 @@ _warden_emit_event() {
 
     # Scrub secrets
     if [[ "$cmd_safe" =~ (-H|--header|Bearer|Authorization|token|_KEY=|_SECRET=|_TOKEN=|PASSWORD=|CREDENTIAL) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
-             s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/g;
-             s/([A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[A-Z_]*)=[^ ]+/\1=[REDACTED]/g')
+        cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
     fi
 
     printf '{"timestamp":%d,"event_type":"%s","tool":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \

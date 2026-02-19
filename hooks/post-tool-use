@@ -205,9 +205,9 @@ if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
 fi
 
 # Fast path: small outputs (subagent Reads use tighter 10KB threshold)
-TRUNCATION_THRESHOLD=20480
+TRUNCATION_THRESHOLD=$WARDEN_TRUNCATE_BYTES
 if [[ "$IS_SUBAGENT" == true && "$TOOL_NAME" == "Read" ]]; then
-    TRUNCATION_THRESHOLD=10240
+    TRUNCATION_THRESHOLD=$WARDEN_SUBAGENT_READ_BYTES
 fi
 (( OUTPUT_SIZE <= TRUNCATION_THRESHOLD )) && { _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _exit_clean_or_suppress; }
 
@@ -229,7 +229,7 @@ if printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>
 fi
 
 # >500KB: suppress entirely
-if (( OUTPUT_SIZE > 524288 )); then
+if (( OUTPUT_SIZE > WARDEN_SUPPRESS_BYTES )); then
     _warden_emit_event "truncated" "$OUTPUT_SIZE" 60 "output_suppressed"
     jq -n --arg text "[Output too large: $((OUTPUT_SIZE/1048576))MB. Use | head or redirect.]" '{"modifyOutput":$text}'
     exit 0
