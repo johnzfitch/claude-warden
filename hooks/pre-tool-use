@@ -222,9 +222,12 @@ fi
 if [[ "$COMMAND" =~ ^pip[[:space:]]+(install|download) ]] && [[ ! "$COMMAND" =~ (-q|--quiet) ]]; then
     _warden_emit_block "pip_verbose" 3000; _warden_deny "pip needs -q"
 fi
-# curl without -s
-if [[ "$COMMAND" =~ ^curl[[:space:]] ]] && [[ ! "$COMMAND" =~ (-s|--silent|-o|--output) ]]; then
-    _warden_emit_block "curl_verbose" 2000; _warden_deny "curl needs -s or -o"
+# curl: only block if verbose (-v) without output redirection
+# Allow: -s, -o, -O, --output, --remote-name, pipes, redirects
+if [[ "$COMMAND" =~ ^curl[[:space:]] ]]; then
+    if [[ "$COMMAND" =~ -v|--verbose ]] && [[ ! "$COMMAND" =~ (\||'>'|-o[[:space:]]|-O|--output|--remote-name) ]]; then
+        _warden_emit_block "curl_verbose" 2000; _warden_deny "curl -v needs output redirection"
+    fi
 fi
 # wget without -q
 if [[ "$COMMAND" =~ ^wget[[:space:]] ]] && [[ ! "$COMMAND" =~ (-q|--quiet|-O) ]]; then
