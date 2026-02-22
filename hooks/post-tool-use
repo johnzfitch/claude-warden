@@ -42,13 +42,12 @@ if (( OUTPUT_SIZE > 0 )); then
         OUTPUT_LINES=$(( OUTPUT_LINES * OUTPUT_SIZE / 51200 ))
     fi
     [[ "$OUTPUT_LINES" =~ ^[0-9]+$ ]] || OUTPUT_LINES=0
-    # Sanitize TOP_LABEL for pipe delimiter
     _warden_emit_output_size "$TOOL_NAME" "$OUTPUT_SIZE" "$OUTPUT_LINES" "$COMMAND"
 fi
 
 # === Session state: single file, single read+write ===
-if [[ -n "$SESSION_ID" ]]; then
-    STATE_FILE="$WARDEN_STATE_DIR/session-$SESSION_ID"
+if [[ -n "$WARDEN_SESSION_ID" ]]; then
+    STATE_FILE="$WARDEN_STATE_DIR/session-$WARDEN_SESSION_ID"
     mkdir -p "$WARDEN_STATE_DIR"
 
     # Read previous state (count|top_bytes|top_label|timestamp)

@@ -243,7 +243,7 @@ grep -qF "Agent output compressed:" "$out" || fail "post-tool-use task agent: ex
 
 echo "[tests] post-tool-use (output size: small, emits tool_output_size + allowed)"
 SMALL_FIXTURE="$(mktemp)"
-SMALL_TEXT="$(python3 -c "print('\n'.join('line {:04d}: ' + 'x'*60 for i in range(100)))")"
+SMALL_TEXT="$(python3 -c "print('\n'.join(f'line {i:04d}: ' + 'x'*60 for i in range(100)))")"
 jq -n --arg txt "$SMALL_TEXT" '{
   tool_name:"Bash", session_id:"size-test",
   tool_input:{command:"cat file.txt"},
@@ -258,7 +258,7 @@ rm -f "$SMALL_FIXTURE"
 
 echo "[tests] post-tool-use (output size: large >20KB, emits tool_output_size + truncated)"
 LARGE_FIXTURE="$(mktemp)"
-LARGE_TEXT="$(python3 -c "print('\n'.join('line {:06d}: ' + 'x'*80 for i in range(450)))")"
+LARGE_TEXT="$(python3 -c "print('\n'.join(f'line {i:06d}: ' + 'x'*80 for i in range(450)))")"
 jq -n --arg txt "$LARGE_TEXT" '{
   tool_name:"Bash", session_id:"size-test",
   tool_input:{command:"cat bigfile.txt"},
@@ -275,7 +275,7 @@ rm -f "$LARGE_FIXTURE"
 
 echo "[tests] post-tool-use (output size: vlarge >50KB, line count via sampling)"
 VLARGE_FIXTURE="$(mktemp)"
-VLARGE_TEXT="$(python3 -c "print('\n'.join('line {:07d}: ' + 'x'*90 for i in range(600)))")"
+VLARGE_TEXT="$(python3 -c "print('\n'.join(f'line {i:07d}: ' + 'x'*90 for i in range(600)))")"
 jq -n --arg txt "$VLARGE_TEXT" '{
   tool_name:"Bash", session_id:"size-test",
   tool_input:{command:"find / -name \"*.log\""},

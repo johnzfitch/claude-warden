@@ -168,10 +168,10 @@ _warden_emit_block() {
     local cmd_lower="${cmd_safe,,}"
     if [[ "$cmd_lower" =~ (-h|--header|bearer|authorization|token|key=|secret=|password=|credential|api_key|apikey|client_secret|access_token|private_key|database_url|gh_token|github_token|anthropic|openai) ]]; then
         cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/gi;
-             s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/gi;
-             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/gi;
-             s/(client_secret|access_token|private_key|database_url)[=:][^ ]+/\1=[REDACTED]/gi;
+            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
+             s/([Bb]earer |[Aa]uthorization: ?)[^ ]+/\1[REDACTED]/g;
+             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY|key|secret|token|password|credential|apikey|api_key)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/g;
+             s/(client_secret|access_token|private_key|database_url|CLIENT_SECRET|ACCESS_TOKEN|PRIVATE_KEY|DATABASE_URL)[=:][^ ]+/\1=[REDACTED]/g;
              s/(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]+/[REDACTED]/g;
              s/(sk-[A-Za-z0-9]+)/[REDACTED]/g')
     fi
@@ -209,10 +209,10 @@ _warden_emit_event() {
     local cmd_lower="${cmd_safe,,}"
     if [[ "$cmd_lower" =~ (-h|--header|bearer|authorization|token|key=|secret=|password=|credential|api_key|apikey|client_secret|access_token|private_key|database_url|gh_token|github_token|anthropic|openai) ]]; then
         cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/gi;
-             s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/gi;
-             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/gi;
-             s/(client_secret|access_token|private_key|database_url)[=:][^ ]+/\1=[REDACTED]/gi;
+            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
+             s/([Bb]earer |[Aa]uthorization: ?)[^ ]+/\1[REDACTED]/g;
+             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY|key|secret|token|password|credential|apikey|api_key)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/g;
+             s/(client_secret|access_token|private_key|database_url|CLIENT_SECRET|ACCESS_TOKEN|PRIVATE_KEY|DATABASE_URL)[=:][^ ]+/\1=[REDACTED]/g;
              s/(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]+/[REDACTED]/g;
              s/(sk-[A-Za-z0-9]+)/[REDACTED]/g')
     fi
@@ -241,10 +241,10 @@ _warden_emit_output_size() {
     local cmd_lower="${cmd_safe,,}"
     if [[ "$cmd_lower" =~ (-h|--header|bearer|authorization|token|key=|secret=|password=|credential|api_key|apikey|client_secret|access_token|private_key|database_url|gh_token|github_token|anthropic|openai) ]]; then
         cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/gi;
-             s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/gi;
-             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/gi;
-             s/(client_secret|access_token|private_key|database_url)[=:][^ ]+/\1=[REDACTED]/gi;
+            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
+             s/([Bb]earer |[Aa]uthorization: ?)[^ ]+/\1[REDACTED]/g;
+             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY|key|secret|token|password|credential|apikey|api_key)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/g;
+             s/(client_secret|access_token|private_key|database_url|CLIENT_SECRET|ACCESS_TOKEN|PRIVATE_KEY|DATABASE_URL)[=:][^ ]+/\1=[REDACTED]/g;
              s/(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]+/[REDACTED]/g;
              s/(sk-[A-Za-z0-9]+)/[REDACTED]/g')
     fi
@@ -468,10 +468,10 @@ _warden_emit_latency() {
     local cmd_lower="${cmd_safe,,}"
     if [[ "$cmd_lower" =~ (-h|--header|bearer|authorization|token|key=|secret=|password=|credential|api_key|apikey|client_secret|access_token|private_key|database_url|gh_token|github_token|anthropic|openai) ]]; then
         cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/gi;
-             s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/gi;
-             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/gi;
-             s/(client_secret|access_token|private_key|database_url)[=:][^ ]+/\1=[REDACTED]/gi;
+            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
+             s/([Bb]earer |[Aa]uthorization: ?)[^ ]+/\1[REDACTED]/g;
+             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY|key|secret|token|password|credential|apikey|api_key)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/g;
+             s/(client_secret|access_token|private_key|database_url|CLIENT_SECRET|ACCESS_TOKEN|PRIVATE_KEY|DATABASE_URL)[=:][^ ]+/\1=[REDACTED]/g;
              s/(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]+/[REDACTED]/g;
              s/(sk-[A-Za-z0-9]+)/[REDACTED]/g')
     fi
