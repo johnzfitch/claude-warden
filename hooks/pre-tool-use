@@ -146,20 +146,33 @@ esac
 # ==========================================================================
 
 # === CRITICAL DENY RULES (must enforce even in non-interactive -p mode) ===
+# Destructive: rm (root/home/cwd/glob), mkfs, dd, chmod/chown recursive
 NORM_CMD=$(echo "$COMMAND" | tr -s '[:space:]' ' ')
 case "$NORM_CMD" in
     *"rm -rf /"*|*"rm -fr /"*|*"rm -rf ~"*|*"rm -fr ~"*|\
+    *"rm -rf ."*|*"rm -fr ."*|*"rm -rf *"*|*"rm -fr *"*|\
+    *"rm --recursive --force"*|*"rm --force --recursive"*|\
     *"rm -rf --no-preserve-root"*|\
-    *"mkfs"*|*"dd if="*|\
+    *"mkfs"*|*"dd if="*|*"dd of=/dev/"*|\
     *"> /dev/sd"*|*"> /dev/nvme"*|\
-    *"chmod -R 777 /"*|*"chown -R"*"/"*)
+    *"chmod -R 777 /"*|*"chown -R"*|*"chown --recursive"*)
         _warden_emit_block "destructive_cmd" 0; _warden_deny "Blocked destructive command" ;;
-    *':(){:|:&};:'*|*':(){ :|:&};:'*)
-        _warden_emit_block "fork_bomb" 0; _warden_deny "Blocked fork bomb" ;;
-    *"curl"*"|"*"bash"*|*"curl"*"|"*"sh"*|\
-    *"wget"*"|"*"bash"*|*"wget"*"|"*"sh"*|\
-    *"bash <(curl"*|*"sh <(curl"*|\
-    *"bash <(wget"*|*"sh <(wget"*)
+esac
+
+# Fork bomb detection (regex for spacing variants)
+if [[ "$NORM_CMD" =~ :\(\)[[:space:]]*\{[[:space:]]*:\|:[[:space:]]*\&[[:space:]]*\} ]]; then
+    _warden_emit_block "fork_bomb" 0; _warden_deny "Blocked fork bomb"
+fi
+
+# RCE pipe detection: curl/wget piped to any interpreter
+case "$NORM_CMD" in
+    *"curl"*"|"*"bash"*|*"curl"*"|"*"sh"*|*"curl"*"|"*"zsh"*|\
+    *"curl"*"|"*"python"*|*"curl"*"|"*"perl"*|*"curl"*"|"*"ruby"*|*"curl"*"|"*"node"*|\
+    *"wget"*"|"*"bash"*|*"wget"*"|"*"sh"*|*"wget"*"|"*"zsh"*|\
+    *"wget"*"|"*"python"*|*"wget"*"|"*"perl"*|*"wget"*"|"*"ruby"*|*"wget"*"|"*"node"*|\
+    *"bash <(curl"*|*"sh <(curl"*|*"zsh <(curl"*|\
+    *"bash <(wget"*|*"sh <(wget"*|*"zsh <(wget"*|\
+    *"python"*" <(curl"*|*"python"*" <(wget"*)
         _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution" ;;
 esac
 
@@ -204,18 +217,20 @@ if [[ "$COMMAND" =~ git[[:space:]]+commit ]] && [[ ! "$COMMAND" =~ (-q|--quiet) 
 fi
 
 # === GIT LOG (unbounded dumps entire history) ===
-if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+log ]] && [[ ! "$COMMAND" =~ (-n[[:space:]]*[0-9]+|-[0-9]+|--oneline|--format|--pretty=oneline|--since|--after|\|[[:space:]]*(head|tail)) ]]; then
+if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+log ]] && [[ ! "$COMMAND" =~ (-n[[:space:]]*[0-9]+|-[0-9]+|--oneline|--format|--pretty|--since|--after|\|[[:space:]]*(head|tail)) ]]; then
     _warden_emit_block "git_log_unbounded" 10000; _warden_deny "git log needs -n, --oneline, or pipe"
 fi
 
 # === VERBOSE COMMANDS ===
-if [[ "$COMMAND" =~ ^npm[[:space:]]+(install|i)[[:space:]] ]] && [[ ! "$COMMAND" =~ (--silent|--quiet|\||'>'|'&') ]]; then
-    _warden_emit_block "npm_verbose" 5000; _warden_deny "npm install needs --silent or pipe"
+# npm install/ci (match with or without trailing args)
+if [[ "$COMMAND" =~ ^npm[[:space:]]+(install|i|ci)([[:space:]]|$) ]] && [[ ! "$COMMAND" =~ (--silent|--quiet|\||'>'|'&') ]]; then
+    _warden_emit_block "npm_verbose" 5000; _warden_deny "npm install/ci needs --silent or pipe"
 fi
 if [[ "$COMMAND" =~ ^cargo[[:space:]]+build ]] && [[ ! "$COMMAND" =~ (-q|--quiet|\||'>'|'&') ]]; then
     _warden_emit_block "cargo_verbose" 5000; _warden_deny "cargo build needs -q or pipe"
 fi
-if [[ "$COMMAND" =~ ^make[[:space:]] ]] && [[ ! "$COMMAND" =~ (-s|--silent|\||'>'|'&') ]]; then
+# make (match with or without trailing args)
+if [[ "$COMMAND" =~ ^make([[:space:]]|$) ]] && [[ ! "$COMMAND" =~ (-s|--silent|\||'>'|'&') ]]; then
     _warden_emit_block "make_verbose" 5000; _warden_deny "make needs -s or pipe"
 fi
 # pip/poetry
@@ -225,7 +240,7 @@ fi
 # curl: only block if verbose (-v) without output redirection
 # Allow: -s, -o, -O, --output, --remote-name, pipes, redirects
 if [[ "$COMMAND" =~ ^curl[[:space:]] ]]; then
-    if [[ "$COMMAND" =~ (-v|--verbose) ]] && [[ ! "$COMMAND" =~ (\||>>?|-o[[:space:]]|-O|--output|--remote-name) ]]; then
+    if [[ "$COMMAND" =~ (-v|--verbose) ]] && [[ ! "$COMMAND" =~ (\||>>?|-o|-O|--output|--remote-name) ]]; then
         _warden_emit_block "curl_verbose" 2000; _warden_deny "curl -v needs output redirection"
     fi
 fi
