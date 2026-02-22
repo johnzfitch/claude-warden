@@ -19,12 +19,32 @@ read -r TOOL_NAME SESSION_ID OUTPUT_SIZE COMMAND < <(
     ] | @tsv' 2>/dev/null
 ) || exit 0
 
-# Export for shared library functions
+# Export for shared library functions (sanitize session_id to prevent path traversal)
 export WARDEN_TOOL_NAME="$TOOL_NAME"
 export WARDEN_COMMAND="$COMMAND"
-export WARDEN_SESSION_ID="$SESSION_ID"
+export WARDEN_SESSION_ID="$(_warden_sanitize_id "$SESSION_ID")"
 
 [[ "$OUTPUT_SIZE" =~ ^[0-9]+$ ]] || OUTPUT_SIZE=0
+
+# === TOOL OUTPUT SIZE TRACKING (Phase 1 observability) ===
+# Emit for all tool calls to build baseline data before enforcement
+if (( OUTPUT_SIZE > 0 )); then
+    # Count lines (fast approximation: count newlines in first 50KB)
+    OUTPUT_LINES=0
+    if (( OUTPUT_SIZE <= 51200 )); then
+        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | wc -l)
+    else
+        # For large outputs, sample first 50KB for line count estimate
+        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | head -c 51200 | wc -l)
+        # Validate before arithmetic to avoid bash errors on non-numeric input
+        [[ "$OUTPUT_LINES" =~ ^[0-9]+$ ]] || OUTPUT_LINES=0
+        # Extrapolate
+        OUTPUT_LINES=$(( OUTPUT_LINES * OUTPUT_SIZE / 51200 ))
+    fi
+    [[ "$OUTPUT_LINES" =~ ^[0-9]+$ ]] || OUTPUT_LINES=0
+    # Sanitize TOP_LABEL for pipe delimiter
+    _warden_emit_output_size "$TOOL_NAME" "$OUTPUT_SIZE" "$OUTPUT_LINES" "$COMMAND"
+fi
 
 # === Session state: single file, single read+write ===
 if [[ -n "$SESSION_ID" ]]; then
@@ -53,6 +73,8 @@ if [[ -n "$SESSION_ID" ]]; then
             TOP_LABEL="$TOOL_NAME"
         fi
     fi
+    # Sanitize TOP_LABEL for pipe delimiter (prevents state file corruption)
+    TOP_LABEL="${TOP_LABEL//|/_}"
 
     # Single write: count|top_bytes|top_label|timestamp
     printf '%s|%s|%s|%s\n' "$NEW_COUNT" "$TOP_BYTES" "$TOP_LABEL" "$(date +%s)" > "$STATE_FILE"

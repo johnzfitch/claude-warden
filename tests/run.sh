@@ -101,6 +101,14 @@ assert_permission_allow() {
     || fail "$label: expected hookSpecificOutput.decision.behavior == allow"
 }
 
+# Assert events.jsonl contains a line matching the given jq filter
+assert_events_has() {
+  local jq_expr="$1" label="$2"
+  local events_file="$HOME/.claude/.statusline/events.jsonl"
+  jq -e "$jq_expr" "$events_file" >/dev/null 2>&1 \
+    || fail "$label: events.jsonl missing expected event: $jq_expr"
+}
+
 assert_jq_modifyOutput_no_system_reminder() {
   local out_file="$1" label="$2"
   local text
@@ -232,6 +240,53 @@ IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$fixture")
 assert_exit 0 "$rc" "post-tool-use task agent"
 assert_stdout_json_has "$out" 'has("modifyOutput")' "post-tool-use task agent"
 grep -qF "Agent output compressed:" "$out" || fail "post-tool-use task agent: expected compression marker"
+
+echo "[tests] post-tool-use (output size: small, emits tool_output_size + allowed)"
+SMALL_FIXTURE="$(mktemp)"
+SMALL_TEXT="$(python3 -c "print('\n'.join('line {:04d}: ' + 'x'*60 for i in range(100)))")"
+jq -n --arg txt "$SMALL_TEXT" '{
+  tool_name:"Bash", session_id:"size-test",
+  tool_input:{command:"cat file.txt"},
+  tool_response:{content:[{type:"text",text:$txt}]}
+}' > "$SMALL_FIXTURE"
+IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$SMALL_FIXTURE")
+assert_exit 0 "$rc" "post-tool-use output-size small"
+assert_stdout_json_has "$out" '.suppressOutput == true' "post-tool-use output-size small"
+assert_events_has 'select(.event_type=="tool_output_size" and .tool=="Bash" and .output_bytes>0 and .output_lines>0 and .estimated_tokens>0)' \
+  "post-tool-use output-size small"
+rm -f "$SMALL_FIXTURE"
+
+echo "[tests] post-tool-use (output size: large >20KB, emits tool_output_size + truncated)"
+LARGE_FIXTURE="$(mktemp)"
+LARGE_TEXT="$(python3 -c "print('\n'.join('line {:06d}: ' + 'x'*80 for i in range(450)))")"
+jq -n --arg txt "$LARGE_TEXT" '{
+  tool_name:"Bash", session_id:"size-test",
+  tool_input:{command:"cat bigfile.txt"},
+  tool_response:{content:[{type:"text",text:$txt}]}
+}' > "$LARGE_FIXTURE"
+IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$LARGE_FIXTURE")
+assert_exit 0 "$rc" "post-tool-use output-size large"
+assert_stdout_json_has "$out" 'has("modifyOutput")' "post-tool-use output-size large"
+assert_events_has 'select(.event_type=="tool_output_size" and .tool=="Bash" and .output_bytes>20000 and .output_lines>400)' \
+  "post-tool-use output-size large"
+assert_events_has 'select(.event_type=="truncated" and .tool=="Bash")' \
+  "post-tool-use output-size large"
+rm -f "$LARGE_FIXTURE"
+
+echo "[tests] post-tool-use (output size: vlarge >50KB, line count via sampling)"
+VLARGE_FIXTURE="$(mktemp)"
+VLARGE_TEXT="$(python3 -c "print('\n'.join('line {:07d}: ' + 'x'*90 for i in range(600)))")"
+jq -n --arg txt "$VLARGE_TEXT" '{
+  tool_name:"Bash", session_id:"size-test",
+  tool_input:{command:"find / -name \"*.log\""},
+  tool_response:{content:[{type:"text",text:$txt}]}
+}' > "$VLARGE_FIXTURE"
+IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$VLARGE_FIXTURE")
+assert_exit 0 "$rc" "post-tool-use output-size vlarge"
+assert_stdout_json_has "$out" 'has("modifyOutput")' "post-tool-use output-size vlarge"
+assert_events_has 'select(.event_type=="tool_output_size" and .tool=="Bash" and .output_bytes>50000 and .output_lines>400)' \
+  "post-tool-use output-size vlarge"
+rm -f "$VLARGE_FIXTURE"
 
 echo "[tests] read-compress (pass-through small read)"
 fixture="$ROOT_DIR/demo/mock-inputs/post-tool-use-clean-read.json"
