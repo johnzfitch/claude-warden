@@ -37,4 +37,18 @@ else
   echo "[$TIMESTAMP] Stop: $REASON (duration: $DURATION)" >> "$LOG_FILE"
 fi
 
-exit 0
+# Emit to events.jsonl
+_TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+_REASON_SAFE="${REASON//\"/\\\"}"
+printf '{"timestamp":%d,"event_type":"session_stop","tool":"Stop","session_id":"%s","reason":"%s","duration_seconds":%d}\n' \
+  "$_TS" "$SESSION_ID" "$_REASON_SAFE" "${DURATION_SECS:-0}" \
+  >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+
+# Build stop_hook_summary (shown in Claude UI on session completion)
+_BLOCK_COUNT=0
+if [[ -f "$WARDEN_EVENTS_FILE" ]]; then
+  _BLOCK_COUNT=$(grep -c '"event_type":"blocked"' "$WARDEN_EVENTS_FILE" || echo 0)
+fi
+jq -n \
+  --arg s "Session: ${DURATION_SECS:-0}s | blocks: $_BLOCK_COUNT | reason: $REASON" \
+  '{"stop_hook_summary": $s}'
