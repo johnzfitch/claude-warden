@@ -216,6 +216,29 @@ _warden_emit_event() {
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 
+# Emit JSONL event for tool output size tracking
+# Usage: _warden_emit_output_size TOOL_NAME OUTPUT_BYTES OUTPUT_LINES CMD
+_warden_emit_output_size() {
+    local tool_name="$1" output_bytes="$2" output_lines="${3:-0}" cmd="${4:-}"
+    local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+
+    local estimated_tokens=$(( output_bytes * 10 / 35 ))
+
+    local cmd_safe="${cmd:0:200}"
+    cmd_safe="${cmd_safe//$'\n'/ }"
+    cmd_safe="${cmd_safe//\\/\\\\}"
+    cmd_safe="${cmd_safe//\"/\\\"}"
+
+    if [[ "$cmd_safe" =~ (-H|--header|Bearer|Authorization|token|_KEY=|_SECRET=|_TOKEN=|PASSWORD=|CREDENTIAL) ]]; then
+        cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
+    fi
+
+    local sid="${WARDEN_SESSION_ID:-}"
+    printf '{"timestamp":%d,"event_type":"tool_output_size","tool":"%s","session_id":"%s","output_bytes":%d,"output_lines":%d,"estimated_tokens":%d,"original_cmd":"%s"}\n' \
+        "$ts" "$tool_name" "$sid" "$output_bytes" "$output_lines" "$estimated_tokens" "$cmd_safe" \
+        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+}
+
 # ==============================================================================
 # SYSTEM REMINDER STRIPPING
 # ==============================================================================
