@@ -49,6 +49,13 @@ processors:
       - key: service.name
         value: claude-code
         action: upsert
+  # Promote session_id to resource scope so Loki indexes it as a stream label
+  # (Loki's otlp_config in loki-config.yaml maps resource attribute -> index label)
+  transform/session_label:
+    log_statements:
+      - context: log
+        statements:
+          - set(resource.attributes["session_id"], attributes["session_id"]) where attributes["session_id"] != nil
 
 exporters:
   prometheus:
@@ -77,7 +84,7 @@ service:
       exporters: [prometheus, debug]
     logs:
       receivers: [otlp, filelog/warden]
-      processors: [memory_limiter, resource, batch]
+      processors: [memory_limiter, resource, transform/session_label, batch]
       exporters: [otlp_http/loki, debug]
     traces:
       receivers: [otlp]

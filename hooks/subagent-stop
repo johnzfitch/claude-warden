@@ -9,8 +9,8 @@ SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count"
 
 _warden_read_input || exit 0
 
-IFS=$'\t' read -r AGENT_ID SESSION_ID < <(
-    printf '%s' "$WARDEN_INPUT" | jq -r '[.agent_id // "unknown", .session_id // ""] | @tsv' 2>/dev/null
+IFS=$'\t' read -r AGENT_ID SESSION_ID WORKTREE_PATH < <(
+    printf '%s' "$WARDEN_INPUT" | jq -r '[.agent_id // "unknown", .session_id // "", .worktree_path // ""] | @tsv' 2>/dev/null
 ) || exit 0
 
 AGENT_ID=$(_warden_sanitize_id "$AGENT_ID")
@@ -74,6 +74,14 @@ if [ -f "$START_FILE" ]; then
     echo "timestamp,agent_id,agent_category,agent_type,duration_seconds,session_id,status" > "$AGENT_STATS"
   fi
   echo "$(date -Iseconds),$AGENT_ID,subagent,$AGENT_TYPE,$DURATION,$SESSION_ID,completed" >> "$AGENT_STATS"
+
+  # Emit to events.jsonl for Loki/Grafana visibility
+  _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+  _HAS_WORKTREE="false"; [[ -n "${WORKTREE_PATH:-}" ]] && _HAS_WORKTREE="true"
+  _AT_SAFE="${AGENT_TYPE//\"/\\\"}"
+  printf '{"timestamp":%d,"event_type":"subagent_stop","tool":"SubagentStop","session_id":"%s","agent_id":"%s","agent_type":"%s","duration_seconds":%d,"has_worktree":%s}\n' \
+    "$_TS" "$SESSION_ID" "$AGENT_ID" "$_AT_SAFE" "$DURATION" "$_HAS_WORKTREE" \
+    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 fi
 
 # Decrement active subagent count (with cross-platform locking)

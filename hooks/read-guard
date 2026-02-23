@@ -29,7 +29,7 @@ BUNDLED_PATTERN_RE='(node_modules/|/dist/|/build/|\.min\.js$|\.bundle\.js$|expo-
 
 if [[ "$FILE_PATH" =~ $BUNDLED_PATTERN_RE ]]; then
     WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" _warden_emit_block "read_bundled" 8000
-    echo "Blocked: '$FILE_PATH' appears to be a bundled/generated file. These are not source code - search for the original source instead." >&2
+    echo "Blocked: '$FILE_PATH' is a bundled/generated file; find the source" >&2
     exit 2
 fi
 
@@ -42,7 +42,7 @@ if [[ -f "$FILE_PATH" ]]; then
         # bc may not be available everywhere; use awk as fallback
         SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $FILE_SIZE / 1024 / 1024 }" 2>/dev/null || echo "?")
         WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" _warden_emit_block "read_oversize" 25000
-        echo "Blocked: '$FILE_PATH' is ${SIZE_MB}MB (max ${MAX_SIZE_MB}MB). Large files are typically bundled/minified - find the original source code instead." >&2
+        echo "Blocked: '$FILE_PATH' is ${SIZE_MB}MB (max ${MAX_SIZE_MB}MB)" >&2
         exit 2
     fi
 fi

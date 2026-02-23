@@ -29,7 +29,7 @@ Every line is a JSON object with at minimum:
 ```json
 {"timestamp": <relative_seconds>, "event_type": "<type>", "tool": "<tool_name>"}
 ```
-Event types: `allowed`, `blocked`, `truncated`, `tool_latency`, `completed`
+Event types: `allowed`, `blocked`, `truncated`, `tool_latency`, `tool_output_size`, `completed`
 
 The `timestamp` field is **relative to session start** (not epoch). The OTEL collector filelog receiver uses ingestion time as the log timestamp and preserves the relative value as `session_relative_ts`.
 
@@ -111,3 +111,61 @@ Drop a JSON file into `monitoring/grafana/dashboards/`. Grafana auto-provisions 
 - Secrets are scrubbed before writing to events.jsonl (see `_warden_emit_block`, `_warden_emit_event`)
 - JSON output uses `jq -n` for safe escaping
 - Fire-and-forget background processes use `& disown` pattern
+
+## File reading guidelines
+
+Tool outputs enter conversation context and persist. A 2000-token dump in turn 5 of a 20-turn session costs ~30k input tokens total (re-sent on every subsequent turn). Scope all reads.
+
+### Bounded read patterns
+```bash
+# Size check first
+wc -l file.nix
+
+# Bounded reads
+head -n 100 file.nix          # First 100 lines (request more if needed)
+head -c 4000 file.json        # First 4KB (for minified/long-line files)
+tail -n 50 file.log           # Last 50 lines
+
+# Pattern-scoped reads
+rg 'pattern' file.nix         # Only matching lines
+rg -A3 -B3 'function' file.rs # Context around matches
+
+# Structural analysis
+tree -L 2 src/                # Directory overview
+ast-tree file.ts              # Code structure without content
+```
+
+### Avoid unbounded patterns
+```bash
+# These dump entire files into context:
+cat large_file.nix            # Unbounded
+ssh host "cat config.json"    # Unbounded remote
+curl -v https://api/data      # Verbose headers + body
+git diff                      # Large diffs on big changes
+git log                       # Entire history
+
+# Use bounded equivalents:
+head -n 100 large_file.nix
+ssh host "head -n 100 config.json"
+curl -s https://api/data | head -c 4000
+git diff --stat               # Summary first
+git log -10 --oneline         # Recent commits only
+```
+
+### Token economics
+- Rejection cost: ~150 tokens + 1-2s latency
+- Unbounded read cost: 1000-5000+ tokens immediate, same re-sent every subsequent turn
+- 20-turn session with 2000-token dump: ~38,000 input tokens wasted
+
+Rejection is almost always worth it for outputs >1KB.
+
+### Output size tracking
+The `tool_output_size` event tracks all tool outputs:
+```json
+{"event_type":"tool_output_size","tool":"Bash","output_bytes":45000,"output_lines":1200,"estimated_tokens":12857,"original_cmd":"cat ..."}
+```
+
+Query in Grafana:
+```
+{service_name="claude-code"} | json | event_type="tool_output_size" | output_bytes > 10000
+```

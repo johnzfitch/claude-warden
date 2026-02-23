@@ -93,7 +93,7 @@ if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
     # Enforce call count budget
     if (( NEW_CALLS >= CALL_BUDGET )); then
         _warden_emit_block "budget_calls_exceeded" 2000
-        _warden_deny "BUDGET EXCEEDED: Tool call #$NEW_CALLS >= $CALL_BUDGET limit for $AGENT_TYPE agent. Stop and report findings."
+        _warden_deny "Budget exceeded: $AGENT_TYPE calls $NEW_CALLS/$CALL_BUDGET. Stop and report findings."
     elif (( NEW_CALLS >= WARN_CALL_AT )); then
         echo "WARNING: Tool call #$NEW_CALLS/$CALL_BUDGET for $AGENT_TYPE agent." >&2
     fi
@@ -101,7 +101,7 @@ if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
     # Enforce cumulative output bytes budget
     if (( CURRENT_BYTES >= BYTE_BUDGET )); then
         _warden_emit_block "budget_bytes_exceeded" $((CURRENT_BYTES / 4))
-        _warden_deny "BUDGET EXCEEDED: ${CURRENT_BYTES}B cumulative output >= ${BYTE_BUDGET}B limit for $AGENT_TYPE agent. Stop and report findings."
+        _warden_deny "Budget exceeded: $AGENT_TYPE output ${CURRENT_BYTES}B/${BYTE_BUDGET}B. Stop and report findings."
     elif (( CURRENT_BYTES >= WARN_BYTE_AT )); then
         echo "WARNING: ${CURRENT_BYTES}B/$((BYTE_BUDGET/1024))KB cumulative output for $AGENT_TYPE agent." >&2
     fi
@@ -128,10 +128,10 @@ case "$TOOL_NAME" in
         HOME_DIR_RE='^(/home/[^/]+|~|/Users/[^/]+|/root)/?$'
         if [[ "$PATTERN" =~ \*\* ]]; then
             if [[ "$GLOB_PATH" =~ $HOME_DIR_RE ]] || [[ -z "$GLOB_PATH" && "$PWD" =~ $HOME_DIR_RE ]]; then
-                _warden_emit_block "glob_home_recursive" 5000 "Glob $PATTERN in $GLOB_PATH"; _warden_deny "Glob ** from home dir is slow. Narrow path: ~/dev/**/file or use fd"
+                _warden_emit_block "glob_home_recursive" 5000 "Glob $PATTERN in $GLOB_PATH"; _warden_deny "Glob ** in home dir; narrow path or use fd"
             fi
             if [[ "$PATTERN" =~ ^(/home/[^/]+|~|/Users/[^/]+|/root)/\*\* ]]; then
-                _warden_emit_block "glob_home_recursive" 5000 "Glob $PATTERN"; _warden_deny "Glob ** from home dir is slow. Narrow path: ~/dev/**/file or use fd"
+                _warden_emit_block "glob_home_recursive" 5000 "Glob $PATTERN"; _warden_deny "Glob ** in home dir; narrow path or use fd"
             fi
         fi
         _warden_suppress_ok ;;
@@ -146,20 +146,33 @@ esac
 # ==========================================================================
 
 # === CRITICAL DENY RULES (must enforce even in non-interactive -p mode) ===
+# Destructive: rm (root/home/cwd/glob), mkfs, dd, chmod/chown recursive
 NORM_CMD=$(echo "$COMMAND" | tr -s '[:space:]' ' ')
 case "$NORM_CMD" in
     *"rm -rf /"*|*"rm -fr /"*|*"rm -rf ~"*|*"rm -fr ~"*|\
+    *"rm -rf ."*|*"rm -fr ."*|*"rm -rf *"*|*"rm -fr *"*|\
+    *"rm --recursive --force"*|*"rm --force --recursive"*|\
     *"rm -rf --no-preserve-root"*|\
-    *"mkfs"*|*"dd if="*|\
+    *"mkfs"*|*"dd if="*|*"dd of=/dev/"*|\
     *"> /dev/sd"*|*"> /dev/nvme"*|\
-    *"chmod -R 777 /"*|*"chown -R"*"/"*)
+    *"chmod -R 777 /"*|*"chown -R"*|*"chown --recursive"*)
         _warden_emit_block "destructive_cmd" 0; _warden_deny "Blocked destructive command" ;;
-    *':(){:|:&};:'*|*':(){ :|:&};:'*)
-        _warden_emit_block "fork_bomb" 0; _warden_deny "Blocked fork bomb" ;;
-    *"curl"*"|"*"bash"*|*"curl"*"|"*"sh"*|\
-    *"wget"*"|"*"bash"*|*"wget"*"|"*"sh"*|\
-    *"bash <(curl"*|*"sh <(curl"*|\
-    *"bash <(wget"*|*"sh <(wget"*)
+esac
+
+# Fork bomb detection (regex for spacing variants)
+if [[ "$NORM_CMD" =~ :\(\)[[:space:]]*\{[[:space:]]*:\|:[[:space:]]*\&[[:space:]]*\} ]]; then
+    _warden_emit_block "fork_bomb" 0; _warden_deny "Blocked fork bomb"
+fi
+
+# RCE pipe detection: curl/wget piped to any interpreter
+case "$NORM_CMD" in
+    *"curl"*"|"*"bash"*|*"curl"*"|"*"sh"*|*"curl"*"|"*"zsh"*|\
+    *"curl"*"|"*"python"*|*"curl"*"|"*"perl"*|*"curl"*"|"*"ruby"*|*"curl"*"|"*"node"*|\
+    *"wget"*"|"*"bash"*|*"wget"*"|"*"sh"*|*"wget"*"|"*"zsh"*|\
+    *"wget"*"|"*"python"*|*"wget"*"|"*"perl"*|*"wget"*"|"*"ruby"*|*"wget"*"|"*"node"*|\
+    *"bash <(curl"*|*"sh <(curl"*|*"zsh <(curl"*|\
+    *"bash <(wget"*|*"sh <(wget"*|*"zsh <(wget"*|\
+    *"python"*" <(curl"*|*"python"*" <(wget"*)
         _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution" ;;
 esac
 
@@ -204,27 +217,32 @@ if [[ "$COMMAND" =~ git[[:space:]]+commit ]] && [[ ! "$COMMAND" =~ (-q|--quiet) 
 fi
 
 # === GIT LOG (unbounded dumps entire history) ===
-if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+log ]] && [[ ! "$COMMAND" =~ (-n[[:space:]]*[0-9]+|-[0-9]+|--oneline|--format|--pretty=oneline|--since|--after|\|[[:space:]]*(head|tail)) ]]; then
+if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+log ]] && [[ ! "$COMMAND" =~ (-n[[:space:]]*[0-9]+|-[0-9]+|--oneline|--format|--pretty|--since|--after|\|[[:space:]]*(head|tail)) ]]; then
     _warden_emit_block "git_log_unbounded" 10000; _warden_deny "git log needs -n, --oneline, or pipe"
 fi
 
 # === VERBOSE COMMANDS ===
-if [[ "$COMMAND" =~ ^npm[[:space:]]+(install|i)[[:space:]] ]] && [[ ! "$COMMAND" =~ (--silent|--quiet|\||'>'|'&') ]]; then
-    _warden_emit_block "npm_verbose" 5000; _warden_deny "npm install needs --silent or pipe"
+# npm install/ci (match with or without trailing args)
+if [[ "$COMMAND" =~ ^npm[[:space:]]+(install|i|ci)([[:space:]]|$) ]] && [[ ! "$COMMAND" =~ (--silent|--quiet|\||'>'|'&') ]]; then
+    _warden_emit_block "npm_verbose" 5000; _warden_deny "npm install/ci needs --silent or pipe"
 fi
 if [[ "$COMMAND" =~ ^cargo[[:space:]]+build ]] && [[ ! "$COMMAND" =~ (-q|--quiet|\||'>'|'&') ]]; then
     _warden_emit_block "cargo_verbose" 5000; _warden_deny "cargo build needs -q or pipe"
 fi
-if [[ "$COMMAND" =~ ^make[[:space:]] ]] && [[ ! "$COMMAND" =~ (-s|--silent|\||'>'|'&') ]]; then
+# make (match with or without trailing args)
+if [[ "$COMMAND" =~ ^make([[:space:]]|$) ]] && [[ ! "$COMMAND" =~ (-s|--silent|\||'>'|'&') ]]; then
     _warden_emit_block "make_verbose" 5000; _warden_deny "make needs -s or pipe"
 fi
 # pip/poetry
 if [[ "$COMMAND" =~ ^pip[[:space:]]+(install|download) ]] && [[ ! "$COMMAND" =~ (-q|--quiet) ]]; then
     _warden_emit_block "pip_verbose" 3000; _warden_deny "pip needs -q"
 fi
-# curl without -s
-if [[ "$COMMAND" =~ ^curl[[:space:]] ]] && [[ ! "$COMMAND" =~ (-s|--silent|-o|--output) ]]; then
-    _warden_emit_block "curl_verbose" 2000; _warden_deny "curl needs -s or -o"
+# curl: only block if verbose (-v) without output redirection
+# Allow: -s, -o, -O, --output, --remote-name, pipes, redirects
+if [[ "$COMMAND" =~ ^curl[[:space:]] ]]; then
+    if [[ "$COMMAND" =~ (-v|--verbose) ]] && [[ ! "$COMMAND" =~ (\||>>?|-o|-O|--output|--remote-name) ]]; then
+        _warden_emit_block "curl_verbose" 2000; _warden_deny "curl -v needs output redirection"
+    fi
 fi
 # wget without -q
 if [[ "$COMMAND" =~ ^wget[[:space:]] ]] && [[ ! "$COMMAND" =~ (-q|--quiet|-O) ]]; then
@@ -237,17 +255,17 @@ fi
 
 # === BUILD ARTIFACTS (minified files) ===
 if [[ "$IS_BUILD_ARTIFACT" == true ]]; then
-    if [[ "$COMMAND" =~ grep ]] && [[ ! "$COMMAND" =~ (head[[:space:]]+-c.*\|[[:space:]]*grep|-l[[:space:]]|--files-with-matches|\|[[:space:]]*wc) ]]; then
-        _warden_emit_block "grep_minified" 25000; _warden_deny "grep on minified files reads entire file. Use: Grep tool, or: head -c 50000 file.js | grep pattern"
+    if [[ "$COMMAND" =~ grep ]] && [[ ! "$COMMAND" =~ (head[[:space:]]+-c.*\|[[:space:]]*grep|-l[[:space:]]|--files-with-matches|\|[[:space:]]*(wc|head|tail)) ]]; then
+        _warden_emit_block "grep_minified" 25000; _warden_deny "grep on minified file; use Grep tool or pipe head -c first"
     fi
-    if [[ "$COMMAND" =~ (cat|head|tail)[[:space:]] ]] && [[ ! "$COMMAND" =~ (-c[[:space:]]*[0-9]+) ]]; then
-        _warden_emit_block "cat_minified" 25000; _warden_deny "Minified files have 100KB+ lines. Use: head -c 4000"
+    if [[ "$COMMAND" =~ (cat|head|tail)[[:space:]].*$BUILD_ARTIFACT ]] && [[ ! "$COMMAND" =~ (-c[[:space:]]*[0-9]+) ]]; then
+        _warden_emit_block "cat_minified" 25000; _warden_deny "Minified file; use head -c 4000"
     fi
 fi
 
 # === RECURSIVE GREP (main agent only - subagent already blocked above) ===
 if [[ "$IS_SUBAGENT" == false ]]; then
-    if [[ "$COMMAND" =~ grep.*(-r|-R|--recursive) ]] && [[ ! "$COMMAND" =~ (-l|--files-with-matches) ]]; then
+    if [[ "$COMMAND" =~ grep.*([[:space:]]-[a-zA-Z]*[rR][a-zA-Z]*|--recursive) ]] && [[ ! "$COMMAND" =~ (-l[[:space:]]|--files-with-matches) ]]; then
         [[ ! "$COMMAND" =~ \|[[:space:]]*(head|tail|wc) ]] && {
             _warden_emit_block "grep_recursive" 10000; _warden_deny "grep -r scans all - use rg or grep -l"
         }
@@ -256,7 +274,7 @@ fi
 
 # === RECURSIVE FIND ===
 for pat in '\.claude' '\.git' 'node_modules'; do
-    if [[ "$COMMAND" =~ find.*$pat ]] && [[ ! "$COMMAND" =~ (-maxdepth[[:space:]]+[1-3]|\|[[:space:]]*(head|tail|wc)) ]]; then
+    if [[ "$COMMAND" =~ find.*$pat ]] && [[ ! "$COMMAND" =~ (-maxdepth[[:space:]]+[1-3]|\|[[:space:]]*(head|tail|wc)|-name[[:space:]]) ]]; then
         _warden_emit_block "find_recursive" 5000; _warden_deny "find in $pat needs -maxdepth or pipe"
     fi
 done
