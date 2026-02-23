@@ -16,7 +16,7 @@ SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 TEMPLATE_FILE="$WARDEN_DIR/settings.hooks.json"
 
 WARDEN_VERSION="unknown"
-[[ -f "$WARDEN_DIR/VERSION" ]] && WARDEN_VERSION=$(<"$WARDEN_DIR/VERSION")
+[[ -f "$WARDEN_DIR/VERSION" ]] && WARDEN_VERSION=$(head -1 "$WARDEN_DIR/VERSION" | tr -d '[:space:]')
 
 MODE="symlink"
 DRY_RUN=false
