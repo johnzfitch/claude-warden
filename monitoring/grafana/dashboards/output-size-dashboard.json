@@ -1,18 +1,50 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "title": "Cost & Budget",
+      "url": "/d/claude-code-otel",
+      "type": "link",
+      "icon": "dashboard",
+      "tooltip": "Claude Code - Working Dashboard"
+    },
+    {
+      "title": "Tool Latency",
+      "url": "/d/warden-tool-latency",
+      "type": "link",
+      "icon": "dashboard",
+      "tooltip": "Warden: Tool Latency & Traces"
+    },
+    {
+      "title": "Subagent Lifecycle",
+      "url": "/d/warden-subagent-lifecycle",
+      "type": "link",
+      "icon": "dashboard",
+      "tooltip": "Warden: Subagent & Session Lifecycle"
+    }
+  ],
   "liveNow": true,
   "panels": [
     {
       "title": "Total Output",
       "description": "Total bytes of tool output in the selected time range",
       "type": "stat",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
       "fieldConfig": {
         "defaults": {
@@ -20,18 +52,38 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 102400 },
-              { "color": "red", "value": 1048576 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 102400
+              },
+              {
+                "color": "red",
+                "value": 1048576
+              }
             ]
           }
         }
       },
-      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["sum"] } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ]
+        }
+      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
           "legendFormat": "bytes",
           "refId": "A"
         }
@@ -41,8 +93,16 @@
       "title": "Avg Output Size",
       "description": "Average tool output size in bytes",
       "type": "stat",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
       "id": 2,
       "fieldConfig": {
         "defaults": {
@@ -50,19 +110,42 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 4096 },
-              { "color": "orange", "value": 10240 },
-              { "color": "red", "value": 20480 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 4096
+              },
+              {
+                "color": "orange",
+                "value": 10240
+              },
+              {
+                "color": "red",
+                "value": 20480
+              }
             ]
           }
         }
       },
-      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["mean"] } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ]
+        }
+      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
           "legendFormat": "avg",
           "refId": "A"
         }
@@ -72,8 +155,16 @@
       "title": "Max Output",
       "description": "Largest single tool output",
       "type": "stat",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
       "id": 3,
       "fieldConfig": {
         "defaults": {
@@ -81,19 +172,42 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 10240 },
-              { "color": "orange", "value": 51200 },
-              { "color": "red", "value": 102400 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10240
+              },
+              {
+                "color": "orange",
+                "value": 51200
+              },
+              {
+                "color": "red",
+                "value": 102400
+              }
             ]
           }
         }
       },
-      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["max"] } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "max"
+          ]
+        }
+      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
           "legendFormat": "max",
           "refId": "A"
         }
@@ -103,27 +217,58 @@
       "title": "Large Outputs (>10KB)",
       "description": "Tool outputs exceeding 10KB threshold",
       "type": "stat",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
       "id": 4,
       "fieldConfig": {
         "defaults": {
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 5 },
-              { "color": "orange", "value": 15 },
-              { "color": "red", "value": 30 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "orange",
+                "value": 15
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
             ]
           }
         }
       },
-      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["sum"] } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ]
+        }
+      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | output_bytes > 10240 [$__range])",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | output_bytes > 10240 [$__range])",
           "legendFormat": "large",
           "refId": "A"
         }
@@ -133,27 +278,58 @@
       "title": "Est. Tokens (Output)",
       "description": "Estimated tokens from tool outputs (~3.5 bytes/token)",
       "type": "stat",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 0 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
       "id": 5,
       "fieldConfig": {
         "defaults": {
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "blue", "value": null },
-              { "color": "green", "value": 1000 },
-              { "color": "yellow", "value": 10000 },
-              { "color": "red", "value": 50000 }
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1000
+              },
+              {
+                "color": "yellow",
+                "value": 10000
+              },
+              {
+                "color": "red",
+                "value": 50000
+              }
             ]
           }
         }
       },
-      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["sum"] } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ]
+        }
+      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap estimated_tokens [$__range])",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap estimated_tokens [$__range])",
           "legendFormat": "tokens",
           "refId": "A"
         }
@@ -163,26 +339,54 @@
       "title": "Tool Calls",
       "description": "Total tool output events in the selected time range",
       "type": "stat",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 0 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
       "id": 6,
       "fieldConfig": {
         "defaults": {
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "blue", "value": null },
-              { "color": "green", "value": 10 },
-              { "color": "yellow", "value": 100 }
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 10
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              }
             ]
           }
         }
       },
-      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["sum"] } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ]
+        }
+      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" [$__range])",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" [$__range])",
           "legendFormat": "calls",
           "refId": "A"
         }
@@ -192,8 +396,16 @@
       "title": "Output Size Over Time",
       "description": "Tool output bytes plotted over time. Each point is one tool call.",
       "type": "timeseries",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 5 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
       "id": 10,
       "fieldConfig": {
         "defaults": {
@@ -208,22 +420,46 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 10240 },
-              { "color": "red", "value": 51200 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10240
+              },
+              {
+                "color": "red",
+                "value": 51200
+              }
             ]
           },
-          "color": { "mode": "palette-classic" }
+          "color": {
+            "mode": "palette-classic"
+          }
         }
       },
       "options": {
-        "tooltip": { "mode": "single", "sort": "desc" },
-        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
       },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum by (tool_name) (max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__interval]))",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "sum by (tool_name) (max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap output_bytes [$__interval]))",
           "legendFormat": "{{tool_name}}",
           "refId": "A"
         }
@@ -233,13 +469,23 @@
       "title": "Output Size by Tool",
       "description": "Breakdown of output size statistics per tool type",
       "type": "barchart",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
       "id": 11,
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": true
           }
@@ -251,20 +497,31 @@
         "groupWidth": 0.7,
         "barWidth": 0.8,
         "stacking": "none",
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single" },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        },
         "xTickLabelRotation": 0
       },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range]) by (tool_name)",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap output_bytes [$__range]) by (tool_name)",
           "legendFormat": "{{tool_name}} avg",
           "refId": "A"
         },
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range]) by (tool_name)",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap output_bytes [$__range]) by (tool_name)",
           "legendFormat": "{{tool_name}} max",
           "refId": "B"
         }
@@ -274,12 +531,22 @@
       "title": "Estimated Tokens by Tool",
       "description": "Token consumption estimate per tool (outputs only)",
       "type": "barchart",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
       "id": 12,
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": true
           }
@@ -291,14 +558,22 @@
         "groupWidth": 0.7,
         "barWidth": 0.8,
         "stacking": "none",
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single" },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        },
         "xTickLabelRotation": 0
       },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap estimated_tokens [$__range]) by (tool_name)",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap estimated_tokens [$__range]) by (tool_name)",
           "legendFormat": "{{tool_name}}",
           "refId": "A"
         }
@@ -308,71 +583,141 @@
       "title": "Large Outputs Table (>10KB)",
       "description": "Tool outputs exceeding 10KB with command details",
       "type": "table",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
       "id": 20,
       "fieldConfig": {
         "defaults": {},
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "output_bytes" },
+            "matcher": {
+              "id": "byName",
+              "options": "output_bytes"
+            },
             "properties": [
-              { "id": "unit", "value": "bytes" },
-              { "id": "custom.width", "value": 120 },
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              },
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    { "color": "yellow", "value": null },
-                    { "color": "orange", "value": 51200 },
-                    { "color": "red", "value": 102400 }
+                    {
+                      "color": "yellow",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 51200
+                    },
+                    {
+                      "color": "red",
+                      "value": 102400
+                    }
                   ]
                 }
               },
-              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } }
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "estimated_tokens" },
+            "matcher": {
+              "id": "byName",
+              "options": "estimated_tokens"
+            },
             "properties": [
-              { "id": "custom.width", "value": 110 }
+              {
+                "id": "custom.width",
+                "value": 110
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "output_lines" },
+            "matcher": {
+              "id": "byName",
+              "options": "output_lines"
+            },
             "properties": [
-              { "id": "custom.width", "value": 90 }
+              {
+                "id": "custom.width",
+                "value": 90
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "tool_name" },
+            "matcher": {
+              "id": "byName",
+              "options": "tool_name"
+            },
             "properties": [
-              { "id": "custom.width", "value": 100 }
+              {
+                "id": "custom.width",
+                "value": 100
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Time" },
+            "matcher": {
+              "id": "byName",
+              "options": "Time"
+            },
             "properties": [
-              { "id": "custom.width", "value": 180 }
+              {
+                "id": "custom.width",
+                "value": 180
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "original_cmd" },
+            "matcher": {
+              "id": "byName",
+              "options": "original_cmd"
+            },
             "properties": [
-              { "id": "custom.width", "value": 500 }
+              {
+                "id": "custom.width",
+                "value": 500
+              }
             ]
           }
         ]
       },
       "options": {
         "showHeader": true,
-        "sortBy": [{ "displayName": "output_bytes", "desc": true }]
+        "sortBy": [
+          {
+            "displayName": "output_bytes",
+            "desc": true
+          }
+        ]
       },
       "transformations": [
         {
           "id": "extractFields",
-          "options": { "source": "labels", "format": "auto" }
+          "options": {
+            "source": "labels",
+            "format": "auto"
+          }
         },
         {
           "id": "organize",
@@ -390,7 +735,6 @@
               "timestamp": true,
               "event_type": true,
               "service_name": true,
-              "tool_name": true,
               "session_id": true
             },
             "indexByName": {
@@ -406,8 +750,11 @@
       ],
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | output_bytes > 10240",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | output_bytes > 10240",
           "refId": "A"
         }
       ]
@@ -416,8 +763,16 @@
       "title": "Cumulative Token Estimate",
       "description": "Running total of estimated output tokens over time. Shows token accumulation within sessions.",
       "type": "timeseries",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
       "id": 30,
       "fieldConfig": {
         "defaults": {
@@ -425,28 +780,50 @@
             "drawStyle": "line",
             "lineInterpolation": "stepAfter",
             "fillOpacity": 20,
-            "stacking": { "mode": "none" },
+            "stacking": {
+              "mode": "none"
+            },
             "axisBorderShow": true
           },
-          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "color": {
+            "fixedColor": "purple",
+            "mode": "fixed"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 10000 },
-              { "color": "red", "value": 50000 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10000
+              },
+              {
+                "color": "red",
+                "value": 50000
+              }
             ]
           }
         }
       },
       "options": {
-        "tooltip": { "mode": "single" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap estimated_tokens [1m])",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap estimated_tokens [1m])",
           "legendFormat": "tokens/min",
           "refId": "A"
         }
@@ -456,8 +833,16 @@
       "title": "Output Lines Distribution",
       "description": "Line counts of tool outputs, useful for identifying unbounded reads",
       "type": "timeseries",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
       "id": 31,
       "fieldConfig": {
         "defaults": {
@@ -469,17 +854,30 @@
             "lineWidth": 0,
             "axisBorderShow": true
           },
-          "color": { "mode": "palette-classic" }
+          "color": {
+            "mode": "palette-classic"
+          }
         }
       },
       "options": {
-        "tooltip": { "mode": "single" },
-        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["max"] }
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "max"
+          ]
+        }
       },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_lines [$__interval]) by (tool_name)",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | unwrap output_lines [$__interval]) by (tool_name)",
           "legendFormat": "{{tool_name}}",
           "refId": "A"
         }
@@ -489,52 +887,101 @@
       "title": "Unbounded Read Patterns (>500 lines)",
       "description": "Outputs exceeding 500 lines, likely unbounded reads that should use head/rg",
       "type": "table",
-      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
       "id": 40,
       "fieldConfig": {
         "defaults": {},
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "output_lines" },
+            "matcher": {
+              "id": "byName",
+              "options": "output_lines"
+            },
             "properties": [
-              { "id": "custom.width", "value": 100 },
+              {
+                "id": "custom.width",
+                "value": 100
+              },
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    { "color": "yellow", "value": null },
-                    { "color": "orange", "value": 1000 },
-                    { "color": "red", "value": 2000 }
+                    {
+                      "color": "yellow",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1000
+                    },
+                    {
+                      "color": "red",
+                      "value": 2000
+                    }
                   ]
                 }
               },
-              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } }
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "tool_name" },
+            "matcher": {
+              "id": "byName",
+              "options": "tool_name"
+            },
             "properties": [
-              { "id": "custom.width", "value": 100 }
+              {
+                "id": "custom.width",
+                "value": 100
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Time" },
+            "matcher": {
+              "id": "byName",
+              "options": "Time"
+            },
             "properties": [
-              { "id": "custom.width", "value": 180 }
+              {
+                "id": "custom.width",
+                "value": 180
+              }
             ]
           }
         ]
       },
       "options": {
         "showHeader": true,
-        "sortBy": [{ "displayName": "output_lines", "desc": true }]
+        "sortBy": [
+          {
+            "displayName": "output_lines",
+            "desc": true
+          }
+        ]
       },
       "transformations": [
         {
           "id": "extractFields",
-          "options": { "source": "labels", "format": "auto" }
+          "options": {
+            "source": "labels",
+            "format": "auto"
+          }
         },
         {
           "id": "organize",
@@ -568,8 +1015,11 @@
       ],
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | output_lines > 500",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\"} | json | tool_name=~\"$tool_name\" | event_type=\"tool_output_size\" | output_lines > 500",
           "refId": "A"
         }
       ]
@@ -577,12 +1027,24 @@
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["claude-code", "warden", "output-size", "tokens"],
+  "tags": [
+    "claude-code",
+    "warden",
+    "output-size",
+    "tokens"
+  ],
   "templating": {
     "list": [
       {
-        "current": { "selected": false, "text": "All", "value": "$__all" },
-        "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "loki-claude-warden"
+        },
         "definition": "label_values(session_id)",
         "includeAll": true,
         "allValue": ".+",
@@ -596,10 +1058,30 @@
         "skipUrlSync": false,
         "sort": 2,
         "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "includeAll": true,
+        "allValue": ".+",
+        "label": "Tool",
+        "multi": true,
+        "name": "tool_name",
+        "options": [],
+        "query": "Bash,Read,Write,Edit,Glob,Grep,WebFetch,Task,NotebookEdit",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "custom"
       }
     ]
   },
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
   "title": "Warden: Output Size & Token Tracking",

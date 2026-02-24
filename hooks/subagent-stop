@@ -55,7 +55,7 @@ if command -v budget-cli &>/dev/null; then
   fi
 
   if ! budget-cli complete "$AGENT_ID" 2>"$ERROR_LOG.tmp"; then
-    echo "[$(date -Iseconds)] subagent-stop: complete failed for $AGENT_ID: $(cat "$ERROR_LOG.tmp")" >> "$ERROR_LOG"
+    echo "[$(_warden_date_iso)] subagent-stop: complete failed for $AGENT_ID: $(cat "$ERROR_LOG.tmp")" >> "$ERROR_LOG"
   fi
   rm -f "$ERROR_LOG.tmp"
 fi
@@ -73,7 +73,7 @@ if [ -f "$START_FILE" ]; then
   if [ ! -f "$AGENT_STATS" ]; then
     echo "timestamp,agent_id,agent_category,agent_type,duration_seconds,session_id,status" > "$AGENT_STATS"
   fi
-  echo "$(date -Iseconds),$AGENT_ID,subagent,$AGENT_TYPE,$DURATION,$SESSION_ID,completed" >> "$AGENT_STATS"
+  echo "$(_warden_date_iso),$AGENT_ID,subagent,$AGENT_TYPE,$DURATION,$SESSION_ID,completed" >> "$AGENT_STATS"
 
   # Emit to events.jsonl for Loki/Grafana visibility
   _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))

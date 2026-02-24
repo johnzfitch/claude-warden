@@ -6,7 +6,11 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    { "title": "Tool Latency", "url": "/d/warden-tool-latency", "type": "link", "icon": "dashboard", "tooltip": "Warden: Tool Latency & Traces" },
+    { "title": "Output Size", "url": "/d/warden-output-size", "type": "link", "icon": "dashboard", "tooltip": "Warden: Output Size & Token Tracking" },
+    { "title": "Subagent Lifecycle", "url": "/d/warden-subagent-lifecycle", "type": "link", "icon": "dashboard", "tooltip": "Warden: Subagent & Session Lifecycle" }
+  ],
   "liveNow": true,
   "panels": [
     {

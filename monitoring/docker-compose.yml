@@ -1,3 +1,8 @@
+# NOTE: This compose file uses network_mode: host which only works on Linux.
+# For macOS/Windows (Docker Desktop), use the override file:
+#   docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
+# The override replaces network_mode with explicit port mappings and a bridge network.
+
 services:
   # Loki (log aggregation)
   loki:

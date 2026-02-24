@@ -6,21 +6,23 @@
 OTEL_TRACE_ENDPOINT="${OTEL_TRACE_ENDPOINT:-http://localhost:4318/v1/traces}"
 
 # Derive a deterministic 32-hex-char trace ID from session ID
-# Uses md5sum for speed (not cryptographic -- just needs uniqueness)
+# Uses md5 for speed (not cryptographic -- just needs uniqueness)
+# Cross-platform: md5sum (Linux), md5 -q (macOS), openssl (fallback)
 _warden_trace_id_from_session() {
     local session_id="$1"
-    printf '%s' "warden-trace-${session_id}" | md5sum | cut -c1-32
+    printf '%s' "warden-trace-${session_id}" | _warden_md5
 }
 
 # Generate a random 16-hex-char span ID
+# Cross-platform: od is POSIX, xxd requires vim
 _warden_random_span_id() {
-    head -c8 /dev/urandom | xxd -p
+    od -An -tx1 -N8 /dev/urandom | tr -d ' \n'
 }
 
 # Derive a deterministic parent span ID from session (root span)
 _warden_root_span_id() {
     local session_id="$1"
-    printf '%s' "warden-root-${session_id}" | md5sum | cut -c1-16
+    printf '%s' "warden-root-${session_id}" | _warden_md5 | cut -c1-16
 }
 
 # Emit a single OTLP trace span for a tool call

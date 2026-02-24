@@ -28,7 +28,7 @@ if [ -f "$SESSION_START_FILE" ]; then
   DURATION_MIN=$((DURATION / 60))
 
   # Log terminal agent completion
-  echo "$(date -Iseconds),terminal-$SESSION_ID,terminal,main,$DURATION,$SESSION_ID,completed" >> "$AGENT_STATS"
+  echo "$(_warden_date_iso),terminal-$SESSION_ID,terminal,main,$DURATION,$SESSION_ID,completed" >> "$AGENT_STATS"
 
   # Emit session_end event to events.jsonl for Loki/Grafana
   _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
@@ -54,7 +54,7 @@ if [ -f "$SESSION_START_FILE" ]; then
     SUBAGENT_COUNT=$(grep ",$SESSION_ID," "$AGENT_STATS" 2>/dev/null | grep ",subagent," | grep ",completed" | wc -l || echo 0)
 
     # Log session cost
-    echo "$(date -Iseconds),$SESSION_ID,$DURATION,$START_CONSUMED,$END_CONSUMED,$DELTA,$SUBAGENT_COUNT" >> "$SESSION_COST_LOG"
+    echo "$(_warden_date_iso),$SESSION_ID,$DURATION,$START_CONSUMED,$END_CONSUMED,$DELTA,$SUBAGENT_COUNT" >> "$SESSION_COST_LOG"
 
     # Refresh Prometheus textfile metrics
     BUDGET_EXPORTER="$HOME/dev/claude-code-monitoring-guide/budget-exporter.sh"

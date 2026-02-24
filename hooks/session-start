@@ -17,7 +17,7 @@ if [ -n "$SESSION_ID" ]; then
   date +%s > "$HOME/.claude/.session-times/$SESSION_ID.start"
   # Warden TUI: record session start for relative timestamps
   mkdir -p "$WARDEN_STATE_DIR"
-  date +%s.%N > "$WARDEN_STATE_DIR/.session_start"
+  _warden_date_sns > "$WARDEN_STATE_DIR/.session_start"
 
   # Snapshot budget at session start (if budget-cli is installed)
   if command -v budget-cli &>/dev/null; then
@@ -33,7 +33,7 @@ if [ -n "$SESSION_ID" ]; then
   fi
 
   # Log terminal agent start
-  echo "$(date -Iseconds),terminal-$SESSION_ID,terminal,main,0,$SESSION_ID,started" >> "$AGENT_STATS"
+  echo "$(_warden_date_iso),terminal-$SESSION_ID,terminal,main,0,$SESSION_ID,started" >> "$AGENT_STATS"
 
   # Emit session_start event to events.jsonl for Loki/Grafana
   printf '{"timestamp":0,"event_type":"session_start","tool":"SessionStart","session_id":"%s"}\n' \
