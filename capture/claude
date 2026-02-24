@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# capture/claude - Wrapper that routes claude through mitmproxy for full API logging.
+#
+# Usage (drop-in replacement for the claude CLI):
+#   capture/claude                          # interactive session
+#   capture/claude -p "prompt"             # non-interactive
+#   capture/claude -p "prompt" --output-format stream-json
+#
+# Logs land in ~/claude-captures/YYYY-MM-DD/capture-HHMMSS.jsonl
+# Claude Code built-in session logs continue writing to ~/.claude/projects/ as normal.
+#
+# Environment:
+#   WARDEN_CAPTURE_BODIES=1  Enable full request/response body logging.
+#                            Default is off (bodies truncated to 200 chars).
+#                            Even when enabled, system/messages keys are redacted.
+
+set -euo pipefail
+
+CAPTURE_DIR="$(cd "$(dirname "$0")" && pwd)"
+CERT="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
+PROXY_PORT=8080
+PROXY="http://127.0.0.1:$PROXY_PORT"
+MITM_PID=""
+MITM_LOG="${HOME}/.claude/capture-mitm.log"
+
+cleanup() {
+    if [[ -n "$MITM_PID" ]] && kill -0 "$MITM_PID" 2>/dev/null; then
+        kill "$MITM_PID" 2>/dev/null
+        wait "$MITM_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+# === Preflight checks ===
+if ! command -v mitmdump &>/dev/null; then
+    echo "[!] mitmdump not found. Install with: pip install mitmproxy" >&2
+    exit 1
+fi
+
+if ! command -v claude &>/dev/null; then
+    echo "[!] claude CLI not found." >&2
+    exit 1
+fi
+
+if [[ ! -f "$CERT" ]]; then
+    echo "[!] mitmproxy CA cert not found: $CERT" >&2
+    echo "    Run mitmdump once to generate it, then trust it system-wide." >&2
+    exit 1
+fi
+
+# === Start mitmdump ===
+mitmdump \
+    --listen-port "$PROXY_PORT" \
+    --quiet \
+    -s "$CAPTURE_DIR/logger.py" \
+    &>"$MITM_LOG" &
+MITM_PID=$!
+chmod 600 "$MITM_LOG" 2>/dev/null || true
+
+# Wait for proxy to be ready
+for i in {1..10}; do
+    if nc -z 127.0.0.1 "$PROXY_PORT" 2>/dev/null; then
+        break
+    fi
+    sleep 0.2
+done
+
+if ! nc -z 127.0.0.1 "$PROXY_PORT" 2>/dev/null; then
+    echo "[!] mitmdump failed to start. Check $MITM_LOG" >&2
+    exit 1
+fi
+
+# === Run claude through the proxy ===
+HTTPS_PROXY="$PROXY" \
+HTTP_PROXY="$PROXY" \
+NODE_EXTRA_CA_CERTS="$CERT" \
+    claude "$@"
