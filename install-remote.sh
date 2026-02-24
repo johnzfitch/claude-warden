@@ -131,7 +131,8 @@ if fetch_to "$CHECKSUM_URL" "$CHECKSUM_FILE" 2>/dev/null && [[ -s "$CHECKSUM_FIL
     fi
     info "Checksum OK."
 else
-    warn "No checksum file found for this release, skipping verification."
+    error "No checksum file found for this release. Refusing to install unverified tarball."
+    exit 1
 fi
 
 # === Validate tarball contents ===
