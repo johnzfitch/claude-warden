@@ -244,8 +244,9 @@ if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
     (( OUTPUT_SIZE <= TRUNCATION_THRESHOLD )) && { _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _exit_clean_or_suppress; }
 fi
 
-# Binary check: pipe through grep since bash variables can't hold null bytes
-if printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | grep -qP '\x00'; then
+# Binary check: detect null bytes portably (no grep -P which is Linux-only)
+# od + grep is POSIX-compliant and works on macOS/Linux/BSD
+if printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | head -c 4096 | od -An -tx1 | grep -q ' 00'; then
     _warden_emit_event "truncated" "$OUTPUT_SIZE" 50 "binary_output"
     jq -n --arg text "[Binary output: $((OUTPUT_SIZE/1024))KB. Use 'file' or redirect.]" '{"modifyOutput":$text}'
     exit 0

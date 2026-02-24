@@ -4,7 +4,11 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    { "title": "Cost & Budget", "url": "/d/claude-code-otel", "type": "link", "icon": "dashboard", "tooltip": "Claude Code - Working Dashboard" },
+    { "title": "Tool Latency", "url": "/d/warden-tool-latency", "type": "link", "icon": "dashboard", "tooltip": "Warden: Tool Latency & Traces" },
+    { "title": "Output Size", "url": "/d/warden-output-size", "type": "link", "icon": "dashboard", "tooltip": "Warden: Output Size & Token Tracking" }
+  ],
   "liveNow": true,
   "panels": [
     {
@@ -118,7 +122,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"session_stop\" [$__range])",
+          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=~\"session_stop|session_end\" [$__range])",
           "legendFormat": "sessions",
           "refId": "A"
         }
@@ -235,7 +239,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum by (reason) (count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"session_stop\" [$__range]))",
+          "expr": "sum by (reason) (count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=~\"session_stop|session_end\" [$__range]))",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }

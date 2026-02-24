@@ -4,7 +4,11 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    { "title": "Cost & Budget", "url": "/d/claude-code-otel", "type": "link", "icon": "dashboard", "tooltip": "Claude Code - Working Dashboard" },
+    { "title": "Tool Latency", "url": "/d/warden-tool-latency", "type": "link", "icon": "dashboard", "tooltip": "Warden: Tool Latency & Traces" },
+    { "title": "Subagent Lifecycle", "url": "/d/warden-subagent-lifecycle", "type": "link", "icon": "dashboard", "tooltip": "Warden: Subagent & Session Lifecycle" }
+  ],
   "liveNow": true,
   "panels": [
     {
@@ -31,7 +35,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
+          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
           "legendFormat": "bytes",
           "refId": "A"
         }
@@ -62,7 +66,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
+          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
           "legendFormat": "avg",
           "refId": "A"
         }
@@ -93,7 +97,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range])",
           "legendFormat": "max",
           "refId": "A"
         }
@@ -123,7 +127,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | output_bytes > 10240 [$__range])",
+          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | output_bytes > 10240 [$__range])",
           "legendFormat": "large",
           "refId": "A"
         }
@@ -153,7 +157,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap estimated_tokens [$__range])",
+          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap estimated_tokens [$__range])",
           "legendFormat": "tokens",
           "refId": "A"
         }
@@ -182,7 +186,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" [$__range])",
+          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" [$__range])",
           "legendFormat": "calls",
           "refId": "A"
         }
@@ -223,7 +227,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum by (tool_name) (max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__interval]))",
+          "expr": "sum by (tool_name) (max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__interval]))",
           "legendFormat": "{{tool_name}}",
           "refId": "A"
         }
@@ -258,13 +262,13 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range]) by (tool_name)",
+          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range]) by (tool_name)",
           "legendFormat": "{{tool_name}} avg",
           "refId": "A"
         },
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range]) by (tool_name)",
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap output_bytes [$__range]) by (tool_name)",
           "legendFormat": "{{tool_name}} max",
           "refId": "B"
         }
@@ -298,7 +302,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap estimated_tokens [$__range]) by (tool_name)",
+          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap estimated_tokens [$__range]) by (tool_name)",
           "legendFormat": "{{tool_name}}",
           "refId": "A"
         }
@@ -390,7 +394,6 @@
               "timestamp": true,
               "event_type": true,
               "service_name": true,
-              "tool_name": true,
               "session_id": true
             },
             "indexByName": {
@@ -407,7 +410,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | output_bytes > 10240",
+          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | output_bytes > 10240",
           "refId": "A"
         }
       ]
@@ -446,7 +449,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap estimated_tokens [1m])",
+          "expr": "sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap estimated_tokens [1m])",
           "legendFormat": "tokens/min",
           "refId": "A"
         }
@@ -479,7 +482,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | unwrap output_lines [$__interval]) by (tool_name)",
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | unwrap output_lines [$__interval]) by (tool_name)",
           "legendFormat": "{{tool_name}}",
           "refId": "A"
         }
@@ -569,7 +572,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_output_size\" | output_lines > 500",
+          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_output_size\" | output_lines > 500",
           "refId": "A"
         }
       ]
@@ -595,6 +598,23 @@
         "regex": "",
         "skipUrlSync": false,
         "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+        "definition": "label_values({service_name=\"claude-code\"}, tool_name)",
+        "includeAll": true,
+        "allValue": ".+",
+        "label": "Tool",
+        "multi": true,
+        "name": "tool_name",
+        "options": [],
+        "query": "label_values({service_name=\"claude-code\"}, tool_name)",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
         "type": "query"
       }
     ]

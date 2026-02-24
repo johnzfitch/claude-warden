@@ -1,0 +1,59 @@
+# docker-compose.macos.yml -- Override for macOS/Windows (Docker Desktop)
+# Docker Desktop does not support network_mode: host.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
+#
+# This override:
+# 1. Removes network_mode: host
+# 2. Adds explicit port mappings
+# 3. Connects services via a bridge network
+# 4. Adjusts inter-service URLs to use container names instead of localhost
+
+services:
+  loki:
+    network_mode: ""
+    networks:
+      - warden
+    ports:
+      - "3100:3100"
+
+  otel-collector:
+    network_mode: ""
+    networks:
+      - warden
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+
+  prometheus:
+    network_mode: ""
+    networks:
+      - warden
+    ports:
+      - "9090:9090"
+
+  node-exporter:
+    network_mode: ""
+    networks:
+      - warden
+    ports:
+      - "9101:9101"
+
+  grafana:
+    network_mode: ""
+    networks:
+      - warden
+    ports:
+      - "3000:3000"
+
+  tempo:
+    network_mode: ""
+    networks:
+      - warden
+    ports:
+      - "3200:3200"
+      - "3205:3205"
+
+networks:
+  warden:
+    driver: bridge

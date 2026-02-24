@@ -4,7 +4,11 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    { "title": "Cost & Budget", "url": "/d/claude-code-otel", "type": "link", "icon": "dashboard", "tooltip": "Claude Code - Working Dashboard" },
+    { "title": "Output Size", "url": "/d/warden-output-size", "type": "link", "icon": "dashboard", "tooltip": "Warden: Output Size & Token Tracking" },
+    { "title": "Subagent Lifecycle", "url": "/d/warden-subagent-lifecycle", "type": "link", "icon": "dashboard", "tooltip": "Warden: Subagent & Session Lifecycle" }
+  ],
   "liveNow": true,
   "panels": [
     {
@@ -30,7 +34,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" [$__range])",
+          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" [$__range])",
           "legendFormat": "calls",
           "refId": "A"
         }
@@ -60,7 +64,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range])",
+          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range])",
           "legendFormat": "avg",
           "refId": "A"
         }
@@ -90,7 +94,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range])",
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range])",
           "legendFormat": "max",
           "refId": "A"
         }
@@ -119,7 +123,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" | duration_ms > 2000 [$__range])",
+          "expr": "count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" | duration_ms > 2000 [$__range])",
           "legendFormat": "slow",
           "refId": "A"
         }
@@ -218,7 +222,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum by (tool_name) (max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__interval]))",
+          "expr": "sum by (tool_name) (max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__interval]))",
           "legendFormat": "{{tool_name}}",
           "refId": "A"
         }
@@ -253,19 +257,19 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]) by (tool_name)",
+          "expr": "avg_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]) by (tool_name)",
           "legendFormat": "{{tool_name}} avg",
           "refId": "A"
         },
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "quantile_over_time(0.95, {service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]) by (tool_name)",
+          "expr": "quantile_over_time(0.95, {service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]) by (tool_name)",
           "legendFormat": "{{tool_name}} p95",
           "refId": "B"
         },
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]) by (tool_name)",
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]) by (tool_name)",
           "legendFormat": "{{tool_name}} max",
           "refId": "C"
         }
@@ -298,7 +302,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "sum by (tool_name) (count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" [1m]))",
+          "expr": "sum by (tool_name) (count_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" [1m]))",
           "legendFormat": "{{tool_name}}",
           "refId": "A"
         }
@@ -424,11 +428,36 @@
       ]
     },
     {
+      "title": "Tool Errors",
+      "description": "Recent tool errors with error messages",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 41 },
+      "id": 33,
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_error\"",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "title": "Trace Spans (OTEL Collector Debug)",
       "description": "Trace span activity from hook-emitted OTLP spans. Shows spans received by the collector over time. Full trace visualization requires adding Tempo.",
       "type": "timeseries",
       "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 41 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 49 },
       "id": 30,
       "fieldConfig": {
         "defaults": {
@@ -461,7 +490,7 @@
       "description": "Correlation between tool output bytes and hook-measured latency. Larger outputs tend to take longer due to streaming and post-processing.",
       "type": "timeseries",
       "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
       "id": 31,
       "fieldConfig": {
         "defaults": {
@@ -483,15 +512,47 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"allowed\" | unwrap original_output_bytes [$__interval])",
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"allowed\" | unwrap original_output_bytes [$__interval])",
           "legendFormat": "output bytes",
           "refId": "A"
         },
         {
           "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__interval])",
+          "expr": "max_over_time({service_name=\"claude-code\", session_id=~\"$session_id\", tool_name=~\"$tool_name\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__interval])",
           "legendFormat": "latency ms",
           "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Tokens Saved by Rule",
+      "description": "Total tokens saved broken down by the warden rule that triggered the save",
+      "type": "barchart",
+      "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+      "id": 34,
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisBorderShow": true }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always",
+        "groupWidth": 0.7,
+        "barWidth": 0.8,
+        "stacking": "none",
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+          "expr": "sum by (rule) (sum_over_time({service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=~\"blocked|truncated\" | unwrap tokens_saved [$__range]))",
+          "legendFormat": "{{rule}}",
+          "refId": "A"
         }
       ]
     },
@@ -500,7 +561,7 @@
       "description": "Breakdown of all warden event types: allowed, blocked, truncated, tool_latency",
       "type": "piechart",
       "datasource": { "type": "loki", "uid": "loki-claude-warden" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
       "id": 32,
       "fieldConfig": {
         "defaults": {
@@ -543,6 +604,23 @@
         "regex": "",
         "skipUrlSync": false,
         "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "loki", "uid": "loki-claude-warden" },
+        "definition": "label_values({service_name=\"claude-code\"}, tool_name)",
+        "includeAll": true,
+        "allValue": ".+",
+        "label": "Tool",
+        "multi": true,
+        "name": "tool_name",
+        "options": [],
+        "query": "label_values({service_name=\"claude-code\"}, tool_name)",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
         "type": "query"
       }
     ]

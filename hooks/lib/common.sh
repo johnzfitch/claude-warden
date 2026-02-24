@@ -13,6 +13,64 @@ export WARDEN_SESSION_BUDGET_DIR="${WARDEN_SESSION_BUDGET_DIR:-$HOME/.claude/.se
 export WARDEN_SUBAGENT_STATE_DIR="${WARDEN_SUBAGENT_STATE_DIR:-$HOME/.claude/.subagent-state}"
 export WARDEN_EVENTS_FILE="$WARDEN_STATE_DIR/events.jsonl"
 
+# ==============================================================================
+# CROSS-PLATFORM HELPERS (must be defined before first use)
+# ==============================================================================
+
+# Detect platform once
+_WARDEN_OS="$(uname -s)"
+
+# Get nanosecond-precision timestamp (epoch nanoseconds as integer)
+# macOS date doesn't support %N; falls back to seconds * 10^9
+_warden_date_ns() {
+    if [[ "$_WARDEN_OS" == "Darwin" ]]; then
+        # macOS: use perl for sub-second precision if available, else seconds
+        if command -v perl &>/dev/null; then
+            perl -MTime::HiRes=time -e 'printf "%d\n", time()*1e9'
+        else
+            echo "$(date +%s)000000000"
+        fi
+    else
+        date +%s%N
+    fi
+}
+
+# Get seconds.nanoseconds timestamp (e.g., 1234567890.123456789)
+# macOS date doesn't support %N; falls back to seconds.000000000
+_warden_date_sns() {
+    if [[ "$_WARDEN_OS" == "Darwin" ]]; then
+        if command -v perl &>/dev/null; then
+            perl -MTime::HiRes=time -e 'printf "%.9f\n", time()'
+        else
+            echo "$(date +%s).000000000"
+        fi
+    else
+        date +%s.%N
+    fi
+}
+
+# Get ISO 8601 date string (e.g., 2024-01-15T10:30:00+0000)
+# macOS date doesn't support -Iseconds
+_warden_date_iso() {
+    if [[ "$_WARDEN_OS" == "Darwin" ]]; then
+        date -u +%Y-%m-%dT%H:%M:%S%z
+    else
+        date -Iseconds
+    fi
+}
+
+# Cross-platform md5 hash (returns 32 hex chars on stdout)
+_warden_md5() {
+    if command -v md5sum &>/dev/null; then
+        md5sum | cut -c1-32
+    elif command -v md5 &>/dev/null; then
+        md5 -q
+    else
+        # Fallback: use openssl which is available on both platforms
+        openssl md5 -r | cut -c1-32
+    fi
+}
+
 # Session start timestamp (cached for this invocation)
 if [[ -f "$WARDEN_STATE_DIR/.session_start" ]]; then
     _WARDEN_SESSION_START_NS=$(cat "$WARDEN_STATE_DIR/.session_start" 2>/dev/null)
@@ -29,7 +87,7 @@ export _WARDEN_SESSION_START_S
 
 # Current timestamp (captured once)
 export _WARDEN_NOW_S=$(date +%s)
-export _WARDEN_NOW_NS=$(date +%s.%N)
+export _WARDEN_NOW_NS=$(_warden_date_sns)
 
 # Truncation thresholds (tunable via env vars)
 export WARDEN_TRUNCATE_BYTES=${WARDEN_TRUNCATE_BYTES:-20480}           # 20KB generic
@@ -291,7 +349,7 @@ _warden_agent_stats_append() {
         echo "timestamp,agent_id,agent_category,agent_type,duration_seconds,session_id,status" > "$agent_stats"
     fi
 
-    echo "$(date -Iseconds),$agent_id,$category,$type,$duration,$session_id,$status" >> "$agent_stats"
+    echo "$(_warden_date_iso),$agent_id,$category,$type,$duration,$session_id,$status" >> "$agent_stats"
 }
 
 # ==============================================================================
@@ -395,7 +453,7 @@ _warden_record_tool_start() {
     local tool_name="$1"
     [[ -z "$tool_name" ]] && return
     mkdir -p "$WARDEN_STATE_DIR"
-    date +%s%N > "$WARDEN_STATE_DIR/.tool-start-${tool_name}-$$" 2>/dev/null
+    _warden_date_ns > "$WARDEN_STATE_DIR/.tool-start-${tool_name}-$$" 2>/dev/null
 }
 
 # Compute tool latency from recorded start timestamp
@@ -430,7 +488,7 @@ _warden_compute_tool_latency() {
 
     [[ ! "$WARDEN_TOOL_START_NS" =~ ^[0-9]+$ ]] && return 1
 
-    WARDEN_TOOL_END_NS=$(date +%s%N)
+    WARDEN_TOOL_END_NS=$(_warden_date_ns)
     local delta_ns=$(( WARDEN_TOOL_END_NS - WARDEN_TOOL_START_NS ))
     WARDEN_TOOL_LATENCY_MS=$(( delta_ns / 1000000 ))
 
