@@ -100,6 +100,31 @@ if [[ -d "$WARDEN_ENV_DIR" ]]; then
     dim "Removed: .warden/"
 fi
 
+# === Remove source line from shell RC files ===
+_remove_from_rc() {
+    local rc_file="$1"
+    local rc_name
+    rc_name=$(basename "$rc_file")
+
+    [[ -f "$rc_file" ]] || return
+    if ! grep -qF "claude-warden" "$rc_file" 2>/dev/null; then
+        return
+    fi
+
+    if $DRY_RUN; then
+        dim "(dry-run) Would remove warden lines from $rc_file"
+        return
+    fi
+
+    # Remove the marker comment and the source line
+    sed -i '/# claude-warden env/d;/warden\.env\.sh/d' "$rc_file"
+    info "Removed warden env from $rc_name"
+}
+
+for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    _remove_from_rc "$rc"
+done
+
 # === Restore settings.json ===
 # Find the most recent backup
 LATEST_BACKUP=""

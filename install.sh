@@ -455,10 +455,41 @@ if ! $DRY_RUN; then
         printf 'export WARDEN_STATE_DIR="${WARDEN_STATE_DIR:-$HOME/.claude/.statusline}"\n'
     } > "$SHELL_ENV_FILE"
 
-    dim "Wrote $SHELL_ENV_FILE (source from .zshrc to replace manual env vars)"
+    dim "Wrote $SHELL_ENV_FILE"
 fi
 
-# === Validate ===
+# === Inject source line into shell RC files ===
+WARDEN_SOURCE_LINE="source \"$WARDEN_DIR/warden.env.sh\""
+WARDEN_MARKER="# claude-warden env"
+
+_inject_shell_rc() {
+    local rc_file="$1"
+    local rc_name
+    rc_name=$(basename "$rc_file")
+
+    if [[ ! -f "$rc_file" ]]; then
+        return
+    fi
+
+    # Already present — skip
+    if grep -qF "claude-warden" "$rc_file" 2>/dev/null; then
+        dim "$rc_name: warden source line already present"
+        return
+    fi
+
+    if $DRY_RUN; then
+        dim "(dry-run) Would append source line to $rc_file"
+        return
+    fi
+
+    # Append with marker comment
+    printf '\n%s\n%s\n' "$WARDEN_MARKER" "$WARDEN_SOURCE_LINE" >> "$rc_file"
+    info "Added warden env to $rc_name"
+}
+
+for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    _inject_shell_rc "$rc"
+done
 info "Validating..."
 ERRORS=0
 
@@ -557,8 +588,3 @@ fi
 echo ""
 echo "  To change profile:  ./install.sh --profile <name>"
 echo "  To customize:       cp config/user.json.template config/user.json && edit"
-if [[ -f "$WARDEN_DIR/warden.env.sh" ]]; then
-    echo ""
-    printf "  ${DIM}Optional: Replace Claude Code env vars in .zshrc with:${RESET}\n"
-    printf "  ${CYAN}source \"$WARDEN_DIR/warden.env.sh\"${RESET}\n"
-fi
