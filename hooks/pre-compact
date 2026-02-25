@@ -42,15 +42,12 @@ if [[ -f "$SUBAGENT_COUNT_FILE" ]]; then
     fi
 fi
 
-# Budget state (if budget-cli available)
-BUDGET_STATUS="N/A"
-if command -v budget-cli &>/dev/null; then
-    BUDGET_JSON=$(budget-cli export 2>/dev/null || echo '{}')
-    UTIL=$(echo "$BUDGET_JSON" | jq -r '.utilization // 0' | cut -d. -f1)
-    CONSUMED=$(echo "$BUDGET_JSON" | jq -r '.consumed // 0')
-    TOTAL=$(echo "$BUDGET_JSON" | jq -r '.total_limit // 0')
-    BUDGET_STATUS="${UTIL}% (${CONSUMED}/${TOTAL})"
-fi
+# Budget state
+BUDGET_JSON=$(_warden_budget_export 2>/dev/null || echo '{}')
+UTIL=$(echo "$BUDGET_JSON" | jq -r '.utilization // 0' | cut -d. -f1)
+CONSUMED=$(echo "$BUDGET_JSON" | jq -r '.consumed // 0')
+TOTAL=$(echo "$BUDGET_JSON" | jq -r '.total_limit // 0')
+BUDGET_STATUS="${UTIL}% (${CONSUMED}/${TOTAL})"
 
 # === CONSTRUCT SUMMARY ===
 SUMMARY="[Warden Session State]

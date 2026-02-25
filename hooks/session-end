@@ -36,11 +36,11 @@ if [ -f "$SESSION_START_FILE" ]; then
     "$_TS" "$SESSION_ID" "$DURATION" \
     >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 
-  # Track budget delta for this session (if budget-cli is installed)
+  # Track budget delta for this session
   START_BUDGET_FILE="$WARDEN_SESSION_BUDGET_DIR/$SESSION_ID.start.json"
-  if [ -f "$START_BUDGET_FILE" ] && command -v budget-cli &>/dev/null; then
+  if [ -f "$START_BUDGET_FILE" ]; then
     START_CONSUMED=$(jq -r '.consumed // 0' "$START_BUDGET_FILE" 2>/dev/null || echo 0)
-    END_JSON=$(budget-cli export 2>/dev/null || echo '{"consumed":0}')
+    END_JSON=$(_warden_budget_export)
     END_CONSUMED=$(echo "$END_JSON" | jq -r '.consumed // 0')
     DELTA=$((END_CONSUMED - START_CONSUMED))
 
@@ -56,10 +56,6 @@ if [ -f "$SESSION_START_FILE" ]; then
     # Log session cost
     echo "$(_warden_date_iso),$SESSION_ID,$DURATION,$START_CONSUMED,$END_CONSUMED,$DELTA,$SUBAGENT_COUNT" >> "$SESSION_COST_LOG"
 
-    # Refresh Prometheus textfile metrics
-    BUDGET_EXPORTER="$HOME/dev/claude-code-monitoring-guide/budget-exporter.sh"
-    [[ -x "$BUDGET_EXPORTER" ]] && { "$BUDGET_EXPORTER" 2>/dev/null & disown; }
-
     # Cleanup budget snapshot
     rm -f "$START_BUDGET_FILE"
   fi
@@ -71,15 +67,12 @@ fi
 END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
 
 # === GHOST SUBAGENT REAPER ===
-# Force-complete orphaned subagents from THIS session only (safe with concurrent sessions)
-SUBAGENT_STATE_DIR="$HOME/.claude/.subagent-state"
-if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]] && command -v budget-cli &>/dev/null; then
+# Clean up orphaned subagent state from THIS session only (safe with concurrent sessions)
+if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]]; then
     for state_file in "$WARDEN_SUBAGENT_STATE_DIR"/*; do
         [ -f "$state_file" ] && [ ! -L "$state_file" ] || continue
         [[ "$(basename "$state_file")" == *.* ]] && continue  # skip .start and session- files
         grep -q "^SESSION_ID=${SESSION_ID}$" "$state_file" 2>/dev/null || continue
-        ORPHAN_ID=$(basename "$state_file")
-        budget-cli complete "$ORPHAN_ID" 2>/dev/null || true
         rm -f "$state_file" "$state_file.start"
     done
 fi

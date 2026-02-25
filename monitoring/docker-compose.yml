@@ -44,7 +44,7 @@ services:
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
 
-  # Node Exporter (textfile collector for budget-cli metrics)
+  # Node Exporter (textfile collector for warden budget metrics)
   node-exporter:
     image: docker.io/prom/node-exporter:latest
     container_name: node-exporter

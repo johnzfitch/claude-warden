@@ -79,9 +79,9 @@ if [[ -n "$WARDEN_SESSION_ID" ]]; then
     printf '%s|%s|%s|%s\n' "$NEW_COUNT" "$TOP_BYTES" "$TOP_LABEL" "$(date +%s)" > "$STATE_FILE"
 
     # Budget check every 50 calls (infrequent, fine to be slow)
-    if (( NEW_COUNT % 50 == 0 )) && command -v budget-cli &>/dev/null; then
+    if (( NEW_COUNT % 50 == 0 )); then
         ALERT_FILE="$WARDEN_STATE_DIR/budget-alert"
-        UTIL=$(budget-cli export 2>/dev/null | jq -r '.utilization // 0' | cut -d. -f1)
+        UTIL=$(_warden_budget_export 2>/dev/null | jq -r '.utilization // 0' | cut -d. -f1)
         if [[ "$UTIL" =~ ^[0-9]+$ ]] && (( UTIL >= 90 )); then
             echo "CRITICAL|$UTIL|$(date +%s)" > "$ALERT_FILE"
             _warden_notify critical "Claude Budget" "${UTIL}%!"

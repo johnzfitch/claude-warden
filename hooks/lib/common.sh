@@ -104,6 +104,69 @@ export WARDEN_EDIT_MAX_BYTES=${WARDEN_EDIT_MAX_BYTES:-51200}
 export WARDEN_NOTEBOOK_MAX_BYTES=${WARDEN_NOTEBOOK_MAX_BYTES:-51200}
 export WARDEN_DEFAULT_CALL_LIMIT=${WARDEN_DEFAULT_CALL_LIMIT:-30}
 export WARDEN_DEFAULT_BYTE_LIMIT=${WARDEN_DEFAULT_BYTE_LIMIT:-102400}
+export WARDEN_BUDGET_TOTAL=${WARDEN_BUDGET_TOTAL:-280000}
+
+# ==============================================================================
+# BUILT-IN BUDGET TRACKER
+# ==============================================================================
+# Replaces external budget-cli. Tracks estimated token consumption per session.
+# State: single file with consumed count. Total from WARDEN_BUDGET_TOTAL.
+
+WARDEN_BUDGET_STATE="${HOME}/.claude/.warden/budget.state"
+WARDEN_BUDGET_CACHE="$WARDEN_STATE_DIR/budget-export"
+
+# Read consumed tokens from state file (returns number on stdout)
+_warden_budget_read() {
+    [[ -f "$WARDEN_BUDGET_STATE" ]] || { echo 0; return; }
+    local val
+    val=$(<"$WARDEN_BUDGET_STATE")
+    [[ "$val" =~ ^[0-9]+$ ]] && echo "$val" || echo 0
+}
+
+# Write consumed tokens to state file
+_warden_budget_write() {
+    mkdir -p "$(dirname "$WARDEN_BUDGET_STATE")"
+    printf '%d' "$1" > "$WARDEN_BUDGET_STATE"
+}
+
+# Add tokens to consumed counter
+_warden_budget_update() {
+    local tokens="${1:-0}"
+    [[ "$tokens" =~ ^[0-9]+$ ]] || return 0
+    (( tokens == 0 )) && return 0
+    local consumed
+    consumed=$(_warden_budget_read)
+    consumed=$((consumed + tokens))
+    _warden_budget_write "$consumed"
+}
+
+# Check if budget is available (exit 0 = ok, exit 1 = exhausted)
+_warden_budget_check() {
+    local consumed
+    consumed=$(_warden_budget_read)
+    (( consumed < WARDEN_BUDGET_TOTAL ))
+}
+
+# Export budget state as JSON to stdout AND write cache for statusline
+_warden_budget_export() {
+    local consumed total util
+    consumed=$(_warden_budget_read)
+    total="$WARDEN_BUDGET_TOTAL"
+    util=0
+    (( total > 0 )) && util=$((consumed * 100 / total))
+    local json
+    json=$(printf '{"consumed":%d,"limit":%d,"total_limit":%d,"utilization":%d}' \
+        "$consumed" "$total" "$total" "$util")
+    echo "$json"
+    # Write cache for statusline (non-blocking)
+    mkdir -p "$(dirname "$WARDEN_BUDGET_CACHE")"
+    printf '%s' "$json" > "$WARDEN_BUDGET_CACHE" 2>/dev/null || true
+}
+
+# Reset budget counter (called at session start)
+_warden_budget_reset() {
+    _warden_budget_write 0
+}
 
 # ==============================================================================
 # INPUT PARSING

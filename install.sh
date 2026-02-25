@@ -451,7 +451,7 @@ if ! $DRY_RUN; then
         '
 
         echo ""
-        printf '# Warden internal (for budget-cli and shell tools)\n'
+        printf '# Warden internal\n'
         printf 'export WARDEN_STATE_DIR="${WARDEN_STATE_DIR:-$HOME/.claude/.statusline}"\n'
     } > "$SHELL_ENV_FILE"
 

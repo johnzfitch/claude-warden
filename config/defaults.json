@@ -24,6 +24,7 @@
     "write_max_bytes": 102400,
     "edit_max_bytes": 51200,
     "notebook_max_bytes": 51200,
+    "budget_total": 280000,
     "default_call_limit": 30,
     "default_byte_limit": 102400,
     "subagent_call_limits": {

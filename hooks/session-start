@@ -19,13 +19,8 @@ if [ -n "$SESSION_ID" ]; then
   mkdir -p "$WARDEN_STATE_DIR"
   _warden_date_sns > "$WARDEN_STATE_DIR/.session_start"
 
-  # Snapshot budget at session start (if budget-cli is installed)
-  if command -v budget-cli &>/dev/null; then
-    budget-cli export > "$WARDEN_SESSION_BUDGET_DIR/$SESSION_ID.start.json" 2>/dev/null || true
-    # BUG FIX #5: Refresh Prometheus textfile metrics with disown
-    BUDGET_EXPORTER="$HOME/dev/claude-code-monitoring-guide/budget-exporter.sh"
-    [[ -x "$BUDGET_EXPORTER" ]] && { "$BUDGET_EXPORTER" 2>/dev/null & disown; }
-  fi
+  # Snapshot budget at session start
+  _warden_budget_export > "$WARDEN_SESSION_BUDGET_DIR/$SESSION_ID.start.json" 2>/dev/null || true
 
   # Initialize unified agent stats CSV with header if needed
   if [ ! -f "$AGENT_STATS" ]; then

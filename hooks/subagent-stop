@@ -40,24 +40,16 @@ _with_lock() {
     return $_lock_rc
 }
 
-# === BUDGET RECLAMATION ===
-ERROR_LOG="$HOME/.claude/hook-errors.log"
-if command -v budget-cli &>/dev/null; then
-  # Before complete, estimate token usage from duration (rough: ~100 tokens/sec)
-  START_FILE="$HOME/.claude/.subagent-state/$AGENT_ID.start"
-  if [ -f "$START_FILE" ]; then
-    START_TIME=$(cat "$START_FILE")
-    END_TIME=$(date +%s)
-    DURATION=$((END_TIME - START_TIME))
-    if [ "$DURATION" -gt 0 ]; then
-      budget-cli update "$AGENT_ID" $((DURATION * 100)) 2>/dev/null || true
-    fi
+# === BUDGET TRACKING ===
+# Estimate token usage from duration (~100 tokens/sec)
+START_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.start"
+if [[ -f "$START_FILE" ]]; then
+  _START_TIME=$(cat "$START_FILE")
+  _END_TIME=$(date +%s)
+  _DURATION=$((_END_TIME - _START_TIME))
+  if (( _DURATION > 0 )); then
+    _warden_budget_update $((_DURATION * 100))
   fi
-
-  if ! budget-cli complete "$AGENT_ID" 2>"$ERROR_LOG.tmp"; then
-    echo "[$(_warden_date_iso)] subagent-stop: complete failed for $AGENT_ID: $(cat "$ERROR_LOG.tmp")" >> "$ERROR_LOG"
-  fi
-  rm -f "$ERROR_LOG.tmp"
 fi
 
 # === METRICS COLLECTION ===

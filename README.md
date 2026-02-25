@@ -1,5 +1,4 @@
 [repo]: https://github.com/johnzfitch/claude-warden
-[usage-helper]: https://github.com/johnzfitch/claude-usage-helper
 [hooks-docs]: https://docs.anthropic.com/en/docs/claude-code/hooks
 [claude-code]: https://docs.anthropic.com/en/docs/claude-code
 [token-api]: https://docs.anthropic.com/en/docs/build-with-claude/token-counting
@@ -27,11 +26,9 @@
 
 Token-saving hooks + observability for [Claude Code][claude-code]. Prevents verbose output, blocks binary reads, enforces subagent budgets, truncates large outputs, and provides a rich statusline &mdash; saving thousands of tokens per session.
 
-Pair with [claude-usage-helper][usage-helper] for budget tracking, cost telemetry, and session analytics. Warden enforces; usage-helper accounts.
-
 ## ![lightning][icon-lightning] Quickstart
 
-1. Install prerequisites: `jq` (required). Optional: `rg`, `fd`, `budget-cli`.
+1. Install prerequisites: `jq` (required). Optional: `rg`, `fd`.
 2. Install hooks into `~/.claude/` (symlink mode):
    ```bash
    ./install.sh
@@ -50,7 +47,7 @@ Dry-run (no changes to `~/.claude/`):
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="assets/architecture-light.png">
-  <img alt="Architecture: claude-warden (enforcement) feeds into claude-usage-helper (accounting) in a closed loop" src="assets/architecture-dark.png" width="800">
+  <img alt="Architecture: claude-warden hooks intercept tool calls for token governance and observability" src="assets/architecture-dark.png" width="800">
 </picture>
 
 ## ![shield][icon-shield] What it does
@@ -68,7 +65,7 @@ claude-warden installs a set of shell hooks that intercept Claude Code tool call
 | `permission-request` | PermissionRequest | Auto-denies dangerous commands (<code>rm&nbsp;-rf&nbsp;/</code>, <code>mkfs</code>, <code>curl&nbsp;\|&nbsp;bash</code>). Auto-allows safe read-only commands. |
 | `stop` | Stop | Logs session stop events with duration. |
 | `session-lifecycle` | SessionStart/End | Initializes session timing and budget snapshots. Logs duration, budget delta, subagent counts. |
-| `subagent-start` | SubagentStart | Enforces budget-cli limits. Tracks active subagent count. Injects type-specific guidance with output budgets. |
+| `subagent-start` | SubagentStart | Enforces budget limits. Tracks active subagent count. Injects type-specific guidance with output budgets. |
 | `subagent-stop` | SubagentStop | Reclaims budget. Logs subagent metrics (duration, type, worktree). |
 | `tool-error` | PostToolUseFailure | Logs errors with context. Provides recovery hints. |
 | `statusline.sh` | StatusLine | Model, context&nbsp;%, IO tokens, cache stats, tool count, hottest output, active subagents, budget utilization. |
@@ -90,7 +87,6 @@ PreToolUse ──> [tool executes] ──> PostToolUse
   <dt><strong>Recommended</strong></dt>
   <dd><code>rg</code> (ripgrep), <code>fd</code> (fd-find)</dd>
   <dt><strong>Optional</strong></dt>
-  <dd><code>budget-cli</code> &mdash; token budget tracking, from <a href="https://github.com/johnzfitch/claude-usage-helper">claude-usage-helper</a></dd>
   <dd><code>python3</code> with <code>anthropic</code> package &mdash; exact token counting via API (see <a href="#chart-token-savings-accounting">Token savings accounting</a>)</dd>
   <dd><code>mitmdump</code> &mdash; only for the <a href="#flow-api-capture">API capture</a> tool</dd>
 </dl>
@@ -297,7 +293,7 @@ Warden includes an optional observability stack in `monitoring/` that persists h
 | Loki | `grafana/loki:3.4.2` | 3100 | Log aggregation (30-day retention, <abbr title="Time Series Database">TSDB</abbr> filesystem storage) |
 | <abbr title="OpenTelemetry">OTEL</abbr> Collector | `otel/opentelemetry-collector-contrib` | 4317/4318 | Receives <abbr title="OpenTelemetry Protocol">OTLP</abbr> logs + traces, tails `events.jsonl`, exports to Loki + Tempo |
 | Prometheus | `prom/prometheus` | 9090 | Metrics (Claude Code <abbr title="OpenTelemetry Protocol">OTLP</abbr> metrics + node-exporter textfiles) |
-| Node Exporter | `prom/node-exporter` | 9101 | Textfile collector for `budget-cli` metrics |
+| Node Exporter | `prom/node-exporter` | 9101 | Textfile collector for warden budget metrics |
 | Tempo | `grafana/tempo:2.7.2` | 3200/3205 | Distributed trace storage and visualization |
 | Grafana | `grafana/grafana` | 3000 | Dashboards (<samp>admin</samp>/<samp>admin</samp>) |
 
@@ -525,12 +521,6 @@ See `CONTRIBUTING.md`.
 ## ![lock][icon-lock] Security
 
 See `SECURITY.md` for security assumptions, data handling notes, and reporting guidance.
-
-## Related
-
-| Project | What it does |
-|---|---|
-| [claude-usage-helper][usage-helper] | Budget tracking, context compression, cost telemetry. Provides `budget-cli` that warden hooks call for budget enforcement. |
 
 ## License
 
