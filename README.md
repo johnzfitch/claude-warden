@@ -21,7 +21,7 @@
 [icon-network]: .github/assets/icons/building-network-16x16.png
 [icon-flow]: .github/assets/icons/application-network-16x16.png
 [icon-metrics]: .github/assets/icons/chart-arrow-16x16.png
-
+![claude-warden](https://github.com/user-attachments/assets/9a9dc297-aa2a-468a-b468-a2ec3b0e6d22)
 # claude-warden
 
 Token-saving hooks + observability for [Claude Code][claude-code]. Prevents verbose output, blocks binary reads, enforces subagent budgets, truncates large outputs, and provides a rich statusline &mdash; saving thousands of tokens per session.
