@@ -173,6 +173,29 @@ if (( OUTPUT_SIZE > 50 )); then
     unset _RAW _CLEANED _CLEANED_SIZE _STRIPPED
 fi
 
+# === GIT HINT STRIP (Bash commands) ===
+# git writes "hint:" boilerplate to both stdout and stderr; via 2>&1 the block
+# appears twice. Claude knows the workflow -- strip before context accumulation.
+if [[ "$TOOL_NAME" == "Bash" ]]; then
+    case "$WARDEN_INPUT" in
+        *'hint: '*)
+            if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
+                OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+                OUTPUT_SIZE=${#OUTPUT}
+            fi
+            _GIT_CLEANED=$(printf '%s' "$OUTPUT" | grep -v '^hint: ')
+            if (( ${#_GIT_CLEANED} < OUTPUT_SIZE )); then
+                _EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="$_GIT_CLEANED" \
+                _warden_emit_event "truncated" "$OUTPUT_SIZE" "${#_GIT_CLEANED}" "git_hints"
+                OUTPUT="$_GIT_CLEANED"
+                OUTPUT_SIZE="${#_GIT_CLEANED}"
+                REMINDER_PRE_STRIPPED=true
+            fi
+            unset _GIT_CLEANED
+            ;;
+    esac
+fi
+
 # Truncate large outputs from Bash, Grep, Glob, Task (Read handled by read-compress)
 # Subagent Reads also fall through: safety net when read-compress fails
 case "$TOOL_NAME" in
