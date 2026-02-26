@@ -97,3 +97,59 @@ ENDJSON
         -d "$payload" \
         "$OTEL_TRACE_ENDPOINT" 2>/dev/null || true
 }
+
+# Emit the root span for a session, closing the trace waterfall.
+# Called from session-end once both start and end times are known.
+# The spanId matches the parentSpanId already embedded in all tool spans,
+# so Tempo stitches the children to this root retroactively.
+# Usage: _warden_emit_root_span SESSION_ID START_NS END_NS
+_warden_emit_root_span() {
+    local session_id="$1"
+    local start_ns="$2"
+    local end_ns="$3"
+
+    command -v curl &>/dev/null || return 0
+    [[ "$start_ns" =~ ^[0-9]+$ && "$end_ns" =~ ^[0-9]+$ ]] || return 0
+
+    local trace_id span_id duration_ms
+    trace_id=$(_warden_trace_id_from_session "$session_id")
+    span_id=$(_warden_root_span_id "$session_id")
+    duration_ms=$(( (end_ns - start_ns) / 1000000 ))
+
+    local payload
+    payload=$(cat <<ENDJSON
+{
+  "resourceSpans": [{
+    "resource": {
+      "attributes": [
+        {"key": "service.name",  "value": {"stringValue": "claude-warden"}},
+        {"key": "session.id",    "value": {"stringValue": "${session_id}"}}
+      ]
+    },
+    "scopeSpans": [{
+      "scope": {"name": "warden-hooks", "version": "1.0.0"},
+      "spans": [{
+        "traceId":          "${trace_id}",
+        "spanId":           "${span_id}",
+        "name":             "session",
+        "kind":             1,
+        "startTimeUnixNano": "${start_ns}",
+        "endTimeUnixNano":   "${end_ns}",
+        "attributes": [
+          {"key": "session.id",       "value": {"stringValue": "${session_id}"}},
+          {"key": "session.duration_ms", "value": {"intValue": "${duration_ms}"}}
+        ],
+        "status": {"code": 1}
+      }]
+    }]
+  }]
+}
+ENDJSON
+)
+
+    curl -s -o /dev/null \
+        --max-time 2 \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "$OTEL_TRACE_ENDPOINT" 2>/dev/null || true
+}
