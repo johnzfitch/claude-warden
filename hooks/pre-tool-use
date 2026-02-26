@@ -38,31 +38,9 @@ fi
 
 # === SUBAGENT BUDGET ENFORCEMENT (applies to ALL tools) ===
 if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
-    # Call count limits per agent type (from warden.env or defaults)
-    # WARDEN_CALL_LIMITS is declared at file scope by warden.env (sourced in common.sh).
-    # The +x check detects whether the array was already declared; if not, use built-in defaults.
-    if [[ -z "${WARDEN_CALL_LIMITS[*]+x}" ]]; then
-        declare -A WARDEN_CALL_LIMITS=(
-            ["Explore"]=30 ["Plan"]=30 ["general-purpose"]=35
-            ["code-reviewer"]=25 ["security-auditor"]=30 ["deep-debugger"]=40
-            ["architect"]=35 ["strategist"]=35 ["nix-expert"]=35
-            ["git-ops"]=25 ["test-runner"]=30 ["refactor"]=30
-            ["Bash"]=20 ["statusline-setup"]=15 ["claude-code-guide"]=25
-        )
-    fi
-    CALL_BUDGET=${WARDEN_CALL_LIMITS[$AGENT_TYPE]:-$WARDEN_DEFAULT_CALL_LIMIT}
-
-    # Cumulative output byte limits per agent type (from warden.env or defaults)
-    # Same pattern as WARDEN_CALL_LIMITS above — sourced at file scope from warden.env.
-    if [[ -z "${WARDEN_BYTE_LIMITS[*]+x}" ]]; then
-        declare -A WARDEN_BYTE_LIMITS=(
-            ["Explore"]=81920 ["Plan"]=81920
-            ["general-purpose"]=122880 ["architect"]=122880 ["strategist"]=122880 ["nix-expert"]=122880
-            ["deep-debugger"]=153600
-            ["code-reviewer"]=102400 ["security-auditor"]=102400
-        )
-    fi
-    BYTE_BUDGET=${WARDEN_BYTE_LIMITS[$AGENT_TYPE]:-$WARDEN_DEFAULT_BYTE_LIMIT}
+    # Call/byte limits per agent type (Bash 3.2 compatible via indirect expansion)
+    CALL_BUDGET=$(_warden_call_limit "$AGENT_TYPE")
+    BYTE_BUDGET=$(_warden_byte_limit "$AGENT_TYPE")
 
     WARN_CALL_AT=$((CALL_BUDGET * 80 / 100))
     WARN_BYTE_AT=$((BYTE_BUDGET * 80 / 100))

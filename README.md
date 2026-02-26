@@ -158,7 +158,7 @@ Merge order: `config/defaults.json` &larr; profile &larr; `config/user.json` &la
   <dt><strong>Build configuration</strong></dt>
   <dd>Prompts for a profile (or uses <code>--profile</code>). Deep-merges <code>defaults.json</code> + profile + <code>user.json</code>.</dd>
   <dt><strong>Install hooks</strong></dt>
-  <dd>Symlinks (or copies) 12 hook scripts + <code>lib/</code> + <code>statusline.sh</code> into <code>~/.claude/</code>. Sets executable permissions.</dd>
+  <dd>Symlinks (or copies) hook scripts + <code>lib/</code> + <code>statusline.sh</code> into <code>~/.claude/</code>. Sets executable permissions.</dd>
   <dt><strong>Apply configuration</strong></dt>
   <dd>Generates <code>~/.claude/.warden/warden.env</code> (hook thresholds). Merges env vars and permissions into <code>settings.json</code> (union for permissions, preserves plugins/model/etc). Generates <code>warden.env.sh</code> for shell sourcing.</dd>
   <dt><strong>Validate</strong></dt>
