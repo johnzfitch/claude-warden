@@ -136,21 +136,28 @@ for pf in "$CONFIG_DIR/profiles"/*.json; do
 done
 
 if [[ -z "$PROFILE" ]]; then
-    echo ""
-    printf "${BOLD}Choose a configuration profile:${RESET}\n"
-    echo ""
-    printf "  ${CYAN}1)${RESET} ${BOLD}minimal${RESET}   - Hooks only (no env or permission changes)\n"
-    printf "  ${CYAN}2)${RESET} ${BOLD}standard${RESET}  - Token limits + OTEL + safe tool permissions ${GREEN}(recommended)${RESET}\n"
-    printf "  ${CYAN}3)${RESET} ${BOLD}strict${RESET}    - Aggressive limits, tight subagent budgets\n"
-    echo ""
-    printf "  Enter 1-3 or profile name [standard]: "
-    read -r CHOICE
-    case "${CHOICE:-2}" in
-        1|minimal)  PROFILE="minimal" ;;
-        2|standard) PROFILE="standard" ;;
-        3|strict)   PROFILE="strict" ;;
-        *) PROFILE="$CHOICE" ;;
-    esac
+    if [[ -t 0 ]]; then
+        # Interactive: prompt for selection
+        echo ""
+        printf "${BOLD}Choose a configuration profile:${RESET}\n"
+        echo ""
+        printf "  ${CYAN}1)${RESET} ${BOLD}minimal${RESET}   - Hooks only (no env or permission changes)\n"
+        printf "  ${CYAN}2)${RESET} ${BOLD}standard${RESET}  - Token limits + OTEL + safe tool permissions ${GREEN}(recommended)${RESET}\n"
+        printf "  ${CYAN}3)${RESET} ${BOLD}strict${RESET}    - Aggressive limits, tight subagent budgets\n"
+        echo ""
+        printf "  Enter 1-3 or profile name [standard]: "
+        read -r CHOICE
+        case "${CHOICE:-2}" in
+            1|minimal)  PROFILE="minimal" ;;
+            2|standard) PROFILE="standard" ;;
+            3|strict)   PROFILE="strict" ;;
+            *) PROFILE="$CHOICE" ;;
+        esac
+    else
+        # Non-interactive (piped, install-remote.sh): default to standard
+        PROFILE="standard"
+        info "Non-interactive mode: using standard profile (override with --profile)"
+    fi
 fi
 
 PROFILE_FILE="$CONFIG_DIR/profiles/$PROFILE.json"
@@ -172,12 +179,18 @@ DEFAULTS_FILE="$CONFIG_DIR/defaults.json"
 USER_FILE="$CONFIG_DIR/user.json"
 
 # Build jq input array: always defaults + profile, optionally user
-MERGE_FILES=("$DEFAULTS_FILE" "$PROFILE_FILE")
+# Minimal profile: skip defaults env/permissions (hooks only)
+if [[ "$PROFILE" == "minimal" ]]; then
+    MERGE_FILES=("$PROFILE_FILE")
+    dim "Merging: $PROFILE only (hooks only, no defaults env/permissions)"
+else
+    MERGE_FILES=("$DEFAULTS_FILE" "$PROFILE_FILE")
+fi
 if [[ -f "$USER_FILE" ]]; then
     MERGE_FILES+=("$USER_FILE")
-    dim "Merging: defaults + $PROFILE + user overrides"
+    dim "Merging: ${MERGE_FILES[*]##*/} + user overrides"
 else
-    dim "Merging: defaults + $PROFILE (no user.json found)"
+    dim "Merging: ${MERGE_FILES[*]##*/} (no user.json found)"
 fi
 
 WARDEN_MERGED=$(jq -s '
@@ -335,23 +348,21 @@ else
             "export WARDEN_\(.key | ascii_upcase)=\(.value)"
         '
 
+        # Subagent call limits (individual vars for Bash 3.2 compat)
         echo ""
         echo "# Subagent call limits"
-        echo "declare -A WARDEN_CALL_LIMITS=("
         printf '%s' "$WARDEN_THRESHOLDS_JSON" | jq -r '
             .subagent_call_limits // {} | to_entries[] |
-            "    [\"\(.key)\"]=\(.value)"
+            "export WARDEN_CALL_LIMIT_\(.key | gsub("-";"_"))=\(.value)"
         '
-        echo ")"
 
+        # Subagent byte limits (individual vars for Bash 3.2 compat)
         echo ""
         echo "# Subagent byte limits"
-        echo "declare -A WARDEN_BYTE_LIMITS=("
         printf '%s' "$WARDEN_THRESHOLDS_JSON" | jq -r '
             .subagent_byte_limits // {} | to_entries[] |
-            "    [\"\(.key)\"]=\(.value)"
+            "export WARDEN_BYTE_LIMIT_\(.key | gsub("-";"_"))=\(.value)"
         '
-        echo ")"
     } > "$WARDEN_ENV_DIR/warden.env"
 
     # Record which profile was used
@@ -459,6 +470,13 @@ if ! $DRY_RUN; then
         echo ""
         printf '# Warden internal\n'
         printf 'export WARDEN_STATE_DIR="${WARDEN_STATE_DIR:-$HOME/.claude/.statusline}"\n'
+
+        echo ""
+        printf '# API capture (NODE_OPTIONS preload — no proxy required)\n'
+        printf '# Patches globalThis.fetch + https.request to capture Anthropic API traffic.\n'
+        printf '# Logs land in ~/claude-captures/YYYY-MM-DD/capture-HHMMSS.jsonl\n'
+        printf '# Set WARDEN_CAPTURE_BODIES=1 for full body logging (system/messages still redacted).\n'
+        printf 'export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--require %s/capture/interceptor.js"\n' "$WARDEN_DIR"
     } > "$SHELL_ENV_FILE"
 
     dim "Wrote $SHELL_ENV_FILE"
