@@ -1,0 +1,456 @@
+{
+  "uid": "warden-session-index",
+  "title": "Warden: Session Index",
+  "tags": [
+    "claude-code",
+    "warden",
+    "session"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "liveNow": false,
+  "refresh": "1m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "links": [
+    {
+      "title": "Live View",
+      "url": "/d/warden-live",
+      "type": "link",
+      "icon": "dashboard",
+      "tooltip": "Warden: Live View"
+    },
+    {
+      "title": "Session Detail",
+      "url": "/d/warden-session-detail",
+      "type": "link",
+      "icon": "dashboard",
+      "tooltip": "Warden: Session Detail"
+    },
+    {
+      "title": "Cost & Budget",
+      "url": "/d/claude-code-otel",
+      "type": "link",
+      "icon": "dashboard",
+      "tooltip": "Claude Code - Working Dashboard"
+    },
+    {
+      "title": "Tool Latency",
+      "url": "/d/warden-tool-latency",
+      "type": "link",
+      "icon": "dashboard",
+      "tooltip": "Warden: Tool Latency & Traces"
+    },
+    {
+      "title": "Output Size",
+      "url": "/d/warden-output-size",
+      "type": "link",
+      "icon": "dashboard",
+      "tooltip": "Warden: Output Size & Token Tracking"
+    },
+    {
+      "title": "Subagent Lifecycle",
+      "url": "/d/warden-subagent-lifecycle",
+      "type": "link",
+      "icon": "dashboard",
+      "tooltip": "Warden: Subagent & Session Lifecycle"
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Sessions",
+      "description": "Total sessions started in the selected time range",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | json | event_type=\"session_start\" [$__range]))",
+          "legendFormat": "sessions",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Avg Duration",
+      "description": "Average session duration across completed sessions",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1800
+              },
+              {
+                "color": "red",
+                "value": 7200
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "avg(avg_over_time({service_name=\"claude-code\"} | json | event_type=\"session_end\" | unwrap duration_seconds [$__range]))",
+          "legendFormat": "avg duration",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Compactions",
+      "description": "Total context compaction events \u2014 indicates sessions that hit context pressure",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | json | event_type=\"compaction\" [$__range]))",
+          "legendFormat": "compactions",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Sessions Over Time",
+      "description": "Session starts per interval",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 0
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | json | event_type=\"session_start\" [$__interval]))",
+          "legendFormat": "sessions",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Sessions",
+      "description": "All sessions \u2014 click session_label to open Session Detail. session_label available for sessions started after warden upgrade.",
+      "type": "table",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Time"
+          }
+        ],
+        "footer": {
+          "show": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "session_label"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Session"
+              },
+              {
+                "id": "custom.width",
+                "value": 280
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open Session Detail",
+                    "url": "/d/warden-session-detail?var-session_id=${__data.fields.session_id}&from=now-30d&to=now",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cwd"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Working Directory"
+              },
+              {
+                "id": "custom.width",
+                "value": 400
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "session_id"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Session ID"
+              },
+              {
+                "id": "custom.width",
+                "value": 300
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open Session Detail",
+                    "url": "/d/warden-session-detail?var-session_id=${__data.fields.session_id}&from=now-30d&to=now",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "auto"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "id": true,
+              "tsNs": true,
+              "labels": true,
+              "Line": true,
+              "labelTypes": true,
+              "severity_number": true,
+              "severity_text": true,
+              "detected_level": true,
+              "log_file_name": true,
+              "session_relative_ts": true,
+              "timestamp": true,
+              "event_type": true,
+              "service_name": true,
+              "tool": true,
+              "tool_name": true,
+              "TraceID": true,
+              "Session ID": true,
+              "session_id_extracted": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "session_label": 1,
+              "cwd": 2,
+              "session_id": 3
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-claude-warden"
+          },
+          "expr": "{service_name=\"claude-code\"} | json | event_type=\"session_start\"",
+          "refId": "A",
+          "legendFormat": ""
+        }
+      ]
+    }
+  ]
+}

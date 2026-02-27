@@ -1,0 +1,198 @@
+{
+  "uid": "warden-live",
+  "title": "Warden: Live View",
+  "tags": ["claude-code", "warden", "live"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "liveNow": true,
+  "refresh": "5s",
+  "time": {"from": "now-15m", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "links": [
+    {"title": "Session Index", "url": "/d/warden-session-index", "type": "link", "icon": "dashboard", "tooltip": "Warden: Session Index"},
+    {"title": "Session Detail", "url": "/d/warden-session-detail", "type": "link", "icon": "dashboard", "tooltip": "Warden: Session Detail"},
+    {"title": "Cost & Budget", "url": "/d/claude-code-otel", "type": "link", "icon": "dashboard", "tooltip": "Claude Code - Working Dashboard"},
+    {"title": "Tool Latency", "url": "/d/warden-tool-latency", "type": "link", "icon": "dashboard", "tooltip": "Warden: Tool Latency & Traces"},
+    {"title": "Output Size", "url": "/d/warden-output-size", "type": "link", "icon": "dashboard", "tooltip": "Warden: Output Size & Token Tracking"},
+    {"title": "Subagent Lifecycle", "url": "/d/warden-subagent-lifecycle", "type": "link", "icon": "dashboard", "tooltip": "Warden: Subagent & Session Lifecycle"}
+  ],
+  "templating": {"list": []},
+  "annotations": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Tool Calls",
+      "description": "Total tool invocations across all active sessions",
+      "type": "stat",
+      "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" [$__range]))",
+          "legendFormat": "calls",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Avg Latency",
+      "description": "Mean tool execution time across all active sessions",
+      "type": "stat",
+      "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2000}, {"color": "red", "value": 10000}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+          "expr": "avg(avg_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__range]))",
+          "legendFormat": "avg",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Blocks",
+      "description": "Tool calls blocked across all active sessions",
+      "type": "stat",
+      "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | json | event_type=\"blocked\" [$__range]))",
+          "legendFormat": "blocks",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Errors",
+      "description": "Tool errors across all active sessions",
+      "type": "stat",
+      "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_error\" [$__range]))",
+          "legendFormat": "errors",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Session Activity",
+      "description": "Events per interval per session — each color is one running window",
+      "type": "timeseries",
+      "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 0,
+            "stacking": {"mode": "normal", "group": "A"}
+          },
+          "color": {"mode": "palette-classic"}
+        }
+      },
+      "options": {
+        "tooltip": {"mode": "multi"},
+        "legend": {"displayMode": "list", "placement": "bottom"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+          "expr": "sum by (session_id) (count_over_time({service_name=\"claude-code\"} | json [$__interval]))",
+          "legendFormat": "{{session_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Latency",
+      "description": "Tool execution latency across all sessions — each color is one tool",
+      "type": "timeseries",
+      "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {"drawStyle": "points", "pointSize": 5, "lineWidth": 1}
+        }
+      },
+      "options": {
+        "tooltip": {"mode": "multi"},
+        "legend": {"displayMode": "list", "placement": "bottom"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+          "expr": "max_over_time({service_name=\"claude-code\"} | json | event_type=\"tool_latency\" | unwrap duration_ms [$__interval]) by (tool)",
+          "legendFormat": "{{tool}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Live Event Stream",
+      "description": "All warden events across all sessions — newest first",
+      "type": "logs",
+      "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+      "gridPos": {"h": 16, "w": 24, "x": 0, "y": 12},
+      "options": {
+        "dedupStrategy": "none",
+        "showLogContextToggle": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki-claude-warden"},
+          "expr": "{service_name=\"claude-code\"} | json",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
