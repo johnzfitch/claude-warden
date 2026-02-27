@@ -55,7 +55,7 @@ All containers use `network_mode: host`. Start with `cd monitoring && docker com
 | Loki | 3100 | OTLP ingestion at `/otlp`, LogQL queries at `/loki/api/v1/query_range` |
 | OTEL Collector | 4317 (gRPC), 4318 (HTTP) | Receives from Claude Code + hook curl calls |
 | Prometheus | 9090 | Scrapes OTEL collector metrics exporter on 8889 |
-| Node Exporter | 9101 | Textfile collector for budget-cli metrics |
+| Node Exporter | 9101 | Textfile collector for warden budget metrics |
 | Grafana | 3000 | admin/admin, two provisioned datasources (Prometheus, Loki) |
 
 ### OTEL collector pipelines
@@ -77,7 +77,7 @@ The `filelog/warden` receiver tails `/var/log/claude/events.jsonl` (bind-mounted
 {service_name="claude-code"} | json | event_type="blocked"
 
 # Specific tool
-{service_name="claude-code"} | json | tool_name="Bash"
+{service_name="claude-code"} | json | tool="Bash"
 ```
 
 ## Development notes
