@@ -115,7 +115,7 @@ export WARDEN_BUDGET_TOTAL=${WARDEN_BUDGET_TOTAL:-280000}
 # ==============================================================================
 # BUILT-IN BUDGET TRACKER
 # ==============================================================================
-# Replaces external budget-cli. Tracks estimated token consumption per session.
+# Tracks estimated token consumption per session (~3.5 bytes/token).
 # State: single file with consumed count. Total from WARDEN_BUDGET_TOTAL.
 
 WARDEN_BUDGET_STATE="${HOME}/.claude/.warden/budget.state"
@@ -172,6 +172,43 @@ _warden_budget_export() {
 # Reset budget counter (called at session start)
 _warden_budget_reset() {
     _warden_budget_write 0
+}
+
+# Write Prometheus textfile for node-exporter (budget + subagent metrics).
+# Atomic write (tmp + mv). Skips silently if monitoring dir doesn't exist.
+_warden_write_budget_prom() {
+    local prom_dir="${HOME}/.claude/.monitoring/textfile"
+    [[ -d "$prom_dir" ]] || return 0
+
+    local consumed total remaining util active _sc_raw _sc_count
+    consumed=$(_warden_budget_read)
+    total="$WARDEN_BUDGET_TOTAL"
+    remaining=$(( total > consumed ? total - consumed : 0 ))
+    util=0; (( total > 0 )) && util=$(( consumed * 100 / total ))
+
+    active=0
+    if [[ -f "$WARDEN_STATE_DIR/subagent-count" ]]; then
+        _sc_raw=$(<"$WARDEN_STATE_DIR/subagent-count")
+        IFS='|' read -r _ _sc_count _ <<< "$_sc_raw"
+        [[ "$_sc_count" =~ ^[0-9]+$ ]] && active="$_sc_count"
+    fi
+
+    {   printf '# HELP claude_budget_total_tokens Total token budget limit\n'
+        printf '# TYPE claude_budget_total_tokens gauge\n'
+        printf 'claude_budget_total_tokens %d\n' "$total"
+        printf '# HELP claude_budget_consumed_tokens Tokens consumed in current session\n'
+        printf '# TYPE claude_budget_consumed_tokens gauge\n'
+        printf 'claude_budget_consumed_tokens %d\n' "$consumed"
+        printf '# HELP claude_budget_remaining_tokens Tokens remaining in budget\n'
+        printf '# TYPE claude_budget_remaining_tokens gauge\n'
+        printf 'claude_budget_remaining_tokens %d\n' "$remaining"
+        printf '# HELP claude_budget_utilization_percent Budget utilization percentage\n'
+        printf '# TYPE claude_budget_utilization_percent gauge\n'
+        printf 'claude_budget_utilization_percent %d\n' "$util"
+        printf '# HELP claude_budget_active_subagents Number of active subagents\n'
+        printf '# TYPE claude_budget_active_subagents gauge\n'
+        printf 'claude_budget_active_subagents %d\n' "$active"
+    } > "${prom_dir}/budget.prom.tmp" && mv "${prom_dir}/budget.prom.tmp" "${prom_dir}/budget.prom" || true
 }
 
 # ==============================================================================

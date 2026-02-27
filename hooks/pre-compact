@@ -56,6 +56,12 @@ SUMMARY="[Warden Session State]
 - Active subagents: $SUBAGENT_COUNT
 - Budget: $BUDGET_STATUS"
 
+# === EMIT COMPACTION EVENT ===
+_TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+printf '{"timestamp":%d,"event_type":"compaction","tool":"PreCompact","session_id":"%s","tool_count":%d}\n' \
+    "$_TS" "$SESSION_ID" "$TOOL_COUNT" \
+    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+
 # === INJECT INTO COMPACTION CONTEXT ===
 cat << EOF
 {

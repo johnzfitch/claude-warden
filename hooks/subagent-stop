@@ -65,6 +65,7 @@ if [ -n "$SESSION_ID" ] && [ -f "$SUBAGENT_COUNT_FILE" ]; then
   }
   _warden_with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _decrement_count
 fi
+_warden_write_budget_prom
 
 # NOTE: NO immediate cleanup - state files retained for debugging
 # Cleanup handled by cron after 24hr
