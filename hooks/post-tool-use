@@ -335,11 +335,12 @@ if (( OUTPUT_SIZE > WARDEN_SUPPRESS_BYTES )); then
 fi
 
 # Truncate large outputs.
-# SSH RE-tool outputs (nm, strings, otool, frida): head-only — tails are alphabetically last
+# RE-tool outputs (nm, strings, otool): head-only — tails are alphabetically last
 # symbols or stale log lines, never useful. Other outputs: 8KB head + 2KB tail.
+# SSH noise cleaning is independent of truncation strategy — generic SSH output
+# (e.g. remote logs) keeps head+tail so the newest lines aren't lost.
 HEAD="${OUTPUT:0:8000}"
-if [[ "${_SSH_CLEANED:-false}" == true ]] || \
-   [[ "$COMMAND" == *"nm "* || "$COMMAND" == *" nm" || \
+if [[ "$COMMAND" == *"nm "* || "$COMMAND" == *" nm" || \
       "$COMMAND" == *"strings "* || "$COMMAND" == *"otool"* || \
       "$COMMAND" == *"jtool"* || "$COMMAND" == *"class-dump"* ]]; then
     FINAL="${HEAD}"
@@ -350,7 +351,7 @@ else
     FINAL="${HEAD}
 ... [$((OUTPUT_SIZE/1024))KB truncated to 10KB] ...
 ${TAIL}"
-    FINAL_SIZE=10000
+    FINAL_SIZE=${#FINAL}
     TAIL_NOTE="output_truncated"
 fi
 _EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="$FINAL" \
