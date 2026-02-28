@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Read guard: Block reads on large/bundled files
 # Prevents agents from getting stuck on massive bundled JS files
 #

@@ -61,7 +61,7 @@ if [ -f "$SESSION_START_FILE" ]; then
     fi
 
     # Count subagents for this session
-    SUBAGENT_COUNT=$(grep ",$SESSION_ID," "$AGENT_STATS" 2>/dev/null | grep ",subagent," | grep ",completed" | wc -l || echo 0)
+    SUBAGENT_COUNT=$(grep ",$SESSION_ID," "$AGENT_STATS" 2>/dev/null | grep ",subagent," | grep ",completed" | awk 'END{print NR}' || echo 0)
 
     # Log session cost
     echo "$(_warden_date_iso),$SESSION_ID,$DURATION,$START_CONSUMED,$END_CONSUMED,$DELTA,$SUBAGENT_COUNT" >> "$SESSION_COST_LOG"
@@ -90,13 +90,13 @@ fi
 # === STATE FILE CLEANUP ===
 # Purge stale state files older than 24 hours
 if [[ -d "$WARDEN_STATE_DIR" ]]; then
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mmin +1440 -delete 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mmin +1440 -delete 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mmin +1440 -delete 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mtime +1 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mtime +1 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mtime +1 -exec rm -f {} + 2>/dev/null || true
 fi
 if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]]; then
-    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.start' -mmin +1440 -delete 2>/dev/null || true
-    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f ! -name '.*' -mmin +1440 -delete 2>/dev/null || true
+    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.start' -mtime +1 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f ! -name '.*' -mtime +1 -exec rm -f {} + 2>/dev/null || true
 fi
 
 # Log session end

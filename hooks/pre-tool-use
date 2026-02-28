@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Pre-tool-use hook: Token dump prevention, command safety, subagent enforcement
 # Consolidated: pre-tool-use + ffmpeg-silent + subagent-guard (3 hooks -> 1)
 
@@ -170,7 +170,7 @@ if [[ "$IS_SUBAGENT" == true ]]; then
     [[ "$COMMAND" =~ ^[[:space:]]*cat[[:space:]].*\* ]] && { _warden_emit_block "subagent_cat_glob" 10000; _warden_deny "Use Glob then Read for pattern-matched files"; }
     if [[ "$COMMAND" =~ ^[[:space:]]*cat[[:space:]].*[[:space:]] ]] && [[ ! "$COMMAND" =~ \| ]]; then
         # BUG FIX #3: rg || grep consumes stdin on rg failure - use rg only
-        ARGS=$(echo "$COMMAND" | sed 's/^[[:space:]]*cat[[:space:]]*//' | tr ' ' '\n' | rg -v '^-' | wc -l)
+        ARGS=$(echo "$COMMAND" | sed 's/^[[:space:]]*cat[[:space:]]*//' | tr ' ' '\n' | rg -v '^-' | awk 'END{print NR}')
         (( ARGS > 2 )) && { _warden_emit_block "subagent_cat_multi" 5000; _warden_deny "Use Read tool for multiple files (parallel)"; }
     fi
 fi
