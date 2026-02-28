@@ -83,6 +83,7 @@ if [ -n "$SESSION_ID" ]; then
   }
   _warden_with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _increment_count
 fi
+_warden_write_budget_prom
 
 # Inject type-specific guidance for all agent types
 GUIDANCE=""

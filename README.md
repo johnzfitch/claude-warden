@@ -372,7 +372,7 @@ Four provisioned dashboards in `monitoring/grafana/dashboards/`:
 | Output Size &amp; Tokens | `warden-output-size` | Per-tool output bytes, estimated tokens, large output table, cumulative token trend |
 | Subagent &amp; Session Lifecycle | `warden-subagent-lifecycle` | Subagent duration by type, session stop reasons, blocked events by rule, worktree tracking |
 
-The latency and output-size dashboards include session and tool filter variables. Tool filtering operates on parsed JSON fields (not stream labels) since only `session_id` is a Loki index label.
+The latency and output-size dashboards include session and tool filter variables. Tool filtering matches the `tool` field parsed from the log body via `| json` &mdash; only `session_id` is indexed as a Loki stream label. All other fields (including `event_type`, `duration_ms`, `output_bytes`) are queried against the raw <abbr title="JavaScript Object Notation">JSON</abbr> body ingested from `events.jsonl`.
 
 <details>
 <summary>Verification commands</summary>
@@ -513,6 +513,22 @@ docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
 ```
 
 This switches to bridge networking and mounts config files that replace `localhost` with Docker service <abbr title="Domain Name System">DNS</abbr> names.
+
+</details>
+
+<details>
+<summary>Hooks don&rsquo;t run in a specific project directory</summary>
+
+Claude Code gates hook execution on <em>workspace trust</em>. A workspace is trusted once its project-level `CLAUDE.md` has been accepted at launch. Until then, all hooks are skipped &mdash; including those defined globally in `~/.claude/settings.json`. Symptom in the debug log (<samp>~/.claude/debug/&lt;session-id&gt;.txt</samp>):
+
+```
+Skipping PreToolUse:Bash hook execution - workspace trust not accepted
+```
+
+**Fix**: create a `CLAUDE.md` in the project root. Claude Code will prompt you to accept it on the next session start. Once accepted, all hooks fire normally.
+
+> [!NOTE]
+> This is a Claude Code behavior, not a warden limitation. Even user-global hooks in `~/.claude/settings.json` are gated by per-workspace trust.
 
 </details>
 
