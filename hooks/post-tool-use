@@ -32,7 +32,7 @@ if (( OUTPUT_SIZE > 0 )); then
     # Count lines (fast approximation: count newlines in first 50KB)
     OUTPUT_LINES=0
     if (( OUTPUT_SIZE <= 51200 )); then
-        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // "" | split("\n") | length' 2>/dev/null)
+        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // "" | if . == "" then 0 elif endswith("\n") then split("\n") | length - 1 else split("\n") | length end' 2>/dev/null)
     else
         # For large outputs, sample first 50KB for line count estimate
         OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | head -c 51200 | awk 'END{print NR}')
@@ -210,7 +210,7 @@ if [[ "$TOOL_NAME" == "Bash" ]] && [[ "$COMMAND" == *"ssh"* || "$COMMAND" == *"s
         -e '/^X11 forwarding request failed/d')
 
     # Collapse repeated auth failure messages into one line
-    if printf '%s' "$OUTPUT" | grep -q "UNIX authentication refused\|Host key verification failed"; then
+    if printf '%s' "$OUTPUT" | grep -qE "UNIX authentication refused|Host key verification failed"; then
         OUTPUT=$(printf '%s' "$OUTPUT" | awk '
             /UNIX authentication refused/  { if (auth_seen == 0) { print "[SSH: auth refused]"; auth_seen = 1 }; next }
             /Permission denied, please try again/ { next }
@@ -242,6 +242,29 @@ ${_IPS_BODY}
         _warden_emit_event "truncated" "$_SSH_ORIG_SIZE" "$OUTPUT_SIZE" "ssh_noise"
     fi
     unset _SSH_ORIG_SIZE
+fi
+
+# === GIT HINT STRIP (Bash commands) ===
+# git writes "hint:" boilerplate to both stdout and stderr; via 2>&1 the block
+# appears twice. Claude knows the workflow -- strip before context accumulation.
+if [[ "$TOOL_NAME" == "Bash" ]]; then
+    case "$WARDEN_INPUT" in
+        *'hint: '*)
+            if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
+                OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+                OUTPUT_SIZE=${#OUTPUT}
+            fi
+            _GIT_CLEANED=$(printf '%s' "$OUTPUT" | grep -v '^hint: ')
+            if (( ${#_GIT_CLEANED} < OUTPUT_SIZE )); then
+                _EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="$_GIT_CLEANED" \
+                _warden_emit_event "truncated" "$OUTPUT_SIZE" "${#_GIT_CLEANED}" "git_hints"
+                OUTPUT="$_GIT_CLEANED"
+                OUTPUT_SIZE="${#_GIT_CLEANED}"
+                REMINDER_PRE_STRIPPED=true
+            fi
+            unset _GIT_CLEANED
+            ;;
+    esac
 fi
 
 # Truncate large outputs from Bash, Grep, Glob, Task (Read handled by read-compress)

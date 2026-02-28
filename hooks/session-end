@@ -90,13 +90,13 @@ fi
 # === STATE FILE CLEANUP ===
 # Purge stale state files older than 24 hours
 if [[ -d "$WARDEN_STATE_DIR" ]]; then
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mtime +1 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mtime +1 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mtime +1 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
 fi
 if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]]; then
-    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.start' -mtime +1 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f ! -name '.*' -mtime +1 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.start' -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f ! -name '.*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
 fi
 
 # Log session end
