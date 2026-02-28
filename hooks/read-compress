@@ -44,7 +44,7 @@ case "$CONTENT" in
 esac
 
 # Count lines (fast)
-LINES=$(printf '%s' "$CONTENT" | wc -l)
+LINES=$(printf '%s' "$CONTENT" | awk 'END{print NR}')
 
 # Detect agent type for threshold adjustment
 AGENT_TYPE=""
@@ -115,7 +115,7 @@ esac
 
 # If config extraction produced results, use them
 if [[ -n "$SUMMARY" ]]; then
-    SUMMARY_LINES=$(printf '%s' "$SUMMARY" | wc -l)
+    SUMMARY_LINES=$(printf '%s' "$SUMMARY" | awk 'END{print NR}')
     (( SUMMARY_LINES >= LINES )) && _exit_maybe_stripped
     _FINAL="$SUMMARY
 
@@ -176,7 +176,7 @@ SUMMARY=$(printf '%s' "$CONTENT" | awk '
     /^[[:space:]]+(public |private |protected )[a-zA-Z].*\(/ { print }
 ' | head -200)
 
-SUMMARY_LINES=$(printf '%s' "$SUMMARY" | wc -l)
+SUMMARY_LINES=$(printf '%s' "$SUMMARY" | awk 'END{print NR}')
 
 # Only output modified content if we actually compressed
 (( SUMMARY_LINES >= LINES )) && _exit_maybe_stripped

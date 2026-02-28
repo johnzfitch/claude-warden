@@ -32,10 +32,10 @@ if (( OUTPUT_SIZE > 0 )); then
     # Count lines (fast approximation: count newlines in first 50KB)
     OUTPUT_LINES=0
     if (( OUTPUT_SIZE <= 51200 )); then
-        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | wc -l)
+        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // "" | split("\n") | length' 2>/dev/null)
     else
         # For large outputs, sample first 50KB for line count estimate
-        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | head -c 51200 | wc -l)
+        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | head -c 51200 | awk 'END{print NR}')
         # Validate before arithmetic to avoid bash errors on non-numeric input
         [[ "$OUTPUT_LINES" =~ ^[0-9]+$ ]] || OUTPUT_LINES=0
         # Extrapolate
@@ -146,8 +146,8 @@ if (( OUTPUT_SIZE > 50 )); then
     case "$_RAW" in
         *'<system-reminder>'*)
             _CLEANED=$(printf '%s' "$_RAW" | sed '/^<system-reminder>/,/^<\/system-reminder>/d')
-            # Also strip trailing blank lines left by removal
-            _CLEANED=$(printf '%s' "$_CLEANED" | sed -e :a -e '/^[[:space:]]*$/{ $d; N; ba; }')
+            # Also strip trailing blank lines left by removal (awk for BSD sed compat)
+            _CLEANED=$(printf '%s' "$_CLEANED" | awk 'NF{found=NR} {a[NR]=$0} END{for(i=1;i<=found;i++)print a[i]}')
             _CLEANED_SIZE=${#_CLEANED}
             _STRIPPED=$(( ${#_RAW} - _CLEANED_SIZE ))
             if (( _STRIPPED > 0 )); then

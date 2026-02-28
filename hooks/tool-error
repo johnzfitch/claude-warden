@@ -40,7 +40,7 @@ printf '{"timestamp":%d,"event_type":"tool_error","tool":"%s","session_id":"%s",
   >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 
 # BUG FIX #4: Atomic log rotation (prevent race condition)
-if [[ -f "$ERROR_LOG" ]] && [[ $(wc -l < "$ERROR_LOG" 2>/dev/null || echo 0) -gt 1500 ]]; then
+if [[ -f "$ERROR_LOG" ]] && [[ $(awk 'END{print NR}' "$ERROR_LOG" 2>/dev/null || echo 0) -gt 1500 ]]; then
   ERROR_LOG_TMP=$(mktemp "$ERROR_LOG.XXXXXX")
   tail -1000 "$ERROR_LOG" > "$ERROR_LOG_TMP" 2>/dev/null && mv "$ERROR_LOG_TMP" "$ERROR_LOG" 2>/dev/null || rm -f "$ERROR_LOG_TMP"
 fi
