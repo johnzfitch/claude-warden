@@ -391,14 +391,16 @@ _warden_scrub_secrets() {
 
 # Scrub secrets from a variable in-place if it looks like it may contain them
 # Usage: _warden_maybe_scrub cmd_safe
+# Bash 3.2 compatible: uses ${!var} indirect read + printf -v write (no local -n)
 _warden_maybe_scrub() {
-    local -n _ref=$1
+    local _varname=$1
+    local _val="${!_varname}"
     # Case-insensitive check via shopt (scoped to this function via subshell-free restore)
     local _prev_nocasematch
     _prev_nocasematch=$(shopt -p nocasematch 2>/dev/null || true)
     shopt -s nocasematch
-    if [[ "$_ref" =~ (-H|--header|bearer|authorization|token|key=|secret=|password=|credential=|database_url=|client_id=|client_secret=|access_token=|ghp_|github_pat_|sk-|gho_|glpat-|xox[bpsa]-) ]]; then
-        _ref=$(printf '%s' "$_ref" | _warden_scrub_secrets)
+    if [[ "$_val" =~ (-H|--header|bearer|authorization|token|key=|secret=|password=|credential=|database_url=|client_id=|client_secret=|access_token=|ghp_|github_pat_|sk-|gho_|glpat-|xox[bpsa]-) ]]; then
+        printf -v "$_varname" '%s' "$(printf '%s' "$_val" | _warden_scrub_secrets)"
     fi
     eval "$_prev_nocasematch" 2>/dev/null || true
 }
@@ -473,14 +475,16 @@ _warden_emit_output_size() {
 # ==============================================================================
 
 # Strip <system-reminder> blocks from text
-# Usage: _warden_strip_reminders "$TEXT"
+# Usage: _warden_strip_reminders VAR_NAME
 # Returns: cleaned text via stdout
+# Bash 3.2 compatible: uses ${!1} indirect read (no local -n)
 _warden_strip_reminders() {
-    local -n text_ref=$1
+    local text_ref="${!1}"
     local cleaned
 
     cleaned=$(printf '%s' "${text_ref}" | sed '/^<system-reminder>/,/^<\/system-reminder>/d')
-    cleaned=$(printf '%s' "$cleaned" | sed -e :a -e '/^[[:space:]]*$/{ $d; N; ba; }')
+    # Trim trailing blank lines: BSD sed branch labels don't work cross-platform; awk does
+    cleaned=$(printf '%s' "$cleaned" | awk 'NF{found=NR} {a[NR]=$0} END{for(i=1;i<=found;i++)print a[i]}')
 
     printf '%s' "$cleaned"
 }

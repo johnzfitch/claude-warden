@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # post-tool-use: Track session stats, truncate/suppress large Bash outputs
 # Single state file per session, minimal I/O
 

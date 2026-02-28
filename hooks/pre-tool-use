@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Pre-tool-use hook: Token dump prevention, command safety, subagent enforcement
 # Consolidated: pre-tool-use + ffmpeg-silent + subagent-guard (3 hooks -> 1)
 

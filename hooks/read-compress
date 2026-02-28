@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # read-compress: Summarize large file reads to reduce tokens
 # Extracts structural info (imports, functions, classes) to reduce tokens
 #
