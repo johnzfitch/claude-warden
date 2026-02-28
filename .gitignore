@@ -26,6 +26,9 @@ __pycache__/
 # User config overrides (created from config/user.json.template)
 config/user.json
 
+# Generated shell env helper (written to ~/.claude/.warden/ by install.sh)
+warden.env.sh
+
 # Common editor/OS noise
 .DS_Store
 .idea/
