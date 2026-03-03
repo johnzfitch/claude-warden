@@ -233,6 +233,8 @@ RESET_REASON=""
 if [ -f "$STATE_FILE" ]; then
     IFS='|' read -r PREV_SESSION PREV_F2 PREV_F3 PREV_F4 PREV_F5 \
         _P6 _P7 _P8 _P9 _P10 _P11 _P12 _P13 PREV_F14 PREV_F15 < "$STATE_FILE"
+    # Sanitize PREV_SESSION read from disk (may predate path-safe writes)
+    PREV_SESSION="$(printf '%s' "$PREV_SESSION" | tr -cd 'A-Za-z0-9._-')"
     if [ -n "$PREV_F14" ]; then
         # New 15-field format
         PREV_TOTAL_IN=$(num_or_zero "$PREV_F2")
