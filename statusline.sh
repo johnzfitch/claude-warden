@@ -66,6 +66,12 @@ IFS=$'\x1f' read -r \
     LINES_REMOVED \
     <<<"$parsed"
 
+# Parsing complete — clear ERR trap so state file reads don't trigger it
+trap - ERR
+
+# Sanitize SESSION_ID before using in file paths (comes from stdin JSON)
+SESSION_ID="$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9._-')"
+
 num_or_zero() {
     local value="$1"
     if [[ "$value" =~ ^-?[0-9]+$ ]]; then
@@ -346,7 +352,7 @@ if [ -n "$SESSION_ID" ]; then
     # Read combined session state (count|top_bytes|top_label|timestamp)
     SESSION_STATE_FILE="$STATE_DIR/session-$SESSION_ID"
     if [ -f "$SESSION_STATE_FILE" ]; then
-        IFS='|' read -r SS_COUNT SS_BYTES SS_LABEL _SS_TS < "$SESSION_STATE_FILE" 2>/dev/null
+        IFS='|' read -r SS_COUNT _ _ _SS_TS < "$SESSION_STATE_FILE" 2>/dev/null
         if [ -z "$TOOL_COUNT" ] && [[ "${SS_COUNT:-}" =~ ^[0-9]+$ ]]; then
             TOOL_COUNT="$SS_COUNT"
         fi
