@@ -4,6 +4,7 @@
 # Input: JSON on stdin per Claude Code status line docs.
 
 set -u
+trap 'printf "[Claude] err\n"; exit 0' ERR
 
 input="$(cat)"
 
@@ -211,7 +212,7 @@ RED="\033[31m"
 YELLOW="\033[33m"
 
 STATE_DIR="$HOME/.claude/.statusline"
-STATE_FILE="$STATE_DIR/state"
+STATE_FILE="$STATE_DIR/state${SESSION_ID:+-$SESSION_ID}"
 REASON_FILE="$STATE_DIR/reset-reason"
 mkdir -p "$STATE_DIR"
 
@@ -289,7 +290,7 @@ CLR_COST_AT_CLEAR="0"
 
 # Reset clears on session change
 if [ -n "$SESSION_ID" ] && [ -n "$PREV_SESSION" ] && [ "$SESSION_ID" != "$PREV_SESSION" ]; then
-    rm -f "$STATE_DIR/clears-$PREV_SESSION" "$STATE_DIR/peak-$PREV_SESSION"
+    rm -f "$STATE_DIR/clears-$PREV_SESSION" "$STATE_DIR/peak-$PREV_SESSION" "$STATE_DIR/state-$PREV_SESSION"
 fi
 
 if [ -n "$SESSION_ID" ]; then
@@ -330,7 +331,7 @@ fi
 if [ -f "$REASON_FILE" ]; then
     IFS='|' read -r REASON_TS REASON_VALUE REASON_SESSION < "$REASON_FILE"
     REASON_TS=$(num_or_zero "$REASON_TS")
-    if [ "$REASON_TS" -gt 0 ] && [ $((NOW_TS - REASON_TS)) -le 120 ]; then
+    if [ "$REASON_TS" -gt 0 ] && [ $((NOW_TS - REASON_TS)) -le 120 ] && [ "${REASON_SESSION:-}" = "$SESSION_ID" ]; then
         RESET_LABEL="$REASON_VALUE"
         SHOW_RESET=1
     fi
@@ -341,10 +342,6 @@ if [[ "$TOOL_COUNT_RAW" =~ ^[0-9]+$ ]]; then
     TOOL_COUNT="$TOOL_COUNT_RAW"
 fi
 
-HOT_LABEL=""
-HOT_SIZE_BYTES=0
-HOT_SIZE_KB=0
-
 if [ -n "$SESSION_ID" ]; then
     # Read combined session state (count|top_bytes|top_label|timestamp)
     SESSION_STATE_FILE="$STATE_DIR/session-$SESSION_ID"
@@ -352,12 +349,6 @@ if [ -n "$SESSION_ID" ]; then
         IFS='|' read -r SS_COUNT SS_BYTES SS_LABEL _SS_TS < "$SESSION_STATE_FILE" 2>/dev/null
         if [ -z "$TOOL_COUNT" ] && [[ "${SS_COUNT:-}" =~ ^[0-9]+$ ]]; then
             TOOL_COUNT="$SS_COUNT"
-        fi
-        SS_BYTES=$(num_or_zero "${SS_BYTES:-0}")
-        if [ "$SS_BYTES" -gt 0 ]; then
-            HOT_LABEL="${SS_LABEL:-}"
-            HOT_SIZE_BYTES="$SS_BYTES"
-            HOT_SIZE_KB=$(((HOT_SIZE_BYTES + 1023) / 1024))
         fi
     fi
     # Fallback: legacy separate files (transition period)
@@ -381,7 +372,6 @@ if [ -f "$SUB_COUNT_FILE" ]; then
     fi
 fi
 
-CTX_USED_FMT="$(format_tokens "$CTX_USED")"
 CTX_TOTAL_FMT="$(format_tokens "$CONTEXT_SIZE")"
 
 # --- Computed metrics ---

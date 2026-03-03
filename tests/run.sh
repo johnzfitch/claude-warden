@@ -20,6 +20,8 @@ cleanup() { rm -rf "$TMP_HOME"; }
 trap cleanup EXIT
 
 export HOME="$TMP_HOME"
+# Unset warden environment variables to prevent contamination from host environment
+unset WARDEN_STATE_DIR WARDEN_EVENTS_FILE WARDEN_SESSION_BUDGET_DIR WARDEN_SUBAGENT_STATE_DIR
 mkdir -p "$HOME/.claude/.statusline"
 touch "$HOME/.claude/.statusline/events.jsonl"
 printf '%s.000000000\n' "$(date +%s)" > "$HOME/.claude/.statusline/.session_start"
