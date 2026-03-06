@@ -32,11 +32,13 @@ ERROR_LOG="$HOME/.claude/errors.log"
 # Emit tool_error event to events.jsonl for Loki/Grafana
 _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
 _ERR_SAFE="${ERROR_MSG:0:200}"
-_ERR_SAFE="${_ERR_SAFE//$'\n'/ }"
-_ERR_SAFE="${_ERR_SAFE//\\/\\\\}"
-_ERR_SAFE="${_ERR_SAFE//\"/\\\"}"
+_TOOL_SAFE="$TOOL_NAME"
+_SID_SAFE="${WARDEN_SESSION_ID:-}"
+_warden_json_escape _ERR_SAFE
+_warden_json_escape _TOOL_SAFE
+_warden_json_escape _SID_SAFE
 printf '{"timestamp":%d,"event_type":"tool_error","tool":"%s","session_id":"%s","error_message":"%s"}\n' \
-  "$_TS" "$TOOL_NAME" "${WARDEN_SESSION_ID:-}" "$_ERR_SAFE" \
+  "$_TS" "$_TOOL_SAFE" "$_SID_SAFE" "$_ERR_SAFE" \
   >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 
 # BUG FIX #4: Atomic log rotation (prevent race condition)

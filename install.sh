@@ -262,6 +262,7 @@ HOOK_FILES=(
     subagent-stop
     tool-error
     pre-compact
+    config-change
 )
 
 info "Installing hooks ($MODE mode)..."
