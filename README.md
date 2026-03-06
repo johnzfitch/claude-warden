@@ -58,25 +58,30 @@ claude-warden installs a set of shell hooks that intercept Claude Code tool call
 
 | Hook | Event | What it guards |
 |---|---|---|
-| `pre-tool-use` | PreToolUse | Blocks verbose commands (<code>npm&nbsp;install</code>, <code>cargo&nbsp;build</code>, <code>pip</code>, <code>curl</code>, <code>wget</code>, <code>docker</code> without quiet flags). Blocks binary reads. Enforces subagent budgets. Blocks recursive grep/find without limits. Blocks oversized Write/Edit/NotebookEdit. Blocks minified file access. |
-| `post-tool-use` | PostToolUse | Strips `<system-reminder>` blocks. Compresses Task output &gt;6KB to structured lines. Truncates Bash output &gt;20KB to 10KB. Suppresses output &gt;500KB. Detects binary output via <abbr title="POSIX octal dump">od</abbr>. Tracks session stats. Budget alerts at 75%/90%. |
+| `pre-tool-use` | PreToolUse | <strong>Quiet overrides</strong>: injects quiet flags (<code>-q</code>, <code>--silent</code>, <code>-nostats</code>) into verbose commands (<code>git</code>, <code>npm</code>, <code>cargo</code>, <code>make</code>, <code>pip</code>, <code>wget</code>, <code>docker</code>, <code>ffmpeg</code>) via <code>updatedInput</code> instead of blocking. <strong>Network security</strong>: blocks <abbr title="Server-Side Request Forgery">SSRF</abbr> to metadata endpoints, localhost, and <abbr title="RFC 1918">private networks</abbr> (via <code>curl</code>/<code>wget</code>, WebFetch, WebSearch). Blocks data exfiltration (<code>curl</code> POST/upload flags). Blocks raw sockets (<code>nc</code>/<code>ncat</code>/<code>socat</code>) and network scanners (<code>nmap</code>/<code>masscan</code>). <strong>Environment safety</strong>: blocks full env dumps (<code>env</code>, <code>printenv</code>, <code>/proc/*/environ</code>); allows filtered forms. <strong>Sandbox</strong>: blocks Write/Edit/Bash writes to <code>.claude/settings</code> and <code>.claude/hooks</code>. <strong>Token guards</strong>: blocks binary reads, recursive grep/find without limits, oversized Write/Edit/NotebookEdit, minified file access, unbounded <code>git&nbsp;log</code>. Enforces subagent budgets. |
+| `post-tool-use` | PostToolUse | Emits quiet-override <code>additionalContext</code> reminders so the model learns to include flags. Strips <code>&lt;system-reminder&gt;</code> blocks. Compresses Task output &gt;6KB to structured lines. Truncates Bash output &gt;20KB to 10KB. Suppresses output &gt;500KB. Detects binary output via <abbr title="POSIX octal dump">od</abbr>. Strips git hint/clone noise. Tracks session stats. Budget alerts at 75%/90%. |
 | `read-guard` | PreToolUse (Read) | Blocks reads on bundled/generated files (<code>node_modules/</code>, <code>/dist/</code>, <code>.min.js</code>). Blocks files exceeding size limit (configurable, default 2MB). |
-| `read-compress` | PostToolUse (Read) | Strips `<system-reminder>` blocks. Extracts structural signatures (imports, functions, classes) from large reads. Subagents: &gt;300 lines. Main agent: &gt;500 lines. |
+| `read-compress` | PostToolUse (Read) | Strips <code>&lt;system-reminder&gt;</code> blocks. Extracts structural signatures (imports, functions, classes) from large reads. Subagents: &gt;300 lines. Main agent: &gt;500 lines. |
 | `permission-request` | PermissionRequest | Auto-denies dangerous commands (<code>rm&nbsp;-rf&nbsp;/</code>, <code>mkfs</code>, <code>curl&nbsp;\|&nbsp;bash</code>). Auto-allows safe read-only commands. |
+| `config-change` | ConfigChange | Blocks <code>disableAllHooks</code> and unauthorized hook modifications from non-user sources. Prevents the model from disabling its own guardrails via settings writes. |
 | `stop` | Stop | Logs session stop events with duration. |
-| `session-lifecycle` | SessionStart/End | Initializes session timing and budget snapshots. Logs duration, budget delta, subagent counts. |
-| `subagent-start` | SubagentStart | Enforces budget limits. Tracks active subagent count. Injects type-specific guidance with output budgets. |
+| `session-start` | SessionStart | Initializes session timing, budget snapshots, and <code>events.jsonl</code> session markers. |
+| `session-end` | SessionEnd | Logs duration, budget delta, subagent counts. Emits root <abbr title="OpenTelemetry Protocol">OTLP</abbr> trace span. Cleans up orphaned subagent state. |
+| `subagent-start` | SubagentStart | Enforces budget limits. Tracks active subagent count (with cross-process locking). Injects type-specific guidance with output budgets. |
 | `subagent-stop` | SubagentStop | Reclaims budget. Logs subagent metrics (duration, type, worktree). |
 | `tool-error` | PostToolUseFailure | Logs errors with context. Provides recovery hints. |
+| `pre-compact` | PreCompact | Injects warden context into compaction summaries. |
 | `statusline.sh` | StatusLine | Model, context&nbsp;%, IO tokens, cache stats, tool count, hottest output, active subagents, budget utilization. |
 
 ### Hook lifecycle
 
 ```
-PreToolUse ──> [tool executes] ──> PostToolUse
-     │                                  │
-     ├─ pre-tool-use (all tools)        ├─ post-tool-use (all tools)
-     └─ read-guard (Read only)          └─ read-compress (Read only)
+SessionStart ──> PreToolUse ──> [tool executes] ──> PostToolUse ──> SessionEnd
+                      │                                  │
+                      ├─ pre-tool-use (all tools)        ├─ post-tool-use (all tools)
+                      └─ read-guard (Read only)          └─ read-compress (Read only)
+
+ConfigChange ──> config-change (blocks disableAllHooks / hook tampering)
 ```
 
 ## ![wrench][icon-wrench] Requirements
@@ -104,7 +109,7 @@ The remote installer downloads a release tarball, verifies its <abbr title="Secu
 To pin a version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash -s -- v0.2.0
+curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash -s -- v0.3.0
 ```
 
 ### Install from source (development)

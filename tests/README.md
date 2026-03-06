@@ -1,116 +1,77 @@
 # Claude-Warden Test Suite
 
+## Running Tests
+
+```bash
+bash tests/run.sh
+```
+
+The test harness validates shell syntax, JSON fixtures, and runs fixture-driven behavioral assertions.
+
 ## Test Coverage
 
-### Current Tests (`test-hooks.sh`)
+### Current tests (`run.sh`)
 
 **What these tests verify:**
-- ✅ Hooks can source shared library from deployment paths
-- ✅ Hooks produce correct JSON output formats
-- ✅ Hooks return correct exit codes
-- ✅ All blocking rules work correctly
-- ✅ Shared library functions work as expected
-- ✅ Bug fixes are effective
+- Hooks source shared library correctly from deployment paths
+- Hooks produce correct JSON output formats and exit codes
+- All blocking rules fire on matching input
+- Allow rules pass through non-matching input
+- Quiet overrides emit `updatedInput` with injected flags
+- Post-tool-use emits correct `additionalContext` reminders
+- System reminder stripping works across tool types
+- Output size tracking emits `tool_output_size` events
+- Large output truncation produces `modifyOutput` with size markers
+- Security denials emit to both stdout (structured JSON) and stderr (`warden:` prefix)
+
+**Security scenario coverage:**
+- Destructive commands (`rm -rf /`, fork bombs, `curl | bash`)
+- Environment dumps (`env`, `printenv`, `/proc/*/environ`)
+- Data exfiltration (`curl -d`, `curl --data=`, `curl -F`, `wget --post-data`)
+- <abbr title="Server-Side Request Forgery">SSRF</abbr> (metadata endpoints, localhost, RFC&nbsp;1918 private ranges)
+- Raw sockets (`nc`, `ncat`, `socat`)
+- Settings tampering (Write/Edit to `.claude/settings`)
+- Oversize payloads (Write &gt;100KB, NotebookEdit &gt;50KB)
 
 **Test execution method:**
 ```bash
-echo '{"tool_name":"Bash",...}' | ~/.claude/hooks/pre-tool-use
+cat fixture.json | hooks/pre-tool-use
 ```
 
 **Limitations:**
-- ⚠️ **Not running through Claude Code's execution environment**
-- Tests use direct bash pipes, not Claude Code's hook runner
-- Does not test Claude Code's timeout handling
-- Does not test Claude Code's JSON response processing
-- Does not verify Claude Code's environment variable setup
+- Tests use direct bash pipes, not Claude Code&rsquo;s hook runner
+- Does not test Claude Code&rsquo;s timeout handling or JSON response processing
+- Does not verify Claude Code&rsquo;s environment variable setup
+- No concurrent hook invocation tests
 
-### Running Tests
+## Deny Message Token Cost
 
-**Basic test run:**
+The `tests/verbosity/measure-deny-tokens.sh` script measures byte and token cost of every security deny message, including cumulative cost projections for multi-turn sessions.
+
 ```bash
-./tests/test-hooks.sh
-```
-
-**Verbose output:**
-```bash
-VERBOSE=1 ./tests/test-hooks.sh
-```
-
-**Expected results:**
-- 50+ tests should pass
-- Few minor assertion format failures (not hook bugs)
-- All core functionality verified
-
-## Integration Testing
-
-### Manual Integration Test
-
-To test hooks through Claude Code's actual execution:
-
-1. **Exit this Claude Code session** (hooks cannot be tested from within)
-
-2. **Run a test command that triggers hooks:**
-   ```bash
-   claude exec "ls"                    # Tests pre-tool-use
-   claude exec "git commit"            # Tests git blocking
-   claude exec "npm install"           # Tests npm blocking
-   ```
-
-3. **Verify hook behavior:**
-   - Blocks should appear as permission denials
-   - Verbose commands should be blocked
-   - Read operations on bundled files should fail
-
-### Hook Invocation Logs
-
-Check Claude Code's hook invocation logs:
-```bash
-# Session transcript (shows hook inputs/outputs)
-ls ~/.claude/transcripts/
-
-# Hook errors
-cat ~/.claude/hook-errors.log
-
-# Warden event log
-cat ~/.claude/.statusline/events.jsonl
+bash tests/verbosity/measure-deny-tokens.sh
 ```
 
 ## Test Architecture
 
 ```
 tests/
-├── test-hooks.sh          # Main test suite (bash-based)
-├── deployment-test-results.txt  # Last test run results
-└── README.md              # This file
+├── run.sh                          # Main test harness (syntax + fixtures + behavioral)
+├── verbosity/
+│   └── measure-deny-tokens.sh      # Deny message token cost analysis
+└── README.md                       # This file
 
-Testing Layers:
-1. Unit tests (shared library functions)
-2. Hook output tests (JSON format, exit codes)
-3. Integration tests (full hook behavior)
-4. ⚠️ Missing: Claude Code execution environment tests
+Testing layers:
+1. Syntax validation (bash -n, python3 -m py_compile, jq)
+2. Hook output tests (JSON format, exit codes, structured deny)
+3. Security scenario tests (SSRF, exfil, env dump, injection)
+4. Post-tool-use behavior (truncation, reminders, size tracking)
 ```
-
-## Known Test Limitations
-
-1. **No Claude Code runtime testing**
-   - Tests don't use `claude exec` to invoke hooks
-   - Can't test from within Claude Code session
-   - Workaround: Manual testing with real commands
-
-2. **Some assertion format issues**
-   - Write/Edit size limit tests need output format fixes
-   - Fork bomb test has JSON escaping issues
-   - These are TEST bugs, not HOOK bugs
-
-3. **No performance benchmarking**
-   - hyperfine benchmarks not yet implemented
-   - Latency estimates not verified
 
 ## Future Improvements
 
 - [ ] Integration test harness that runs outside Claude Code
 - [ ] Performance benchmarking with hyperfine
-- [ ] Automated deployment verification
 - [ ] CI/CD pipeline integration
 - [ ] Hook timeout testing
-- [ ] Concurrent hook invocation tests
+- [ ] Concurrent hook invocation tests (race condition verification)

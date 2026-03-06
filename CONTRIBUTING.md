@@ -89,6 +89,17 @@ Guidelines:
 - Any new guard that blocks a command should include a clear remediation message.
 - If a change affects user-visible behavior, update `README.md` (guard catalog and/or configuration notes).
 
+### JSON safety
+
+- **`_warden_deny`** (security-critical): always use `jq -n --arg` to construct the response. Never use `printf` with interpolated reason strings &mdash; adversarial command content can inject into `permissionDecision`.
+- **Event emitters** (`_warden_emit_block`, `_warden_emit_event`, etc.): use `_warden_json_escape VARNAME` on all string fields before `printf`. The helper escapes `\`, `"`, newlines, carriage returns, and tabs.
+- **New hooks**: if you emit JSON to `events.jsonl`, use the established emit helpers or `_warden_json_escape`. Do not hand-roll `${var//\"/\\\"}` &mdash; it misses control characters.
+
+### Cross-process state
+
+- **Locking**: use `_warden_with_lock LOCKDIR FUNC` for read-modify-write operations on shared state files. It uses atomic `mkdir` (POSIX-portable) with 5-second stale lock detection.
+- **Per-invocation state**: when pre-tool-use writes state for post-tool-use to consume, use per-invocation filenames (e.g., `.quiet-override-${TOOL}-$$`) to prevent races when multiple tool calls overlap. Post-tool-use finds the most recent file by mtime.
+
 ## Pull Requests
 
 Please include:

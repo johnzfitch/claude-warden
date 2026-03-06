@@ -55,6 +55,38 @@ Please include:
 - Exact version/commit SHA if possible.
 - The relevant hook(s) and the matching rule.
 
+## Network Boundary Enforcement
+
+As of v0.3.0, `pre-tool-use` enforces network boundary rules that limit where the model can direct HTTP requests and socket connections:
+
+<dl>
+  <dt><strong><abbr title="Server-Side Request Forgery">SSRF</abbr> protection</strong></dt>
+  <dd>Blocks requests to cloud metadata endpoints (<samp>169.254.169.254</samp>, <samp>metadata.google.internal</samp>, etc.), localhost/loopback, and <abbr title="RFC 1918">RFC&nbsp;1918</abbr> private ranges (<samp>10.x</samp>, <samp>172.16&ndash;31.x</samp>, <samp>192.168.x</samp>). Applies to WebFetch, WebSearch, and Bash <code>curl</code>/<code>wget</code>.</dd>
+  <dt><strong>Data exfiltration prevention</strong></dt>
+  <dd>Blocks <code>curl</code> with data upload flags (<code>-d</code>, <code>--data</code>, <code>-F</code>, <code>--form</code>, <code>--upload-file</code>, <code>-T</code>) and <code>wget</code> with <code>--post-data</code>/<code>--post-file</code>.</dd>
+  <dt><strong>Raw socket denial</strong></dt>
+  <dd>Blocks <code>nc</code>, <code>ncat</code>, <code>netcat</code>, <code>socat</code> (raw sockets) and <code>nmap</code>, <code>masscan</code>, <code>zmap</code> (network scanners).</dd>
+  <dt><strong>Environment dump prevention</strong></dt>
+  <dd>Blocks commands that dump the full environment (<code>env</code>, <code>printenv</code>, <code>/proc/*/environ</code>) to prevent API keys and tokens from entering conversation context. Filtered forms (<code>printenv&nbsp;VAR</code>, <code>env&nbsp;VAR=val&nbsp;cmd</code>, <code>env&nbsp;|&nbsp;grep</code>) are allowed.</dd>
+</dl>
+
+These are defense-in-depth heuristics &mdash; they complement, but do not replace, Claude Code&rsquo;s own permission system.
+
+## Settings Integrity
+
+The `config-change` hook prevents the model from disabling its own guardrails:
+
+- Blocks `disableAllHooks: true` in any settings file.
+- Blocks hook modifications from non-user sources (project settings, <abbr title="Model Context Protocol">MCP</abbr> servers).
+- `pre-tool-use` blocks Write/Edit/Bash writes targeting `.claude/settings` or `.claude/hooks`.
+
+## JSON Safety
+
+All JSON output from hooks uses safe construction methods:
+
+- `_warden_deny` (the security-critical permission decision) uses `jq -n --arg` to prevent adversarial command fragments from injecting into `permissionDecision` fields.
+- All event emitters use `_warden_json_escape` for proper handling of backslashes, quotes, newlines, carriage returns, and tabs.
+
 ## Hardening Tips
 
 - Prefer **symlink mode** installs (`./install.sh`) so your installed hooks track the repo and are easy to audit.
