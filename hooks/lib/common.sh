@@ -546,9 +546,24 @@ _warden_suppress_ok() {
 }
 
 # Deny with reason (PreToolUse)
+# Model sees permissionDecisionReason, user sees stderr
 _warden_deny() {
     local reason="$1"
+    printf 'warden: %s\n' "$reason" >&2
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$reason"
+    exit 0
+}
+
+# Quiet override: modify command via updatedInput and signal post-tool-use (PreToolUse)
+# Usage: _warden_quiet_override RULE MODIFIED_COMMAND
+# Writes state file for post-tool-use reminder, emits event, outputs updatedInput JSON.
+_warden_quiet_override() {
+    local rule="$1" cmd="$2"
+    mkdir -p "$WARDEN_STATE_DIR"
+    printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override"
+    _warden_emit_event "allowed" 0 0 "$rule"
+    jq -n --arg cmd "$cmd" \
+        '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":$cmd}}}'
     exit 0
 }
 

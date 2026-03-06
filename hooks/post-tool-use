@@ -246,15 +246,22 @@ fi
 
 # === GIT HINT STRIP (Bash commands) ===
 # git writes "hint:" boilerplate to both stdout and stderr; via 2>&1 the block
-# appears twice. Claude knows the workflow -- strip before context accumulation.
+# appears twice. Also strip clone/fetch noise (detached HEAD, refs/tags warnings).
 if [[ "$TOOL_NAME" == "Bash" ]]; then
     case "$WARDEN_INPUT" in
-        *'hint: '*)
+        *'hint: '*|*'Note: switching to'*|*'warning: refs/tags/'*|*'detached HEAD'*)
             if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
                 OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
                 OUTPUT_SIZE=${#OUTPUT}
             fi
-            _GIT_CLEANED=$(printf '%s' "$OUTPUT" | grep -v '^hint: ')
+            _GIT_CLEANED=$(printf '%s' "$OUTPUT" | grep -v '^hint: ' | grep -v '^warning: refs/tags/' | sed \
+                -e '/^Note: switching to /d' \
+                -e '/^You are in .detached HEAD. state/d' \
+                -e '/^HEAD is now at /d' \
+                -e '/^If you want to create a new branch to retain commits/d' \
+                -e '/^ (e.g. .git switch -c <new-branch-name>.), then/d' \
+                -e '/^Or if you want to keep this update but want to use it/d' \
+                -e '/^ then, discard/d')
             if (( ${#_GIT_CLEANED} < OUTPUT_SIZE )); then
                 _EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="$_GIT_CLEANED" \
                 _warden_emit_event "truncated" "$OUTPUT_SIZE" "${#_GIT_CLEANED}" "git_hints"
@@ -265,6 +272,48 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
             unset _GIT_CLEANED
             ;;
     esac
+fi
+
+# === QUIET OVERRIDE REMINDERS ===
+# Pre-tool-use injects quiet flags via updatedInput. Here we inject per-command
+# additionalContext so the model sees exactly what to run next time.
+if [[ "$TOOL_NAME" == "Bash" ]]; then
+    # Note: tool_input.command in PostToolUse reflects the updatedInput from pre-tool-use,
+    # so the quiet flags are already present. We detect the override by checking for the
+    # injected flag pattern that wouldn't appear naturally (e.g. "git clone -q" right after subcommand).
+    # Use a state file written by pre-tool-use to reliably detect overrides.
+    _QUIET_STATE="$WARDEN_STATE_DIR/.quiet-override"
+    _QUIET_REMINDER=""
+    if [[ -f "$_QUIET_STATE" ]]; then
+        _QUIET_RULE=$(<"$_QUIET_STATE")
+        rm -f "$_QUIET_STATE" 2>/dev/null
+        case "$_QUIET_RULE" in
+            git_quiet_override)
+                # Extract which git subcommand from the (now modified) command
+                [[ "$COMMAND" =~ git[[:space:]]+(commit|clone|fetch|pull) ]]
+                _QUIET_REMINDER="[warden: ran as git ${BASH_REMATCH[1]} -q — next time include -q yourself]" ;;
+            npm_quiet_override)
+                _QUIET_REMINDER="[warden: ran with --silent — next time use npm install --silent]" ;;
+            cargo_quiet_override)
+                _QUIET_REMINDER="[warden: ran as cargo build -q — next time include -q yourself]" ;;
+            make_quiet_override)
+                _QUIET_REMINDER="[warden: ran as make -s — next time include -s yourself]" ;;
+            pip_quiet_override)
+                _QUIET_REMINDER="[warden: ran with -q — next time use pip install -q]" ;;
+            wget_quiet_override)
+                _QUIET_REMINDER="[warden: ran as wget -q — next time include -q yourself]" ;;
+            docker_quiet_override)
+                [[ "$COMMAND" =~ docker[[:space:]]+(build|pull) ]]
+                _QUIET_REMINDER="[warden: ran with -q — next time use docker ${BASH_REMATCH[1]} -q]" ;;
+            ffmpeg_quiet_override)
+                _QUIET_REMINDER="[warden: ran with -nostats -loglevel error — next time include these flags yourself]" ;;
+        esac
+    fi
+    if [[ -n "$_QUIET_REMINDER" ]]; then
+        jq -n --arg ctx "$_QUIET_REMINDER" \
+            '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":$ctx}}'
+        exit 0
+    fi
 fi
 
 # Truncate large outputs from Bash, Grep, Glob, Task (Read handled by read-compress)

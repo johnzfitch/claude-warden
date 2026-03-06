@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# config-change: Block unauthorized modifications to Claude settings/hooks
+# Prevents the model from disabling hooks or injecting malicious hook commands
+# via writes to settings files that Claude Code would auto-reload.
+#
+# exit 0 = allow change
+# exit 2 = block change from being applied to session
+
+set -o pipefail
+
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+_warden_read_input || exit 0
+
+# Extract the source and file path of the config change
+SOURCE=$(_warden_parse_toplevel "source")
+FILE_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.file_path // ""' 2>/dev/null)
+
+# Always allow policy_settings changes (managed by admin, not model)
+[[ "$SOURCE" == "policy_settings" ]] && exit 0
+
+# Block changes to settings that could disable hooks or modify permissions
+if [[ -n "$FILE_PATH" && -f "$FILE_PATH" ]]; then
+    # Check if the new file content disables hooks
+    if grep -q '"disableAllHooks"' "$FILE_PATH" 2>/dev/null; then
+        echo "warden: blocked config change — disableAllHooks detected in $FILE_PATH" >&2
+        _warden_emit_block "config_disable_hooks" 0 "disableAllHooks in $SOURCE"
+        exit 2
+    fi
+
+    # Check if hooks section was modified (could inject malicious hooks)
+    if grep -q '"hooks"' "$FILE_PATH" 2>/dev/null; then
+        # Allow if this is user_settings (the user manages their own hooks)
+        if [[ "$SOURCE" != "user_settings" ]]; then
+            echo "warden: blocked config change — hooks modified in $SOURCE ($FILE_PATH)" >&2
+            _warden_emit_block "config_hooks_modified" 0 "hooks in $SOURCE"
+            exit 2
+        fi
+    fi
+fi
+
+# Allow all other config changes
+exit 0

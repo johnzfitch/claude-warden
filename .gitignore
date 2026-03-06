@@ -34,6 +34,9 @@ warden.env.sh
 .idea/
 .vscode/
 
+# Test result logs (generated locally)
+tests/verbosity/results.txt
+
 # Demo artifacts
 demo/claude-warden-demo.mp4
 demo/mock-inputs/pre-tool-use-write-large.json

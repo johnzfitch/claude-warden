@@ -98,11 +98,19 @@ case "$TOOL_NAME" in
         CONTENT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null)
         FILE_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
         (( ${#CONTENT} > WARDEN_WRITE_MAX_BYTES )) && { _warden_emit_block "write_oversize" 25000 "Write ${#CONTENT}B → $FILE_PATH"; _warden_deny "Write >${#CONTENT}B (>$((WARDEN_WRITE_MAX_BYTES/1024))KB)"; }
+        # Block writes to Claude settings (hook tampering)
+        if [[ "$FILE_PATH" =~ \.claude/(settings|hooks) ]] || [[ "$FILE_PATH" =~ \.claude/settings\.(json|local\.json) ]]; then
+            _warden_emit_block "settings_write" 0 "Write → $FILE_PATH"; _warden_deny "Sandbox violation: Write to $FILE_PATH blocked. Claude settings and hook files are protected from model writes."
+        fi
         _warden_suppress_ok ;;
     Edit)
         NEW=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null)
         FILE_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
         (( ${#NEW} > WARDEN_EDIT_MAX_BYTES )) && { _warden_emit_block "edit_oversize" 12500 "Edit ${#NEW}B → $FILE_PATH"; _warden_deny "Edit >${#NEW}B (>$((WARDEN_EDIT_MAX_BYTES/1024))KB)"; }
+        # Block edits to Claude settings (hook tampering)
+        if [[ "$FILE_PATH" =~ \.claude/(settings|hooks) ]] || [[ "$FILE_PATH" =~ \.claude/settings\.(json|local\.json) ]]; then
+            _warden_emit_block "settings_edit" 0 "Edit → $FILE_PATH"; _warden_deny "Sandbox violation: Edit to $FILE_PATH blocked. Claude settings and hook files are protected from model edits."
+        fi
         _warden_suppress_ok ;;
     NotebookEdit)
         NEW_SOURCE=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.new_source // ""' 2>/dev/null)
@@ -119,6 +127,32 @@ case "$TOOL_NAME" in
                 _warden_emit_block "glob_home_recursive" 5000 "Glob $PATTERN"; _warden_deny "Glob ** in home dir; narrow path or use fd"
             fi
         fi
+        _warden_suppress_ok ;;
+    WebFetch|WebSearch)
+        # === SSRF / INTERNAL NETWORK PROTECTION ===
+        # Block requests to internal networks, cloud metadata endpoints, and localhost.
+        _URL=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.url // .tool_input.query // ""' 2>/dev/null)
+        _URL_LOWER=$(printf '%s' "$_URL" | tr '[:upper:]' '[:lower:]')
+        # Cloud metadata endpoints (AWS, GCP, Azure, DigitalOcean, Oracle)
+        if [[ "$_URL_LOWER" =~ 169\.254\.169\.254 ]] || \
+           [[ "$_URL_LOWER" =~ metadata\.google\.internal ]] || \
+           [[ "$_URL_LOWER" =~ 169\.254\.169\.250 ]] || \
+           [[ "$_URL_LOWER" =~ 100\.100\.100\.200 ]]; then
+            _warden_emit_block "ssrf_metadata" 0 "$TOOL_NAME $_URL"
+            _warden_deny "Network boundary violation: $TOOL_NAME tried to reach cloud metadata endpoint ($_URL). This is a protected internal address that exposes instance credentials."
+        fi
+        # Localhost / loopback
+        if [[ "$_URL_LOWER" =~ ^https?://(localhost|127\.[0-9]+\.[0-9]+\.[0-9]+|0\.0\.0\.0|\[::1\]) ]]; then
+            _warden_emit_block "ssrf_localhost" 0 "$TOOL_NAME $_URL"
+            _warden_deny "Network boundary violation: $TOOL_NAME tried to reach localhost ($_URL). Use Bash with curl if you need to access local services."
+        fi
+        # Private RFC1918 ranges
+        if [[ "$_URL_LOWER" =~ ^https?://(10\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+|192\.168\.[0-9]+)\.[0-9]+ ]]; then
+            _warden_emit_block "ssrf_private" 0 "$TOOL_NAME $_URL"
+            _warden_deny "Network boundary violation: $TOOL_NAME tried to reach private network ($_URL). Internal network access is not allowed via $TOOL_NAME."
+        fi
+        # Log the domain for audit
+        _warden_emit_event "allowed" 0 0 "web_access"
         _warden_suppress_ok ;;
     Bash) ;;  # Continue to Bash checks below
     *) _warden_suppress_ok ;;
@@ -161,6 +195,89 @@ case "$NORM_CMD" in
         _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution" ;;
 esac
 
+# === ENVIRONMENT VARIABLE DUMP PREVENTION ===
+# Block commands that dump the full environment (API keys, tokens, credentials).
+# The output would enter conversation context and persist across turns.
+# env/printenv as standalone commands (not substrings like "environment")
+if [[ "$COMMAND" =~ (^|[;&|[:space:]])(env|printenv)($|[[:space:];|&]) ]] && \
+   [[ ! "$COMMAND" =~ \|[[:space:]]*(grep|awk|sed|head|tail|wc) ]]; then
+    _warden_emit_block "env_dump" 0
+    _warden_deny "Environment safety: '${COMMAND:0:60}' dumps all environment variables including API keys and tokens into conversation context. Query specific variables instead: echo \$VAR_NAME, or filter: env | grep PATTERN"
+fi
+# bare export/set/declare -x (no arguments = full dump)
+if [[ "$COMMAND" =~ ^[[:space:]]*(export|set|declare[[:space:]]+-x)[[:space:]]*$ ]]; then
+    _warden_emit_block "env_dump" 0
+    _warden_deny "Environment safety: '${COMMAND:0:60}' dumps all environment variables. Query specific variables instead: echo \$VAR_NAME"
+fi
+# /proc/self/environ contains null-separated env (binary dump of all vars)
+if [[ "$COMMAND" =~ /proc/(self|[0-9]+)/environ ]]; then
+    _warden_emit_block "env_dump_proc" 0
+    _warden_deny "Environment safety: '${COMMAND:0:80}' reads raw process environment containing all secrets. Query specific variables instead: echo \$VAR_NAME"
+fi
+
+# === DATA EXFILTRATION PREVENTION ===
+# Block curl/wget with data upload flags (POST body, file upload, form data)
+if [[ "$COMMAND" =~ (^|[;&|[:space:]])curl[[:space:]] ]]; then
+    if [[ "$COMMAND" =~ (-d[[:space:]]|--data[[:space:]]|--data-binary|--data-raw|--data-urlencode|-F[[:space:]]|--form[[:space:]]|--upload-file|-T[[:space:]]) ]]; then
+        _warden_emit_block "data_exfil_curl" 0 "curl with data upload"
+        _warden_deny "Data upload blocked: '${COMMAND:0:120}' sends data to a remote server. curl with -d/--data/-F/--form/--upload-file/-T is restricted. Ask the user to run this manually if needed."
+    fi
+fi
+if [[ "$COMMAND" =~ (^|[;&|[:space:]])wget[[:space:]] ]] && [[ "$COMMAND" =~ --post-data|--post-file ]]; then
+    _warden_emit_block "data_exfil_wget" 0 "wget with POST data"
+    _warden_deny "Data upload blocked: '${COMMAND:0:120}' sends data to a remote server. wget with --post-data/--post-file is restricted. Ask the user to run this manually if needed."
+fi
+
+# === SSRF VIA BASH (curl/wget to internal networks) ===
+if [[ "$COMMAND" =~ (curl|wget)[[:space:]] ]]; then
+    _CMD_LOWER=$(printf '%s' "$COMMAND" | tr '[:upper:]' '[:lower:]')
+    if [[ "$_CMD_LOWER" =~ 169\.254\.169\.254 ]] || \
+       [[ "$_CMD_LOWER" =~ metadata\.google\.internal ]] || \
+       [[ "$_CMD_LOWER" =~ 169\.254\.169\.250 ]] || \
+       [[ "$_CMD_LOWER" =~ 100\.100\.100\.200 ]]; then
+        _warden_emit_block "ssrf_metadata_bash" 0
+        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a cloud metadata endpoint. These addresses expose instance credentials and are never safe to query from model context."
+    fi
+    if [[ "$_CMD_LOWER" =~ (curl|wget)[[:space:]]+[^|]*https?://(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\]) ]]; then
+        _warden_emit_block "ssrf_localhost_bash" 0
+        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets localhost/loopback. If you need local service data, ask the user to provide it or check specific log files."
+    fi
+fi
+
+# === RAW SOCKET / NETWORK SCAN TOOLS ===
+if [[ "$COMMAND" =~ (^|[;&|[:space:]])(nc|ncat|netcat|socat)[[:space:]] ]]; then
+    _MATCHED_TOOL="${BASH_REMATCH[2]}"
+    _warden_emit_block "raw_socket" 0
+    _warden_deny "Network safety: '${COMMAND:0:80}' uses raw socket tool $_MATCHED_TOOL. Raw socket connections (nc/ncat/netcat/socat) are not permitted. Use curl for HTTP or ssh for remote access."
+fi
+if [[ "$COMMAND" =~ (^|[;&|[:space:]])(nmap|masscan|zmap)[[:space:]] ]]; then
+    _MATCHED_TOOL="${BASH_REMATCH[2]}"
+    _warden_emit_block "network_scan" 0
+    _warden_deny "Network safety: '${COMMAND:0:80}' runs network scanner $_MATCHED_TOOL. Port scanning and network enumeration are not permitted from model context."
+fi
+
+# === SSH/SCP/RSYNC — log for main agent, deny for subagents ===
+if [[ "$COMMAND" =~ (^|[;&|[:space:]])(ssh|scp|rsync)[[:space:]] ]]; then
+    _MATCHED_TOOL="${BASH_REMATCH[2]}"
+    if [[ "$IS_SUBAGENT" == true ]]; then
+        _warden_emit_block "subagent_network" 0
+        _warden_deny "Subagent boundary: '${COMMAND:0:80}' uses $_MATCHED_TOOL which requires network access. Subagents cannot use ssh/scp/rsync. Return this task to the main agent."
+    fi
+    # Main agent: log the network access for audit trail
+    _warden_emit_event "allowed" 0 0 "network_ssh"
+fi
+
+# === SETTINGS FILE TAMPERING VIA BASH ===
+_SETTINGS_RE='\.claude/(settings|hooks)'
+if [[ "$COMMAND" =~ $_SETTINGS_RE ]]; then
+    # Catch redirects writing into settings/hooks paths, or commands that modify them
+    if [[ "$COMMAND" =~ (mv|cp|ln|tee|sed[[:space:]]+-i)[[:space:]] ]] || \
+       [[ "$COMMAND" =~ '>'.*\.claude/(settings|hooks) ]]; then
+        _warden_emit_block "settings_tamper_bash" 0
+        _warden_deny "Sandbox violation: '${COMMAND:0:100}' modifies Claude settings or hook files. These files are protected. Reading is allowed but writes are blocked."
+    fi
+fi
+
 # === SUBAGENT BASH-SPECIFIC BLOCKS ===
 if [[ "$IS_SUBAGENT" == true ]]; then
     [[ "$COMMAND" =~ (^|[[:space:]]|[;&|])[[:space:]]*find[[:space:]] ]] && { _warden_emit_block "subagent_find" 3000; _warden_deny "Use Glob tool instead of find"; }
@@ -175,9 +292,10 @@ if [[ "$IS_SUBAGENT" == true ]]; then
     fi
 fi
 
-# === FFMPEG CHECK (from ffmpeg-silent) ===
+# === FFMPEG QUIET OVERRIDE ===
 if [[ "$COMMAND" =~ ffmpeg ]] && [[ ! "$COMMAND" =~ -nostats ]]; then
-    _warden_emit_block "ffmpeg_verbose" 5000; _warden_deny "ffmpeg commands must include -nostats -loglevel error"
+    _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/ffmpeg/ffmpeg -nostats -loglevel error/')
+    _warden_quiet_override "ffmpeg_quiet_override" "$_QUIET_CMD"
 fi
 
 # === FORCE OVERRIDE ===
@@ -196,46 +314,58 @@ if [[ "$IS_BUILD_ARTIFACT" == false ]] && [[ "$COMMAND" =~ \|[[:space:]]*(head|t
     _warden_suppress_ok
 fi
 
-# === GIT COMMIT ===
-if [[ "$COMMAND" =~ git[[:space:]]+commit ]] && [[ ! "$COMMAND" =~ (-q|--quiet) ]]; then
-    _warden_emit_block "git_commit_verbose" 3000; _warden_deny "Use git commit -q"
-fi
-
 # === GIT LOG (unbounded dumps entire history) ===
 if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+log ]] && [[ ! "$COMMAND" =~ (-n[[:space:]]*[0-9]+|-[0-9]+|--oneline|--format|--pretty|--since|--after|\|[[:space:]]*(head|tail)) ]]; then
     _warden_emit_block "git_log_unbounded" 10000; _warden_deny "git log needs -n, --oneline, or pipe"
 fi
 
-# === VERBOSE COMMANDS ===
-# npm install/ci (match with or without trailing args)
+# === GIT QUIET OVERRIDE (commit/clone/fetch/pull) ===
+# Inject -q via updatedInput so the command runs quietly without blocking.
+# Post-tool-use adds a per-command additionalContext reminder so the model learns.
+if [[ "$COMMAND" =~ git[[:space:]]+(commit|clone|fetch|pull) ]] && [[ ! "$COMMAND" =~ (-q|--quiet) ]]; then
+    _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/(git[[:space:]]+(commit|clone|fetch|pull))/\1 -q/')
+    _warden_quiet_override "git_quiet_override" "$_QUIET_CMD"
+fi
+
+# === VERBOSE COMMAND QUIET OVERRIDES ===
+# Inject quiet flags via updatedInput instead of blocking.
+# Post-tool-use adds per-command additionalContext reminders.
+
+# npm install/ci
 if [[ "$COMMAND" =~ ^npm[[:space:]]+(install|i|ci)([[:space:]]|$) ]] && [[ ! "$COMMAND" =~ (--silent|--quiet|\||'>'|'&') ]]; then
-    _warden_emit_block "npm_verbose" 5000; _warden_deny "npm install/ci needs --silent or pipe"
+    _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/^(npm[[:space:]]+(install|i|ci))/\1 --silent/')
+    _warden_quiet_override "npm_quiet_override" "$_QUIET_CMD"
 fi
+# cargo build
 if [[ "$COMMAND" =~ ^cargo[[:space:]]+build ]] && [[ ! "$COMMAND" =~ (-q|--quiet|\||'>'|'&') ]]; then
-    _warden_emit_block "cargo_verbose" 5000; _warden_deny "cargo build needs -q or pipe"
+    _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/^(cargo[[:space:]]+build)/\1 -q/')
+    _warden_quiet_override "cargo_quiet_override" "$_QUIET_CMD"
 fi
-# make (match with or without trailing args)
+# make
 if [[ "$COMMAND" =~ ^make([[:space:]]|$) ]] && [[ ! "$COMMAND" =~ (-s|--silent|\||'>'|'&') ]]; then
-    _warden_emit_block "make_verbose" 5000; _warden_deny "make needs -s or pipe"
+    _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/^make/make -s/')
+    _warden_quiet_override "make_quiet_override" "$_QUIET_CMD"
 fi
-# pip/poetry
+# pip install/download
 if [[ "$COMMAND" =~ ^pip[[:space:]]+(install|download) ]] && [[ ! "$COMMAND" =~ (-q|--quiet) ]]; then
-    _warden_emit_block "pip_verbose" 3000; _warden_deny "pip needs -q"
+    _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/^(pip[[:space:]]+(install|download))/\1 -q/')
+    _warden_quiet_override "pip_quiet_override" "$_QUIET_CMD"
 fi
-# curl: only block if verbose (-v) without output redirection
-# Allow: -s, -o, -O, --output, --remote-name, pipes, redirects
+# curl: only override if verbose (-v) without output redirection
 if [[ "$COMMAND" =~ ^curl[[:space:]] ]]; then
     if [[ "$COMMAND" =~ (-v|--verbose) ]] && [[ ! "$COMMAND" =~ (\||>>?|-o|-O|--output|--remote-name) ]]; then
-        _warden_emit_block "curl_verbose" 2000; _warden_deny "curl -v needs output redirection"
+        _warden_emit_block "curl_verbose" 2000; _warden_deny "curl -v needs output redirection or -o; cannot auto-fix"
     fi
 fi
-# wget without -q
+# wget
 if [[ "$COMMAND" =~ ^wget[[:space:]] ]] && [[ ! "$COMMAND" =~ (-q|--quiet|-O) ]]; then
-    _warden_emit_block "wget_verbose" 2000; _warden_deny "wget needs -q"
+    _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/^wget/wget -q/')
+    _warden_quiet_override "wget_quiet_override" "$_QUIET_CMD"
 fi
-# docker build/pull (very verbose)
+# docker build/pull
 if [[ "$COMMAND" =~ ^docker[[:space:]]+(build|pull) ]] && [[ ! "$COMMAND" =~ (-q|--quiet|\|) ]]; then
-    _warden_emit_block "docker_verbose" 8000; _warden_deny "docker build/pull needs -q or pipe"
+    _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/^(docker[[:space:]]+(build|pull))/\1 -q/')
+    _warden_quiet_override "docker_quiet_override" "$_QUIET_CMD"
 fi
 
 # === BUILD ARTIFACTS (minified files) ===
