@@ -21,15 +21,17 @@ FILE_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.file_path // ""' 2>/dev/null)
 
 # Block changes to settings that could disable hooks or modify permissions
 if [[ -n "$FILE_PATH" && -f "$FILE_PATH" ]]; then
-    # Check if the new file content disables hooks
-    if grep -q '"disableAllHooks"' "$FILE_PATH" 2>/dev/null; then
-        echo "warden: blocked config change — disableAllHooks detected in $FILE_PATH" >&2
+    # Check if the new file content sets disableAllHooks to true (not just present)
+    _DISABLE_VAL=$(jq -r '.disableAllHooks // false' "$FILE_PATH" 2>/dev/null)
+    if [[ "$_DISABLE_VAL" == "true" ]]; then
+        echo "warden: blocked config change — disableAllHooks=true in $FILE_PATH" >&2
         _warden_emit_block "config_disable_hooks" 0 "disableAllHooks in $SOURCE"
         exit 2
     fi
 
-    # Check if hooks section was modified (could inject malicious hooks)
-    if grep -q '"hooks"' "$FILE_PATH" 2>/dev/null; then
+    # Check if hooks section is present and non-empty (could inject malicious hooks)
+    _HAS_HOOKS=$(jq -e '.hooks // empty | length > 0' "$FILE_PATH" 2>/dev/null)
+    if [[ "$_HAS_HOOKS" == "true" ]]; then
         # Allow if this is user_settings (the user manages their own hooks)
         if [[ "$SOURCE" != "user_settings" ]]; then
             echo "warden: blocked config change — hooks modified in $SOURCE ($FILE_PATH)" >&2

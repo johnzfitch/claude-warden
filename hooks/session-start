@@ -35,8 +35,11 @@ if [ -n "$SESSION_ID" ]; then
   # Emit session_start event to events.jsonl for Loki/Grafana
   # session_label: "dirname (last6 of session_id)" — used in Session Index/Detail dashboards
   SESSION_LABEL="$(basename "$PWD") (${SESSION_ID: -6})"
+  _CWD_SAFE="$PWD"
+  _warden_json_escape _CWD_SAFE
+  _warden_json_escape SESSION_LABEL
   printf '{"timestamp":0,"event_type":"session_start","tool":"SessionStart","session_id":"%s","cwd":"%s","session_label":"%s"}\n' \
-    "$SESSION_ID" "$PWD" "$SESSION_LABEL" \
+    "$SESSION_ID" "$_CWD_SAFE" "$SESSION_LABEL" \
     >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 fi
 

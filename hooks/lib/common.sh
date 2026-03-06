@@ -71,6 +71,48 @@ _warden_md5() {
     fi
 }
 
+# ==============================================================================
+# JSON ESCAPING
+# ==============================================================================
+
+# Escape a variable's value for safe embedding in JSON strings.
+# Handles: \ " newline CR tab (all JSON-unsafe characters in typical hook data)
+# Usage: _warden_json_escape VARNAME   (modifies in-place via printf -v)
+_warden_json_escape() {
+    local _var="$1"
+    local _val="${!_var}"
+    _val="${_val//\\/\\\\}"        # \ → \\  (must be first)
+    _val="${_val//\"/\\\"}"        # " → \"
+    _val="${_val//$'\n'/\\n}"      # newline → \n
+    _val="${_val//$'\r'/\\r}"      # CR → \r
+    _val="${_val//$'\t'/\\t}"      # tab → \t
+    printf -v "$_var" '%s' "$_val"
+}
+
+# ==============================================================================
+# CROSS-PROCESS LOCKING (mkdir-based, portable)
+# ==============================================================================
+
+# Execute a function while holding a directory-based lock.
+# Usage: _warden_with_lock LOCKDIR FUNC
+# Uses mkdir atomicity (POSIX). Stale locks broken after 5s.
+_warden_with_lock() {
+    local lockdir="$1" func="$2"
+    local max_attempts=50 attempt=0
+    while ! mkdir "$lockdir" 2>/dev/null; do
+        sleep 0.1
+        attempt=$((attempt + 1))
+        if (( attempt >= max_attempts )); then
+            # Stale lock — break it
+            rm -rf "$lockdir" 2>/dev/null
+            mkdir "$lockdir" 2>/dev/null || true
+            break
+        fi
+    done
+    "$func"
+    rmdir "$lockdir" 2>/dev/null || true
+}
+
 # Session start timestamp (cached for this invocation)
 if [[ -f "$WARDEN_STATE_DIR/.session_start" ]]; then
     _WARDEN_SESSION_START_NS=$(cat "$WARDEN_STATE_DIR/.session_start" 2>/dev/null)
@@ -135,15 +177,18 @@ _warden_budget_write() {
     printf '%d' "$1" > "$WARDEN_BUDGET_STATE"
 }
 
-# Add tokens to consumed counter
+# Add tokens to consumed counter (locked to prevent concurrent race)
 _warden_budget_update() {
     local tokens="${1:-0}"
     [[ "$tokens" =~ ^[0-9]+$ ]] || return 0
     (( tokens == 0 )) && return 0
-    local consumed
-    consumed=$(_warden_budget_read)
-    consumed=$((consumed + tokens))
-    _warden_budget_write "$consumed"
+    _budget_add() {
+        local consumed
+        consumed=$(_warden_budget_read)
+        consumed=$((consumed + tokens))
+        _warden_budget_write "$consumed"
+    }
+    _warden_with_lock "${WARDEN_BUDGET_STATE}.lock.d" _budget_add
 }
 
 # Check if budget is available (exit 0 = ok, exit 1 = exhausted)
@@ -411,16 +456,17 @@ _warden_emit_block() {
     local rule="$1" tokens="$2" cmd_override="${3:-}"
     local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
     local cmd_safe="${cmd_override:-${WARDEN_COMMAND:0:200}}"
+    local tool_safe="${WARDEN_TOOL_NAME:-unknown}"
+    local sid_safe="${WARDEN_SESSION_ID:-}"
 
-    # Sanitize command for JSON
-    cmd_safe="${cmd_safe//$'\n'/ }"
-    cmd_safe="${cmd_safe//\\/\\\\}"
-    cmd_safe="${cmd_safe//\"/\\\"}"
-
+    _warden_json_escape cmd_safe
+    _warden_json_escape tool_safe
+    _warden_json_escape sid_safe
+    _warden_json_escape rule
     _warden_maybe_scrub cmd_safe
 
     printf '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
-        "$ts" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_SESSION_ID:-}" "$cmd_safe" "$rule" "$tokens" \
+        "$ts" "$tool_safe" "$sid_safe" "$cmd_safe" "$rule" "$tokens" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 
@@ -435,17 +481,23 @@ _warden_emit_event() {
 
     local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
     local rule_field=""
-    [[ -n "$rule" ]] && rule_field="$(printf ',"rule":"%s"' "$rule")"
+    if [[ -n "$rule" ]]; then
+        _warden_json_escape rule
+        rule_field="$(printf ',"rule":"%s"' "$rule")"
+    fi
 
     local cmd_safe="${WARDEN_COMMAND:0:200}"
-    cmd_safe="${cmd_safe//$'\n'/ }"
-    cmd_safe="${cmd_safe//\\/\\\\}"
-    cmd_safe="${cmd_safe//\"/\\\"}"
+    local tool_safe="${WARDEN_TOOL_NAME:-unknown}"
+    local sid_safe="${WARDEN_SESSION_ID:-}"
 
+    _warden_json_escape cmd_safe
+    _warden_json_escape tool_safe
+    _warden_json_escape sid_safe
+    _warden_json_escape etype
     _warden_maybe_scrub cmd_safe
 
     printf '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
-        "$ts" "$etype" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_SESSION_ID:-}" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
+        "$ts" "$etype" "$tool_safe" "$sid_safe" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 
@@ -458,13 +510,13 @@ _warden_emit_output_size() {
     local estimated_tokens=$(( output_bytes * 10 / 35 ))
 
     local cmd_safe="${cmd:0:200}"
-    cmd_safe="${cmd_safe//$'\n'/ }"
-    cmd_safe="${cmd_safe//\\/\\\\}"
-    cmd_safe="${cmd_safe//\"/\\\"}"
+    local sid="${WARDEN_SESSION_ID:-}"
 
+    _warden_json_escape cmd_safe
+    _warden_json_escape tool_name
+    _warden_json_escape sid
     _warden_maybe_scrub cmd_safe
 
-    local sid="${WARDEN_SESSION_ID:-}"
     printf '{"timestamp":%d,"event_type":"tool_output_size","tool":"%s","session_id":"%s","output_bytes":%d,"output_lines":%d,"estimated_tokens":%d,"original_cmd":"%s"}\n' \
         "$ts" "$tool_name" "$sid" "$output_bytes" "$output_lines" "$estimated_tokens" "$cmd_safe" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
@@ -531,7 +583,10 @@ _warden_notify() {
     if command -v notify-send &>/dev/null; then
         notify-send -u "$urgency" "$title" "$body"
     elif command -v osascript &>/dev/null; then
-        osascript -e "display notification \"$body\" with title \"$title\""
+        # Escape for AppleScript string literals (backslash + double quote)
+        local as_title="${title//\\/\\\\}" as_body="${body//\\/\\\\}"
+        as_title="${as_title//\"/\\\"}" as_body="${as_body//\"/\\\"}"
+        osascript -e "display notification \"$as_body\" with title \"$as_title\""
     fi
 }
 
@@ -547,20 +602,25 @@ _warden_suppress_ok() {
 
 # Deny with reason (PreToolUse)
 # Model sees permissionDecisionReason, user sees stderr
+# SECURITY: Uses jq for JSON construction — reason may contain adversarial
+# command fragments that could inject into permissionDecision if printf-escaped.
 _warden_deny() {
     local reason="$1"
     printf 'warden: %s\n' "$reason" >&2
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$reason"
+    jq -n --arg reason "$reason" \
+        '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":$reason}}'
     exit 0
 }
 
 # Quiet override: modify command via updatedInput and signal post-tool-use (PreToolUse)
 # Usage: _warden_quiet_override RULE MODIFIED_COMMAND
-# Writes state file for post-tool-use reminder, emits event, outputs updatedInput JSON.
+# Writes per-invocation state file for post-tool-use reminder (keyed by tool+PID
+# to prevent races when multiple tool calls overlap), emits event, outputs updatedInput JSON.
 _warden_quiet_override() {
     local rule="$1" cmd="$2"
+    local tool="${WARDEN_TOOL_NAME:-Bash}"
     mkdir -p "$WARDEN_STATE_DIR"
-    printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override"
+    printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override-${tool}-$$"
     _warden_emit_event "allowed" 0 0 "$rule"
     jq -n --arg cmd "$cmd" \
         '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":$cmd}}}'
@@ -692,14 +752,15 @@ _warden_emit_latency() {
     local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
 
     local cmd_safe="${cmd:0:200}"
-    cmd_safe="${cmd_safe//$'\n'/ }"
-    cmd_safe="${cmd_safe//\\/\\\\}"
-    cmd_safe="${cmd_safe//\"/\\\"}"
+    local sid="${WARDEN_SESSION_ID:-}"
 
+    _warden_json_escape cmd_safe
+    _warden_json_escape tool_name
+    _warden_json_escape sid
     _warden_maybe_scrub cmd_safe
 
     printf '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","session_id":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}\n' \
-        "$ts" "$tool_name" "${WARDEN_SESSION_ID:-}" "$latency_ms" "$cmd_safe" \
+        "$ts" "$tool_name" "$sid" "$latency_ms" "$cmd_safe" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 

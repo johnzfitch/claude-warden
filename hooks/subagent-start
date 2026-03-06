@@ -65,7 +65,8 @@ echo "$(_warden_date_iso),$AGENT_ID,subagent,$AGENT_TYPE,0,$SESSION_ID,started" 
 
 # Emit subagent_start event to events.jsonl for Loki/Grafana
 _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-_AT_SAFE="${AGENT_TYPE//\"/\\\"}"
+_AT_SAFE="$AGENT_TYPE"
+_warden_json_escape _AT_SAFE
 printf '{"timestamp":%d,"event_type":"subagent_start","tool":"SubagentStart","session_id":"%s","agent_id":"%s","agent_type":"%s"}\n' \
   "$_TS" "$SESSION_ID" "$AGENT_ID" "$_AT_SAFE" \
   >> "$WARDEN_EVENTS_FILE" 2>/dev/null

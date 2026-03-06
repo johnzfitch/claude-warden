@@ -84,6 +84,10 @@ J
     fi
   done
 
+  if (( count == 0 )); then
+    printf '\nNo deny messages were produced; cannot compute averages.\n' >&2
+    exit 1
+  fi
   avg_bytes=$((total_bytes / count))
   avg_tokens=$((total_tokens / count))
 
@@ -101,8 +105,8 @@ J
   printf '  5 blocks (turns 1-5), 20-turn:        %d input tokens\n' $((avg_tokens * (19+18+17+16+15)))
 
   printf '\nContext: 20-turn Opus session = 200k-400k input tokens\n'
-  printf '  1 block:  %.2f%% of session\n' "$(echo "scale=2; $((avg_tokens * 17)) * 100 / 300000" | bc)"
-  printf '  5 blocks: %.2f%% of session\n' "$(echo "scale=2; $((avg_tokens * 85)) * 100 / 300000" | bc)"
+  printf '  1 block:  %.2f%% of session\n' "$(awk -v val="$((avg_tokens * 17))" 'BEGIN { printf "%.2f", val * 100 / 300000 }')"
+  printf '  5 blocks: %.2f%% of session\n' "$(awk -v val="$((avg_tokens * 85))" 'BEGIN { printf "%.2f", val * 100 / 300000 }')"
 
   printf '\nROI: uninformative deny + model retry = ~300 tokens + 2-4s latency\n'
   printf '     verbose deny (no retry needed)   = ~%d tokens, no latency penalty\n' "$avg_tokens"

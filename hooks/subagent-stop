@@ -47,7 +47,8 @@ if [ -f "$START_FILE" ]; then
   # Emit to events.jsonl for Loki/Grafana visibility
   _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
   _HAS_WORKTREE="false"; [[ -n "${WORKTREE_PATH:-}" ]] && _HAS_WORKTREE="true"
-  _AT_SAFE="${AGENT_TYPE//\"/\\\"}"
+  _AT_SAFE="$AGENT_TYPE"
+  _warden_json_escape _AT_SAFE
   printf '{"timestamp":%d,"event_type":"subagent_stop","tool":"SubagentStop","session_id":"%s","agent_id":"%s","agent_type":"%s","duration_seconds":%d,"has_worktree":%s}\n' \
     "$_TS" "$SESSION_ID" "$AGENT_ID" "$_AT_SAFE" "$DURATION" "$_HAS_WORKTREE" \
     >> "$WARDEN_EVENTS_FILE" 2>/dev/null

@@ -39,7 +39,8 @@ fi
 
 # Emit to events.jsonl
 _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-_REASON_SAFE="${REASON//\"/\\\"}"
+_REASON_SAFE="$REASON"
+_warden_json_escape _REASON_SAFE
 printf '{"timestamp":%d,"event_type":"session_stop","tool":"Stop","session_id":"%s","reason":"%s","duration_seconds":%d}\n' \
   "$_TS" "$SESSION_ID" "$_REASON_SAFE" "${DURATION_SECS:-0}" \
   >> "$WARDEN_EVENTS_FILE" 2>/dev/null
