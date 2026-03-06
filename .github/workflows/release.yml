@@ -48,7 +48,7 @@ jobs:
       - name: Create tarball and checksum
         run: |
           TAG="${{ steps.tag.outputs.TAG }}"
-          tar czf "claude-warden-${TAG}.tar.gz" \
+          tar czf "/tmp/claude-warden-${TAG}.tar.gz" \
             --owner=0 --group=0 --numeric-owner \
             --exclude='.git' \
             --exclude='demo' \
@@ -59,6 +59,7 @@ jobs:
             --exclude='__pycache__' \
             --exclude='*.pyc' \
             .
+          mv "/tmp/claude-warden-${TAG}.tar.gz" .
           sha256sum "claude-warden-${TAG}.tar.gz" > "claude-warden-${TAG}.tar.gz.sha256"
           echo "Tarball:"
           ls -lh "claude-warden-${TAG}.tar.gz"
