@@ -623,7 +623,7 @@ _warden_quiet_override() {
     printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override-${tool}-$$"
     _warden_emit_event "allowed" 0 0 "$rule"
     jq -n --arg cmd "$cmd" \
-        '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":$cmd}}}'
+        '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":$cmd}}}'
     exit 0
 }
 

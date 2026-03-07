@@ -312,6 +312,15 @@ if [[ "$COMMAND" =~ (^|[[:space:]|;&])ffmpeg[[:space:]] ]] && [[ ! "$COMMAND" =~
     _warden_quiet_override "ffmpeg_quiet_override" "$_QUIET_CMD"
 fi
 
+# === GH RUN VIEW --LOG-FAILED QUIET OVERRIDE ===
+# Base64 cert/sigstore lines in attestation logs can be thousands of chars.
+# Strip lines >400 chars before tailing so actual error messages surface.
+if [[ "$COMMAND" =~ gh[[:space:]]+run[[:space:]]+view ]] && [[ "$COMMAND" =~ --log-failed ]] && [[ ! "$COMMAND" =~ 'length <' ]]; then
+    _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E "s/[[:space:]]*2>&1[[:space:]]*\|[[:space:]]*tail[[:space:]]+-[0-9]+//")
+    _QUIET_CMD="${_QUIET_CMD} 2>&1 | awk 'length < 400' | tail -25"
+    _warden_quiet_override "gh_run_view_log_filter" "$_QUIET_CMD"
+fi
+
 # === FORCE OVERRIDE ===
 [[ "$COMMAND" =~ '#'[[:space:]]*'FORCE_READ' ]] && _warden_suppress_ok
 
