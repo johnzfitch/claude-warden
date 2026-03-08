@@ -4,11 +4,16 @@
 # Input: JSON on stdin per Claude Code status line docs.
 
 set -u
+# ERR trap catches most failures, but set -u errors bypass it in bash.
+# Add an EXIT trap as a safety net: if nothing was printed, emit fallback.
+_warden_sl_printed=0
 trap 'printf "[Claude] err\n"; exit 0' ERR
+trap '[ "$_warden_sl_printed" -eq 0 ] && printf "[Claude]\n"' EXIT
 
 input="$(cat)"
 
 if ! command -v jq >/dev/null 2>&1; then
+    _warden_sl_printed=1
     printf '[Claude] Ctx 0%%\n'
     exit 0
 fi
@@ -34,7 +39,8 @@ parsed="$(
         (.cost.total_duration_ms // 0),
         (.cost.total_api_duration_ms // 0),
         (.cost.total_lines_added // 0),
-        (.cost.total_lines_removed // 0)
+        (.cost.total_lines_removed // 0),
+        (.transcript_path // "")
       ]
       | map(tostring)
       | join("\u001f")
@@ -42,6 +48,7 @@ parsed="$(
 )"
 
 if [ -z "$parsed" ]; then
+    _warden_sl_printed=1
     printf '[Claude] Ctx 0%%\n'
     exit 0
 fi
@@ -64,6 +71,7 @@ IFS=$'\x1f' read -r \
     API_DURATION_MS \
     LINES_ADDED \
     LINES_REMOVED \
+    TRANSCRIPT_PATH \
     <<<"$parsed"
 
 # Parsing complete — clear ERR trap so state file reads don't trigger it
@@ -116,11 +124,10 @@ format_percent_from_tenths() {
 }
 
 normalize_cost_usd() {
-    # Claude Code has shipped at least two representations here:
+    # Claude Code has shipped at least two representations:
     # - dollars as a float (e.g. 0.127007)
     # - microdollars as an integer (e.g. 127007)
-    #
-    # We normalize to USD (dollars) for display + delta math.
+    # Single awk call handles all cases (avoids spawning up to 3 processes).
     local raw="${1:-0}"
     local total_tokens="${2:-0}"
 
@@ -130,30 +137,19 @@ normalize_cost_usd() {
         return
     fi
 
-    # If it already has a decimal point, treat as USD.
+    # Floats are already USD
     if [[ "$raw" == *.* ]]; then
         printf '%s' "$raw"
         return
     fi
 
+    # Integer: decide dollars vs microdollars in one awk call
     total_tokens=$(num_or_zero "$total_tokens")
-    if [ "$total_tokens" -gt 0 ]; then
-        # If interpreted as USD, dollars/token > 1 is nonsense; treat as microdollars.
-        local looks_micro
-        looks_micro=$(LC_NUMERIC=C awk -v cost="$raw" -v tokens="$total_tokens" 'BEGIN {print (cost / tokens > 1) ? 1 : 0}' 2>/dev/null)
-        if [ "${looks_micro:-0}" = "1" ]; then
-            LC_NUMERIC=C awk -v micro="$raw" 'BEGIN {printf "%.6f", micro / 1000000}' 2>/dev/null
-            return
-        fi
-    fi
-
-    # Heuristic: large integers are overwhelmingly likely microdollars.
-    if [ "$raw" -ge 1000 ]; then
-        LC_NUMERIC=C awk -v micro="$raw" 'BEGIN {printf "%.6f", micro / 1000000}' 2>/dev/null
-        return
-    fi
-
-    printf '%s' "$raw"
+    LC_NUMERIC=C awk -v raw="$raw" -v tokens="$total_tokens" 'BEGIN {
+        if (tokens > 0 && raw / tokens > 1) { printf "%.6f", raw / 1000000; exit }
+        if (raw >= 1000) { printf "%.6f", raw / 1000000; exit }
+        print raw
+    }' 2>/dev/null
 }
 
 CONTEXT_SIZE=$(num_or_zero "$CONTEXT_SIZE")
@@ -171,26 +167,31 @@ CTX_USED=0
 PCT_TENTHS=0
 USED_PCT_DISPLAY="0"
 
+# Percentage: prefer used_percentage from Claude Code (includes system prompt,
+# tool defs, CLAUDE.md — everything in the context window). current_usage only
+# counts API-reported tokens and consistently under-reports by ~10%.
+# Fall back to computing from current_usage when used_percentage is absent.
+if [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
+    whole="${BASH_REMATCH[1]}"
+    dec="${BASH_REMATCH[3]}"
+    dec="${dec:0:1}"
+    if [ -z "$dec" ]; then
+        dec=0
+    fi
+    PCT_TENTHS=$((whole * 10 + dec))
+    USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
+elif [ "$HAS_CURR" = "1" ] && [ "$CONTEXT_SIZE" -gt 0 ]; then
+    CTX_USED=$((CURR_IN + CURR_OUT + CACHE_CREATE + CACHE_READ))
+    PCT_TENTHS=$((CTX_USED * 1000 / CONTEXT_SIZE))
+    USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
+fi
+
+# CTX_USED: compute from current_usage when available (for delta/clear detection),
+# otherwise derive from percentage.
 if [ "$HAS_CURR" = "1" ]; then
     CTX_USED=$((CURR_IN + CURR_OUT + CACHE_CREATE + CACHE_READ))
-    if [ "$CONTEXT_SIZE" -gt 0 ]; then
-        PCT_TENTHS=$((CTX_USED * 1000 / CONTEXT_SIZE))
-        USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
-    fi
-else
-    if [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
-        whole="${BASH_REMATCH[1]}"
-        dec="${BASH_REMATCH[3]}"
-        dec="${dec:0:1}"
-        if [ -z "$dec" ]; then
-            dec=0
-        fi
-        PCT_TENTHS=$((whole * 10 + dec))
-        USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
-        if [ "$CONTEXT_SIZE" -gt 0 ]; then
-            CTX_USED=$((CONTEXT_SIZE * PCT_TENTHS / 1000))
-        fi
-    fi
+elif [ "$CONTEXT_SIZE" -gt 0 ] && [ "$PCT_TENTHS" -gt 0 ]; then
+    CTX_USED=$((CONTEXT_SIZE * PCT_TENTHS / 1000))
 fi
 
 CTX_LEFT=0
@@ -231,10 +232,13 @@ RESET_TS=0
 RESET_REASON=""
 
 if [ -f "$STATE_FILE" ]; then
+    PREV_F2="" PREV_F3="" PREV_F4="" PREV_F5=""
+    _P6="" _P7="" _P8="" _P9="" _P10="" _P11="" _P12="" _P13=""
+    PREV_F14="" PREV_F15=""
     IFS='|' read -r PREV_SESSION PREV_F2 PREV_F3 PREV_F4 PREV_F5 \
-        _P6 _P7 _P8 _P9 _P10 _P11 _P12 _P13 PREV_F14 PREV_F15 < "$STATE_FILE"
+        _P6 _P7 _P8 _P9 _P10 _P11 _P12 _P13 PREV_F14 PREV_F15 < "$STATE_FILE" 2>/dev/null || true
     # Sanitize PREV_SESSION read from disk (may predate path-safe writes)
-    PREV_SESSION="$(printf '%s' "$PREV_SESSION" | tr -cd 'A-Za-z0-9._-')"
+    PREV_SESSION="$(printf '%s' "${PREV_SESSION:-}" | tr -cd 'A-Za-z0-9._-')"
     if [ -n "$PREV_F14" ]; then
         # New 15-field format
         PREV_TOTAL_IN=$(num_or_zero "$PREV_F2")
@@ -296,15 +300,14 @@ CLR_COUNT=0
 CLR_CTX_LOST=0
 CLR_COST_AT_CLEAR="0"
 
-# Reset clears on session change
-if [ -n "$SESSION_ID" ] && [ -n "$PREV_SESSION" ] && [ "$SESSION_ID" != "$PREV_SESSION" ]; then
-    rm -f "$STATE_DIR/clears-$PREV_SESSION" "$STATE_DIR/peak-$PREV_SESSION" "$STATE_DIR/state-$PREV_SESSION"
-fi
+# Session cleanup is handled by session-end hook, not here.
+# Deleting another session's files from a statusline render races with
+# concurrent terminals that may still be using those files.
 
 if [ -n "$SESSION_ID" ]; then
     CLR_FILE="$STATE_DIR/clears-$SESSION_ID"
     if [ -f "$CLR_FILE" ]; then
-        IFS='|' read -r CLR_COUNT CLR_CTX_LOST CLR_COST_AT_CLEAR < "$CLR_FILE" 2>/dev/null
+        IFS='|' read -r CLR_COUNT CLR_CTX_LOST CLR_COST_AT_CLEAR < "$CLR_FILE" 2>/dev/null || true
         CLR_COUNT=$(num_or_zero "$CLR_COUNT")
         CLR_CTX_LOST=$(num_or_zero "$CLR_CTX_LOST")
         CLR_COST_AT_CLEAR="${CLR_COST_AT_CLEAR:-0}"
@@ -337,8 +340,9 @@ if [ "$RESET_TS" -gt 0 ] && [ $((NOW_TS - RESET_TS)) -le "$RESET_WINDOW" ]; then
 fi
 
 if [ -f "$REASON_FILE" ]; then
-    IFS='|' read -r REASON_TS REASON_VALUE REASON_SESSION < "$REASON_FILE"
-    REASON_TS=$(num_or_zero "$REASON_TS")
+    REASON_TS="" REASON_VALUE="" REASON_SESSION=""
+    IFS='|' read -r REASON_TS REASON_VALUE REASON_SESSION < "$REASON_FILE" 2>/dev/null || true
+    REASON_TS=$(num_or_zero "${REASON_TS:-0}")
     if [ "$REASON_TS" -gt 0 ] && [ $((NOW_TS - REASON_TS)) -le 120 ] && [ "${REASON_SESSION:-}" = "$SESSION_ID" ]; then
         RESET_LABEL="$REASON_VALUE"
         SHOW_RESET=1
@@ -346,37 +350,51 @@ if [ -f "$REASON_FILE" ]; then
 fi
 
 TOOL_COUNT=""
-if [[ "$TOOL_COUNT_RAW" =~ ^[0-9]+$ ]]; then
-    TOOL_COUNT="$TOOL_COUNT_RAW"
-fi
-
+# Prefer hook-tracked count (session state file) over JSON's tool_count,
+# which Claude Code often sends as 0 or omits entirely.
 if [ -n "$SESSION_ID" ]; then
-    # Read combined session state (count|top_bytes|top_label|timestamp)
     SESSION_STATE_FILE="$STATE_DIR/session-$SESSION_ID"
     if [ -f "$SESSION_STATE_FILE" ]; then
-        IFS='|' read -r SS_COUNT _ _ _SS_TS < "$SESSION_STATE_FILE" 2>/dev/null
-        if [ -z "$TOOL_COUNT" ] && [[ "${SS_COUNT:-}" =~ ^[0-9]+$ ]]; then
+        SS_COUNT="" _SS_TS=""
+        IFS='|' read -r SS_COUNT _ _ _SS_TS < "$SESSION_STATE_FILE" 2>/dev/null || true
+        if [[ "${SS_COUNT:-}" =~ ^[0-9]+$ ]] && [ "$SS_COUNT" -gt 0 ]; then
             TOOL_COUNT="$SS_COUNT"
         fi
     fi
-    # Fallback: legacy separate files (transition period)
-    if [ -z "$TOOL_COUNT" ]; then
-        COUNT_FILE="$STATE_DIR/tool-count-$SESSION_ID"
-        if [ -f "$COUNT_FILE" ]; then
-            IFS='|' read -r COUNT_SESSION COUNT_VALUE _COUNT_TS < "$COUNT_FILE"
-            if [ "$COUNT_SESSION" = "$SESSION_ID" ]; then
-                TOOL_COUNT="$COUNT_VALUE"
-            fi
-        fi
-    fi
+fi
+# Fallback to JSON tool_count if hooks haven't tracked anything yet
+if [ -z "$TOOL_COUNT" ] && [[ "$TOOL_COUNT_RAW" =~ ^[0-9]+$ ]] && [ "$TOOL_COUNT_RAW" -gt 0 ]; then
+    TOOL_COUNT="$TOOL_COUNT_RAW"
 fi
 
 SUB_COUNT=0
 SUB_COUNT_FILE="$STATE_DIR/subagent-count"
 if [ -f "$SUB_COUNT_FILE" ]; then
-    IFS='|' read -r SUB_SESSION SUB_VALUE _SUB_TS < "$SUB_COUNT_FILE"
-    if [ "$SUB_SESSION" = "$SESSION_ID" ]; then
-        SUB_COUNT=$(num_or_zero "$SUB_VALUE")
+    SUB_SESSION="" SUB_VALUE="" _SUB_TS=""
+    IFS='|' read -r SUB_SESSION SUB_VALUE _SUB_TS < "$SUB_COUNT_FILE" 2>/dev/null || true
+    if [ "${SUB_SESSION:-}" = "$SESSION_ID" ]; then
+        SUB_COUNT=$(num_or_zero "${SUB_VALUE:-0}")
+    fi
+fi
+
+# Tokens saved (cumulative, written by hooks)
+TOKENS_SAVED=0
+if [ -n "$SESSION_ID" ]; then
+    SAVED_FILE="$STATE_DIR/saved-$SESSION_ID"
+    if [ -f "$SAVED_FILE" ]; then
+        read -r TOKENS_SAVED < "$SAVED_FILE" 2>/dev/null || true
+        [[ "${TOKENS_SAVED:-}" =~ ^[0-9]+$ ]] || TOKENS_SAVED=0
+    fi
+fi
+
+# Last tool latency (written by post-tool-use)
+LAST_LATENCY_MS=""
+LAST_LATENCY_TOOL=""
+if [ -n "$SESSION_ID" ]; then
+    LATENCY_FILE="$STATE_DIR/latency-$SESSION_ID"
+    if [ -f "$LATENCY_FILE" ]; then
+        IFS='|' read -r LAST_LATENCY_MS LAST_LATENCY_TOOL < "$LATENCY_FILE" 2>/dev/null || true
+        [[ "${LAST_LATENCY_MS:-}" =~ ^[0-9]+$ ]] || LAST_LATENCY_MS=""
     fi
 fi
 
@@ -445,81 +463,70 @@ fi
 LINES_ADDED=$(num_or_zero "$LINES_ADDED")
 LINES_REMOVED=$(num_or_zero "$LINES_REMOVED")
 
-# API efficiency
 DURATION_MS=$(num_or_zero "$DURATION_MS")
 API_DURATION_MS=$(num_or_zero "$API_DURATION_MS")
-API_PCT=""
-if [ "$DURATION_MS" -gt 0 ] && [ "$API_DURATION_MS" -gt 0 ]; then
-    API_PCT=$((API_DURATION_MS * 100 / DURATION_MS))
-fi
 
-# Budget
+# Budget (parse known-format JSON without jq to avoid process spawn)
 BUDGET_PCT=""
 BUDGET_CACHE="$STATE_DIR/budget-export"
 if [ -f "$BUDGET_CACHE" ]; then
     CACHE_MTIME=$(stat -c %Y "$BUDGET_CACHE" 2>/dev/null || stat -f %m "$BUDGET_CACHE" 2>/dev/null || echo 0)
     if [ $((NOW_TS - CACHE_MTIME)) -le 5 ]; then
-        BUDGET_PCT=$(jq -r '(.consumed / .limit * 100) | floor' "$BUDGET_CACHE" 2>/dev/null || echo "")
-        [[ "$BUDGET_PCT" =~ ^[0-9]+$ ]] || BUDGET_PCT=""
-        [ "$BUDGET_PCT" = "0" ] && BUDGET_PCT=""
+        _budget_raw=$(<"$BUDGET_CACHE" 2>/dev/null) || _budget_raw=""
+        if [[ "$_budget_raw" =~ \"utilization\":([0-9]+) ]]; then
+            BUDGET_PCT="${BASH_REMATCH[1]}"
+            [ "$BUDGET_PCT" = "0" ] && BUDGET_PCT=""
+        fi
     fi
 fi
 
-# --- Build 3 segment groups ---
-# HIG: simplicity first, progressive disclosure, group related info
+# --- Build single-line statusline ---
+# ~50 usable chars before Claude Code's RHS token count clips us.
+# Every char counts: short labels, no brackets, spaces as separators.
+# NOTE: OSC 8 hyperlinks removed — Claude Code's statusline renderer counts
+# escape bytes as visible characters, inflating length from ~51 to ~155 bytes
+# and causing the entire line to be clipped/hidden.
 
-# Group 1: Session identity (always shown, minimal)
-# [Model] {pct}%/{ctx_size} ${total}
-g1="[${MODEL}] ${COLOR}${USED_PCT_DISPLAY}%${RESET}"
+out="${MODEL} ${COLOR}${USED_PCT_DISPLAY}%${RESET}"
 if [ "$CONTEXT_SIZE" -gt 0 ]; then
-    g1="${g1}/${CTX_TOTAL_FMT}"
+    out="${out}/${CTX_TOTAL_FMT}"
 fi
 if [ -n "$TOTAL_COST_FMT" ]; then
-    g1="${g1} \$${TOTAL_COST_FMT}"
+    out="${out} \$${TOTAL_COST_FMT}"
 fi
 
-# Group 2: Turn details (shown when any turn data exists)
-# +${turn} pk:${peak} T:{n} Cache:{pct}% +added/-removed API:{pct}%
-g2=""
-if [ -n "$TOTAL_COST_FMT" ] && [ "$HAS_VALID_DELTA" = "1" ]; then
-    g2="${DIM}+\$${TURN_COST_FMT}${RESET}"
-fi
-if [ -n "$PEAK_COST_FMT" ] && [ "$PEAK_COST_FMT" != "0.00" ]; then
-    if [ -n "$g2" ]; then g2="${g2} "; fi
-    g2="${g2}${DIM}pk:\$${PEAK_COST_FMT}${RESET}"
-fi
-if [ -n "$TOOL_COUNT" ] && [ "$TOOL_COUNT" != "0" ]; then
-    if [ -n "$g2" ]; then g2="${g2} "; fi
-    g2="${g2}T:${TOOL_COUNT}"
-fi
+# Metrics: tightest labels possible
 if [ -n "$CACHE_HIT_PCT" ]; then
-    if [ -n "$g2" ]; then g2="${g2} "; fi
     if [ "$CACHE_HIT_PCT" -ge 60 ]; then
-        g2="${g2}Cache:\033[32m${CACHE_HIT_PCT}%${RESET}"
+        out="${out} C:\033[32m${CACHE_HIT_PCT}%${RESET}"
     elif [ "$CACHE_HIT_PCT" -le 30 ]; then
-        g2="${g2}Cache:${YELLOW}${CACHE_HIT_PCT}%${RESET}"
+        out="${out} C:${YELLOW}${CACHE_HIT_PCT}%${RESET}"
     else
-        g2="${g2}Cache:${CACHE_HIT_PCT}%"
+        out="${out} C:${CACHE_HIT_PCT}%"
     fi
 fi
 if [ "$LINES_ADDED" -gt 0 ] || [ "$LINES_REMOVED" -gt 0 ]; then
-    if [ -n "$g2" ]; then g2="${g2} "; fi
-    g2="${g2}\033[32m+${LINES_ADDED}${RESET}/${RED}-${LINES_REMOVED}${RESET}"
+    out="${out} \033[32m+${LINES_ADDED}${RESET}/${RED}-${LINES_REMOVED}${RESET}"
 fi
-if [ -n "$API_PCT" ]; then
-    if [ -n "$g2" ]; then g2="${g2} "; fi
-    if [ "$API_PCT" -le 40 ]; then
-        g2="${g2}API:${YELLOW}${API_PCT}%${RESET}"
+if [ -n "$TOOL_COUNT" ] && [ "$TOOL_COUNT" != "0" ]; then
+    out="${out} T:${TOOL_COUNT}"
+fi
+if [ -n "$LAST_LATENCY_MS" ]; then
+    if [ "$LAST_LATENCY_MS" -ge 5000 ]; then
+        out="${out} ${RED}${LAST_LATENCY_MS}ms${RESET}"
+    elif [ "$LAST_LATENCY_MS" -ge 2000 ]; then
+        out="${out} ${YELLOW}${LAST_LATENCY_MS}ms${RESET}"
     else
-        g2="${g2}${DIM}API:${API_PCT}%${RESET}"
+        out="${out} ${DIM}${LAST_LATENCY_MS}ms${RESET}"
     fi
 fi
+if [ "$TOKENS_SAVED" -gt 0 ]; then
+    out="${out} \033[32m↓$(format_tokens "$TOKENS_SAVED")t${RESET}"
+fi
 
-# Group 3: Subagents + Warnings (shown when any item has data)
-# Sub:{n} Clr:{n} Bgt:{pct}% Reset {label}
-g3=""
+# Warnings: only shown when active (rare, worth the space)
 if [ "$SUB_COUNT" -gt 0 ]; then
-    g3="Sub:${SUB_COUNT}"
+    out="${out} Sub:${SUB_COUNT}"
 fi
 if [ "$CLR_COUNT" -gt 0 ]; then
     if [ "$CLR_COUNT" -ge 3 ]; then
@@ -529,35 +536,24 @@ if [ "$CLR_COUNT" -gt 0 ]; then
     else
         CLR_COLOR="\033[32m"
     fi
-    if [ -n "$g3" ]; then g3="${g3} "; fi
-    g3="${g3}${CLR_COLOR}Clr:${CLR_COUNT}${RESET}"
+    out="${out} ${CLR_COLOR}Clr:${CLR_COUNT}${RESET}"
 fi
 if [ -n "$BUDGET_PCT" ]; then
-    if [ -n "$g3" ]; then g3="${g3} "; fi
     if [ "$BUDGET_PCT" -ge 90 ]; then
-        g3="${g3}${RED}Bgt:${BUDGET_PCT}%${RESET}"
+        out="${out} ${RED}B:${BUDGET_PCT}%${RESET}"
     elif [ "$BUDGET_PCT" -ge 75 ]; then
-        g3="${g3}${YELLOW}Bgt:${BUDGET_PCT}%${RESET}"
+        out="${out} ${YELLOW}B:${BUDGET_PCT}%${RESET}"
     else
-        g3="${g3}Bgt:${BUDGET_PCT}%"
+        out="${out} B:${BUDGET_PCT}%"
     fi
 fi
 if [ "$SHOW_RESET" -eq 1 ]; then
-    if [ -n "$g3" ]; then g3="${g3} "; fi
     if [ -n "$RESET_LABEL" ]; then
-        g3="${g3}${YELLOW}Reset ${RESET_LABEL}${RESET}"
+        out="${out} ${YELLOW}Rst:${RESET_LABEL}${RESET}"
     else
-        g3="${g3}${YELLOW}Reset${RESET}"
+        out="${out} ${YELLOW}Rst${RESET}"
     fi
 fi
 
-# --- Render: join non-empty groups by " | " ---
-out="$g1"
-if [ -n "$g2" ]; then
-    out="${out} | ${g2}"
-fi
-if [ -n "$g3" ]; then
-    out="${out} | ${g3}"
-fi
-
+_warden_sl_printed=1
 printf '%b\n' "$out"

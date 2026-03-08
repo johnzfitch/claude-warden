@@ -122,6 +122,8 @@ fi
 # === TOOL LATENCY + TRACE SPAN ===
 if _warden_compute_tool_latency "$TOOL_NAME"; then
     _warden_emit_latency "$TOOL_NAME" "$WARDEN_TOOL_LATENCY_MS" "$COMMAND"
+    # Write last latency for statusline
+    [[ -n "$WARDEN_SESSION_ID" ]] && printf '%s|%s\n' "$WARDEN_TOOL_LATENCY_MS" "$TOOL_NAME" > "$WARDEN_STATE_DIR/latency-$WARDEN_SESSION_ID"
 
     # Emit OTLP trace span (fire-and-forget)
     if [[ -f "${BASH_SOURCE[0]%/*}/lib/otel-trace.sh" ]]; then
@@ -151,7 +153,6 @@ if (( OUTPUT_SIZE > 50 )); then
             _CLEANED_SIZE=${#_CLEANED}
             _STRIPPED=$(( ${#_RAW} - _CLEANED_SIZE ))
             if (( _STRIPPED > 0 )); then
-                _EMIT_ORIG_TEXT="$_RAW" _EMIT_FINAL_TEXT="$_CLEANED" \
                 _warden_emit_event "truncated" "$OUTPUT_SIZE" "$_CLEANED_SIZE" "system_reminder"
                 _warden_fire_token_count "$_RAW" "$_CLEANED" "$(( _STRIPPED * 10 / 35 ))" "system_reminder"
                 case "$TOOL_NAME" in
@@ -237,7 +238,6 @@ ${_IPS_BODY}
     unset _IPS_HEADER _IPS_BODY
 
     OUTPUT_SIZE=${#OUTPUT}
-    _SSH_CLEANED=true
     if (( OUTPUT_SIZE < _SSH_ORIG_SIZE )); then
         _warden_emit_event "truncated" "$_SSH_ORIG_SIZE" "$OUTPUT_SIZE" "ssh_noise"
     fi
@@ -263,7 +263,6 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
                 -e '/^Or if you want to keep this update but want to use it/d' \
                 -e '/^ then, discard/d')
             if (( ${#_GIT_CLEANED} < OUTPUT_SIZE )); then
-                _EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="$_GIT_CLEANED" \
                 _warden_emit_event "truncated" "$OUTPUT_SIZE" "${#_GIT_CLEANED}" "git_hints"
                 OUTPUT="$_GIT_CLEANED"
                 OUTPUT_SIZE="${#_GIT_CLEANED}"
@@ -376,7 +375,6 @@ if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
         ' | head -120)
         STRUCT_SIZE=${#STRUCTURED}
         if (( STRUCT_SIZE > 200 && STRUCT_SIZE < OUTPUT_SIZE )); then
-            _EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="$STRUCTURED" \
             _warden_emit_event "truncated" "$OUTPUT_SIZE" "$STRUCT_SIZE" "task_structured"
             _warden_fire_token_count "$OUTPUT" "$STRUCTURED" "$(( (OUTPUT_SIZE - STRUCT_SIZE) * 10 / 35 ))" "task_structured"
             jq -n --arg text "${STRUCTURED}
@@ -445,7 +443,6 @@ ${TAIL}"
     FINAL_SIZE=${#FINAL}
     TAIL_NOTE="output_truncated"
 fi
-_EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="$FINAL" \
 _warden_emit_event "truncated" "$OUTPUT_SIZE" "$FINAL_SIZE" "$TAIL_NOTE"
 _warden_fire_token_count "$OUTPUT" "$FINAL" "$(( (OUTPUT_SIZE - FINAL_SIZE) * 10 / 35 ))" "$TAIL_NOTE"
 jq -n --arg text "$FINAL" '{"modifyOutput":$text}'

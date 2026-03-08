@@ -80,7 +80,7 @@ if [ -n "$SESSION_ID" ]; then
       [ "$PREV_SESSION" != "$SESSION_ID" ] && PREV_COUNT=0
     fi
     [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
-    printf '%s|%s|%s\n' "$SESSION_ID" "$((PREV_COUNT + 1))" "$EPOCH" > "$SUBAGENT_COUNT_FILE"
+    printf '%s|%s|%s\n' "$SESSION_ID" "$((PREV_COUNT + 1))" "$EPOCH" > "$SUBAGENT_COUNT_FILE.tmp.$$" && mv "$SUBAGENT_COUNT_FILE.tmp.$$" "$SUBAGENT_COUNT_FILE"
   }
   _warden_with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _increment_count
 fi

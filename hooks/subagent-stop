@@ -61,7 +61,7 @@ if [ -n "$SESSION_ID" ] && [ -f "$SUBAGENT_COUNT_FILE" ]; then
     if [ "$PREV_SESSION" = "$SESSION_ID" ]; then
       [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
       [ "$PREV_COUNT" -gt 0 ] && PREV_COUNT=$((PREV_COUNT - 1))
-      printf '%s|%s|%s\n' "$SESSION_ID" "$PREV_COUNT" "$(date +%s)" > "$SUBAGENT_COUNT_FILE"
+      printf '%s|%s|%s\n' "$SESSION_ID" "$PREV_COUNT" "$(date +%s)" > "$SUBAGENT_COUNT_FILE.tmp.$$" && mv "$SUBAGENT_COUNT_FILE.tmp.$$" "$SUBAGENT_COUNT_FILE"
     fi
   }
   _warden_with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _decrement_count
