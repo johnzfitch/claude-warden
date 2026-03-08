@@ -94,6 +94,8 @@ if [[ -d "$WARDEN_STATE_DIR" ]]; then
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'state-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'saved-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'latency-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
 fi
 if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]]; then
     find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f -name '*.start' -mtime +0 -exec rm -f {} + 2>/dev/null || true
@@ -106,7 +108,7 @@ echo "[$END_TIME] Session ended: $SESSION_ID (duration: ${DURATION_MIN}m, dir: $
 # Record reset reason for statusline
 if [ -n "$REASON" ]; then
     mkdir -p "$WARDEN_STATE_DIR"
-    printf '%s|%s|%s\n' "$(date +%s)" "$REASON" "$SESSION_ID" > "$RESET_REASON_FILE"
+    printf '%s|%s|%s\n' "$(date +%s)" "$REASON" "$SESSION_ID" > "$RESET_REASON_FILE.tmp.$$" && mv "$RESET_REASON_FILE.tmp.$$" "$RESET_REASON_FILE"
 fi
 
 exit 0

@@ -211,7 +211,7 @@ _warden_budget_export() {
     echo "$json"
     # Write cache for statusline (non-blocking)
     mkdir -p "$(dirname "$WARDEN_BUDGET_CACHE")"
-    printf '%s' "$json" > "$WARDEN_BUDGET_CACHE" 2>/dev/null || true
+    printf '%s' "$json" > "$WARDEN_BUDGET_CACHE.tmp.$$" 2>/dev/null && mv "$WARDEN_BUDGET_CACHE.tmp.$$" "$WARDEN_BUDGET_CACHE" 2>/dev/null || true
 }
 
 # Reset budget counter (called at session start)
@@ -468,6 +468,14 @@ _warden_emit_block() {
     printf '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
         "$ts" "$tool_safe" "$sid_safe" "$cmd_safe" "$rule" "$tokens" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+
+    # Accumulate tokens saved for statusline
+    if (( tokens > 0 )) && [[ -n "${WARDEN_SESSION_ID:-}" ]]; then
+        local sf="$WARDEN_STATE_DIR/saved-$WARDEN_SESSION_ID"
+        local prev=0
+        [[ -f "$sf" ]] && prev=$(<"$sf" 2>/dev/null) && [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+        printf '%d\n' "$((prev + tokens))" > "$sf"
+    fi
 }
 
 # Emit JSONL event for post-tool-use accounting
@@ -499,6 +507,14 @@ _warden_emit_event() {
     printf '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
         "$ts" "$etype" "$tool_safe" "$sid_safe" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+
+    # Accumulate tokens saved for statusline
+    if (( saved > 0 )) && [[ -n "${WARDEN_SESSION_ID:-}" ]]; then
+        local sf="$WARDEN_STATE_DIR/saved-$WARDEN_SESSION_ID"
+        local prev=0
+        [[ -f "$sf" ]] && prev=$(<"$sf" 2>/dev/null) && [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+        printf '%d\n' "$((prev + saved))" > "$sf"
+    fi
 }
 
 # Emit JSONL event for tool output size tracking
