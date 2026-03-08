@@ -202,7 +202,7 @@ esac
 # Allow: printenv VAR, env VAR=val cmd, env | grep (filtered output)
 # Block: bare env, bare printenv, env -0 (full dump variants)
 _ENV_CMD=""
-if [[ "$COMMAND" =~ (^|[;&|[:space:]])(env|printenv)($|[[:space:];|&]) ]]; then
+if [[ "$COMMAND" =~ (^|[;&|])[[:space:]]*(env|printenv)($|[[:space:];|&]) ]]; then
     _ENV_CMD="${BASH_REMATCH[2]}"
 fi
 if [[ -n "$_ENV_CMD" ]] && \
@@ -282,7 +282,7 @@ fi
 
 # === SETTINGS FILE TAMPERING VIA BASH ===
 _SETTINGS_RE='\.claude/(settings|hooks)'
-_REDIR_RE='>.*\.claude/(settings|hooks)'
+_REDIR_RE='>[[:space:]]*\.claude/(settings|hooks)'
 if [[ "$COMMAND" =~ $_SETTINGS_RE ]]; then
     # Catch redirects writing into settings/hooks paths, or commands that modify them
     if [[ "$COMMAND" =~ (mv|cp|ln|tee|sed[[:space:]]+-i)[[:space:]] ]] || \
@@ -403,7 +403,7 @@ fi
 
 # === RECURSIVE GREP (main agent only - subagent already blocked above) ===
 if [[ "$IS_SUBAGENT" == false ]]; then
-    if [[ "$COMMAND" =~ grep.*([[:space:]]-[a-zA-Z]*[rR][a-zA-Z]*|--recursive) ]] && [[ ! "$COMMAND" =~ (-l[[:space:]]|--files-with-matches) ]]; then
+    if [[ "$COMMAND" =~ (^|[[:space:];&|])grep[[:space:]].*([[:space:]]-[a-zA-Z]*[rR][a-zA-Z]*|--recursive) ]] && [[ ! "$COMMAND" =~ (-l[[:space:]]|--files-with-matches) ]]; then
         [[ ! "$COMMAND" =~ \|[[:space:]]*(head|tail|wc) ]] && {
             _warden_emit_block "grep_recursive" 10000; _warden_deny "grep -r scans all - use rg or grep -l"
         }
@@ -412,7 +412,7 @@ fi
 
 # === RECURSIVE FIND ===
 for pat in '\.claude' '\.git' 'node_modules'; do
-    if [[ "$COMMAND" =~ find.*$pat ]] && [[ ! "$COMMAND" =~ (-maxdepth[[:space:]]+[1-3]|\|[[:space:]]*(head|tail|wc)|-name[[:space:]]) ]]; then
+    if [[ "$COMMAND" =~ (^|[[:space:];&|])find[[:space:]].*$pat ]] && [[ ! "$COMMAND" =~ (-maxdepth[[:space:]]+[1-3]|\|[[:space:]]*(head|tail|wc)|-name[[:space:]]) ]]; then
         _warden_emit_block "find_recursive" 5000; _warden_deny "find in $pat needs -maxdepth or pipe"
     fi
 done
