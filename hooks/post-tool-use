@@ -105,18 +105,27 @@ if _warden_is_subagent "$TRANSCRIPT_PATH"; then
     AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
 fi
 
+_SUBAGENT_PREV_BYTES=0
 if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
     BYTE_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.bytes"
-    PREV_BYTES=0
     if [[ -f "$BYTE_FILE" ]]; then
         RAW=$(cat "$BYTE_FILE" 2>/dev/null || echo "0")
         if [[ "$RAW" == *"|"* ]]; then
-            PREV_BYTES=$(echo "$RAW" | cut -d'|' -f1)
+            _SUBAGENT_PREV_BYTES=$(echo "$RAW" | cut -d'|' -f1)
         fi
-        [[ ! "$PREV_BYTES" =~ ^[0-9]+$ ]] && PREV_BYTES=0
+        [[ ! "$_SUBAGENT_PREV_BYTES" =~ ^[0-9]+$ ]] && _SUBAGENT_PREV_BYTES=0
     fi
-    NEW_BYTES=$((PREV_BYTES + OUTPUT_SIZE))
-    printf '%s|%s|%s\n' "$NEW_BYTES" "$TOOL_NAME" "$(date +%s)" > "$BYTE_FILE"
+    # Write preliminary value (corrected on exit if truncation occurs)
+    printf '%s|%s|%s\n' "$((_SUBAGENT_PREV_BYTES + OUTPUT_SIZE))" "$TOOL_NAME" "$(date +%s)" > "$BYTE_FILE"
+
+    # EXIT trap: if modifyOutput reduced the size, correct the byte file.
+    # _WARDEN_FINAL_SIZE is set by truncation paths; defaults to OUTPUT_SIZE.
+    _WARDEN_FINAL_SIZE="$OUTPUT_SIZE"
+    trap '
+        if [[ "${_WARDEN_FINAL_SIZE:-}" != "$OUTPUT_SIZE" && -n "${BYTE_FILE:-}" ]]; then
+            printf "%s|%s|%s\n" "$((_SUBAGENT_PREV_BYTES + _WARDEN_FINAL_SIZE))" "$TOOL_NAME" "$(date +%s)" > "$BYTE_FILE"
+        fi
+    ' EXIT
 fi
 
 # === TOOL LATENCY + TRACE SPAN ===
