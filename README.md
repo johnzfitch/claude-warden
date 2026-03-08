@@ -21,8 +21,15 @@
 [icon-network]: .github/assets/icons/building-network-16x16.png
 [icon-flow]: .github/assets/icons/application-network-16x16.png
 [icon-metrics]: .github/assets/icons/chart-arrow-16x16.png
+[badge-version]: https://img.shields.io/badge/version-v0.4.0-blue
+[badge-license]: https://img.shields.io/badge/license-MIT-green
+[badge-platform]: https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey
+[releases]: https://github.com/johnzfitch/claude-warden/releases
+[license-file]: https://github.com/johnzfitch/claude-warden/blob/master/LICENSE
 ![claude-warden](https://github.com/user-attachments/assets/9a9dc297-aa2a-468a-b468-a2ec3b0e6d22)
 # claude-warden
+
+[![version][badge-version]][releases] [![license][badge-license]][license-file] [![platform][badge-platform]][repo]
 
 Token-saving hooks + observability for [Claude Code][claude-code]. Prevents verbose output, blocks binary reads, enforces subagent budgets, truncates large outputs, and provides a rich statusline &mdash; saving thousands of tokens per session.
 
@@ -60,6 +67,7 @@ claude-warden installs a set of shell hooks that intercept Claude Code tool call
 |---|---|---|
 | `pre-tool-use` | PreToolUse | <strong>Quiet overrides</strong>: injects quiet flags (<code>-q</code>, <code>--silent</code>, <code>-nostats</code>) into verbose commands (<code>git</code>, <code>npm</code>, <code>cargo</code>, <code>make</code>, <code>pip</code>, <code>wget</code>, <code>docker</code>, <code>ffmpeg</code>) via <code>updatedInput</code> instead of blocking. <strong>Network security</strong>: blocks <abbr title="Server-Side Request Forgery">SSRF</abbr> to metadata endpoints, localhost, and <abbr title="RFC 1918">private networks</abbr> (via <code>curl</code>/<code>wget</code>, WebFetch, WebSearch). Blocks data exfiltration (<code>curl</code> POST/upload flags). Blocks raw sockets (<code>nc</code>/<code>ncat</code>/<code>socat</code>) and network scanners (<code>nmap</code>/<code>masscan</code>). <strong>Environment safety</strong>: blocks full env dumps (<code>env</code>, <code>printenv</code>, <code>/proc/*/environ</code>); allows filtered forms. <strong>Sandbox</strong>: blocks Write/Edit/Bash writes to <code>.claude/settings</code> and <code>.claude/hooks</code>. <strong>Token guards</strong>: blocks binary reads, recursive grep/find without limits, oversized Write/Edit/NotebookEdit, minified file access, unbounded <code>git&nbsp;log</code>. Enforces subagent budgets. |
 | `post-tool-use` | PostToolUse | Emits quiet-override <code>additionalContext</code> reminders so the model learns to include flags. Strips <code>&lt;system-reminder&gt;</code> blocks. Compresses Task output &gt;6KB to structured lines. Truncates Bash output &gt;20KB to 10KB. Suppresses output &gt;500KB. Detects binary output via <abbr title="POSIX octal dump">od</abbr>. Strips git hint/clone noise. Tracks session stats. Budget alerts at 75%/90%. |
+| `mcp-output-compress` | PostToolUse (<code>mcp__*</code>) | Intercepts <abbr title="Model Context Protocol">MCP</abbr> tool output &gt;10.5&nbsp;KB (~3&thinsp;000 tokens). Strips noise fields (<code>chunk_id</code>, <code>score</code>, <code>embedding</code>, <code>vector</code>, 64-char hex hashes) recursively. When still over threshold, offloads full payload to <samp>/tmp/claude-mcp-output/</samp> and replaces with a compact summary + file path. Teaches the model via <code>additionalContext</code> to use <code>limit&le;5</code> / <code>max_tokens&le;4000</code> on repeat calls. |
 | `read-guard` | PreToolUse (Read) | Blocks reads on bundled/generated files (<code>node_modules/</code>, <code>/dist/</code>, <code>.min.js</code>). Blocks files exceeding size limit (configurable, default 2MB). |
 | `read-compress` | PostToolUse (Read) | Strips <code>&lt;system-reminder&gt;</code> blocks. Extracts structural signatures (imports, functions, classes) from large reads. Subagents: &gt;300 lines. Main agent: &gt;500 lines. |
 | `permission-request` | PermissionRequest | Auto-denies dangerous commands (<code>rm&nbsp;-rf&nbsp;/</code>, <code>mkfs</code>, <code>curl&nbsp;\|&nbsp;bash</code>). Auto-allows safe read-only commands. |
@@ -445,7 +453,8 @@ Logs land in <samp>~/claude-captures/YYYY-MM-DD/capture-HHMMSS.jsonl</samp>. Eac
 | `monitoring/docker-compose.macos.yml` | Bridge networking override for Docker Desktop (macOS/Windows) |
 | `monitoring/grafana/` | Grafana provisioning (datasources, dashboards) |
 | `tests/` | Fixture-driven test harness (`bash tests/run.sh`) |
-| `.github/workflows/release.yml` | GitHub Actions: builds tarball + checksum on tag push |
+| `.github/` | Issue templates (<abbr title="YAML Ain't Markup Language">YAML</abbr> forms), <abbr title="Pull Request">PR</abbr> template, community health files |
+| `CITATION.cff` | Repository citation metadata (enables &ldquo;Cite this repository&rdquo; on GitHub) |
 | `VERSION` | Current release version |
 | `assets/` | README images (architecture diagram) |
 | `demo/mock-inputs/` | Small JSON fixtures for exercising hooks locally |

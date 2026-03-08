@@ -4,16 +4,15 @@ claude-warden is a collection of lightweight [Claude Code](https://docs.anthropi
 
 ## Development Setup
 
-Requirements:
-
-- `bash` (hooks are bash scripts; they should remain POSIX-ish where practical)
-- `jq` (required at runtime)
-
-Recommended:
-
-- `shellcheck` (static analysis for shell scripts)
-- `shfmt` (consistent formatting)
-- `rg` / `fd` (used by some guard suggestions, not required)
+<dl>
+  <dt><strong>Required</strong></dt>
+  <dd><code>bash</code> &mdash; hooks are bash scripts; keep them <abbr title="Portable Operating System Interface">POSIX</abbr>-ish where practical</dd>
+  <dd><code>jq</code> &mdash; required at runtime</dd>
+  <dt><strong>Recommended</strong></dt>
+  <dd><code>shellcheck</code> &mdash; static analysis for shell scripts</dd>
+  <dd><code>shfmt</code> &mdash; consistent formatting</dd>
+  <dd><code>rg</code> / <code>fd</code> &mdash; used by some guard suggestions, not required</dd>
+</dl>
 
 ## Repository Layout
 
@@ -27,13 +26,14 @@ Recommended:
 
 ## Safety Notes (Local State)
 
-`install.sh` and `uninstall.sh` modify files under `~/.claude/` (hooks, statusline, `settings.json`). When iterating on hook behavior, prefer:
-
-```bash
-./install.sh --dry-run
-```
-
-If you do run `./install.sh`, use a real Claude Code session to validate changes. Do not run install/uninstall scripts in CI.
+> [!WARNING]
+> `install.sh` and `uninstall.sh` modify files under `~/.claude/` (hooks, statusline, `settings.json`). When iterating on hook behavior, always prefer the dry-run first:
+>
+> ```bash
+> ./install.sh --dry-run
+> ```
+>
+> If you do run `./install.sh`, validate against a real Claude Code session. Do not run install/uninstall scripts in CI.
 
 ## Quick Checks
 
@@ -54,7 +54,7 @@ command -v python3 >/dev/null 2>&1 && python3 -m py_compile hooks/_token-count-b
 jq . settings.hooks.json >/dev/null
 ```
 
-If you have `shellcheck` installed:
+If you have <kbd>shellcheck</kbd> installed:
 
 ```bash
 find hooks -maxdepth 1 -type f ! -name '_token-count-bg' -print0 | xargs -0 shellcheck
@@ -90,6 +90,9 @@ Guidelines:
 - If a change affects user-visible behavior, update `README.md` (guard catalog and/or configuration notes).
 
 ### JSON safety
+
+> [!IMPORTANT]
+> JSON construction in hooks is a security boundary. Adversarial command content can inject into hook response fields if strings are interpolated unsafely.
 
 - **`_warden_deny`** (security-critical): always use `jq -n --arg` to construct the response. Never use `printf` with interpolated reason strings &mdash; adversarial command content can inject into `permissionDecision`.
 - **Event emitters** (`_warden_emit_block`, `_warden_emit_event`, etc.): use `_warden_json_escape VARNAME` on all string fields before `printf`. The helper escapes `\`, `"`, newlines, carriage returns, and tabs.
