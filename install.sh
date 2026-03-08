@@ -263,6 +263,7 @@ HOOK_FILES=(
     tool-error
     pre-compact
     config-change
+    mcp-output-compress
 )
 
 info "Installing hooks ($MODE mode)..."

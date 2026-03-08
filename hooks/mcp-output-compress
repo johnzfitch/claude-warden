@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# DEBUG TRACE
+_trace() { echo "[$(date +%H:%M:%S)] $*" >> /tmp/mcp-hook-trace.log; }
+_trace "START pid=$$"
+trap '_trace "EXIT code=$?"' EXIT
+# mcp-output-compress: Offload large MCP tool outputs to /tmp files
+#
+# When any MCP tool returns output exceeding WARDEN_MCP_THRESHOLD_BYTES,
+# saves the full output to a temp file and returns:
+#   1. A compact summary (metadata stripped, key content preserved)
+#   2. The file path for selective Read access
+#   3. additionalContext teaching the model to use tighter params
+#
+# Results stay sorted by relevance (most similar first). Score floats are
+# stripped -- position in the array IS the ranking.
+#
+# Offloaded files are keyed by session ID so you can find all context
+# pulled in during one conversation: ls /tmp/claude-mcp-output/sess-{id}*
+#
+# Works universally across MCP servers -- not tied to any specific tool.
+# The model learns to request less data over time via the guidance messages.
+
+set -o pipefail
+
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+_warden_read_input || exit 0
+
+TOOL_NAME=$(_warden_parse_tool_name)
+
+# Only handle MCP tools (tool names starting with mcp__)
+[[ "$TOOL_NAME" == mcp__* ]] || exit 0
+
+# Extract MCP server name and operation for targeted guidance
+# e.g. mcp__llmx__llmx_search -> server=llmx, op=llmx_search
+IFS='_' read -ra _PARTS <<< "${TOOL_NAME#mcp__}"
+MCP_SERVER="${_PARTS[0]}"
+# Reconstruct operation name (everything after server prefix + __)
+MCP_OP="${TOOL_NAME#mcp__${MCP_SERVER}__}"
+
+# Session ID for file naming (links offloaded files to conversations)
+SESSION_ID=$(_warden_parse_session_id)
+export WARDEN_SESSION_ID="$SESSION_ID"
+SESSION_SHORT="${SESSION_ID:0:8}"
+[[ -z "$SESSION_SHORT" ]] && SESSION_SHORT="nosess"
+
+# Get output content and size
+OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+[[ -z "$OUTPUT" ]] && exit 0
+OUTPUT_SIZE=${#OUTPUT}
+
+# Threshold: ~3000 tokens = ~10500 chars (conservative for structured data)
+WARDEN_MCP_THRESHOLD_BYTES=${WARDEN_MCP_THRESHOLD_BYTES:-10500}
+
+# Small outputs pass through unchanged
+_trace "tool=$TOOL_NAME size=$OUTPUT_SIZE thresh=$WARDEN_MCP_THRESHOLD_BYTES"
+(( OUTPUT_SIZE <= WARDEN_MCP_THRESHOLD_BYTES )) && exit 0
+_trace "ABOVE threshold - processing"
+
+# === STRIP NOISE (universal MCP cleanup) ===
+# Remove fields that burn tokens but the model never references:
+# - UUIDs, hashes, internal IDs (64-char hex strings)
+# - Score floats (model doesn't use ranking scores -- position is the rank)
+# - Truncated ID arrays (listing what WASN'T returned is waste)
+# Results array order is preserved (most relevant first).
+CLEANED="$OUTPUT"
+
+# Try JSON cleanup first (most MCP tools return JSON)
+if printf '%s' "$OUTPUT" | jq empty 2>/dev/null; then
+    CLEANED=$(printf '%s' "$OUTPUT" | jq '
+        # Strip common noise fields recursively
+        walk(
+            if type == "object" then
+                del(.chunk_id, .score, .truncated_ids, .embedding, .vector)
+                | with_entries(
+                    select(
+                        # Remove keys whose values are 64-char hex hashes,
+                        # EXCEPT index_id which models need for follow-up calls
+                        (.value | type) != "string"
+                        or (.value | test("^[0-9a-f]{64}$") | not)
+                        or (.key == "index_id")
+                    )
+                )
+            else .
+            end
+        )
+    ' 2>/dev/null) || CLEANED="$OUTPUT"
+fi
+
+CLEANED_SIZE=${#CLEANED}
+
+# After cleanup, check if we're under threshold
+if (( CLEANED_SIZE <= WARDEN_MCP_THRESHOLD_BYTES )); then
+    # Cleanup alone brought it under threshold -- return inline
+    _warden_emit_event "truncated" "$OUTPUT_SIZE" "$CLEANED_SIZE" "mcp_noise_strip"
+    jq -n --arg text "$CLEANED" '{"modifyOutput":$text}'
+    exit 0
+fi
+
+# === FILE OFFLOAD ===
+# Still over threshold after cleanup. Save to /tmp and return reference.
+# Files are keyed by session so `ls /tmp/claude-mcp-output/sess-{id}*`
+# shows all MCP context pulled in during one conversation.
+TMPDIR="${TMPDIR:-/tmp}"
+OFFLOAD_DIR="$TMPDIR/claude-mcp-output"
+mkdir -p "$OFFLOAD_DIR"
+
+# Sequence counter: monotonic per session (easier to follow than timestamps)
+SEQ_FILE="$OFFLOAD_DIR/.seq-${SESSION_SHORT}"
+SEQ=1
+if [[ -f "$SEQ_FILE" ]]; then
+    PREV_SEQ=$(cat "$SEQ_FILE" 2>/dev/null)
+    [[ "$PREV_SEQ" =~ ^[0-9]+$ ]] && SEQ=$((PREV_SEQ + 1))
+fi
+printf '%s' "$SEQ" > "$SEQ_FILE"
+
+# Format: {session_short}-{server}-{op}-{seq}.txt
+# e.g. a1b2c3d4-llmx-search-001.txt
+OFFLOAD_FILE="$OFFLOAD_DIR/${SESSION_SHORT}-${MCP_SERVER}-${MCP_OP}-$(printf '%03d' $SEQ).txt"
+
+printf '%s' "$CLEANED" > "$OFFLOAD_FILE"
+
+# === BUILD COMPACT SUMMARY ===
+# Extract structural hints depending on content type
+SUMMARY=""
+
+if printf '%s' "$CLEANED" | jq empty 2>/dev/null; then
+    # JSON: extract result count, paths, and first few items compactly
+    RESULT_COUNT=$(printf '%s' "$CLEANED" | jq '
+        if type == "object" and has("results") then (.results | length)
+        elif type == "array" then length
+        else 1
+        end
+    ' 2>/dev/null || echo "?")
+
+    # Extract file paths from results (common in search tools)
+    PATHS=$(printf '%s' "$CLEANED" | jq -r '
+        [.. | .path? // empty] | unique | .[:15] | .[]
+    ' 2>/dev/null | sort -u)
+
+    # First ~2KB of content for immediate context
+    PREVIEW=$(printf '%s' "$CLEANED" | head -c 2048)
+
+    SUMMARY="[MCP output offloaded: ${MCP_SERVER}/${MCP_OP} returned ${RESULT_COUNT} results, ${CLEANED_SIZE} chars]
+[Full output saved to: ${OFFLOAD_FILE}]
+[Results are ranked most-relevant first. Use Read tool on the file to access specific sections.]"
+
+    if [[ -n "$PATHS" ]]; then
+        SUMMARY="${SUMMARY}
+
+Files referenced:
+${PATHS}"
+    fi
+
+    SUMMARY="${SUMMARY}
+
+Preview (first 2KB):
+${PREVIEW}"
+else
+    # Plain text: head + tail like warden's existing pattern
+    HEAD=$(printf '%s' "$CLEANED" | head -c 2048)
+    TAIL=$(printf '%s' "$CLEANED" | tail -c 512)
+
+    SUMMARY="[MCP output offloaded: ${MCP_SERVER}/${MCP_OP} returned ${CLEANED_SIZE} chars]
+[Full output saved to: ${OFFLOAD_FILE}]
+[Use Read tool on the file to access specific sections.]
+
+${HEAD}
+... [${CLEANED_SIZE} chars, see file for full output] ...
+${TAIL}"
+fi
+
+# === GUIDANCE (additionalContext teaches the model) ===
+# Build tool-specific guidance based on what we know about the MCP operation
+GUIDANCE="[warden] MCP output from ${MCP_SERVER}/${MCP_OP} was ${OUTPUT_SIZE} chars (~$((OUTPUT_SIZE * 10 / 35)) tokens). Offloaded to file to save context window. Results are ordered most-relevant first."
+
+case "$MCP_OP" in
+    *search*)
+        GUIDANCE="${GUIDANCE} Next time: use limit<=5 and max_tokens<=4000 for search calls. Use Grep for known files." ;;
+    *index*)
+        GUIDANCE="${GUIDANCE} Index IDs are managed by the hook -- you don't need to track them." ;;
+    *explore*)
+        GUIDANCE="${GUIDANCE} Consider using path_filter to narrow results." ;;
+esac
+
+GUIDANCE="${GUIDANCE} Read the offloaded file selectively if you need specific results."
+
+_warden_emit_event "truncated" "$OUTPUT_SIZE" "${#SUMMARY}" "mcp_file_offload"
+
+# Return compact summary + teaching context
+jq -n \
+    --arg text "$SUMMARY" \
+    --arg ctx "$GUIDANCE" \
+    '{
+        "modifyOutput": $text,
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": $ctx
+        }
+    }'
