@@ -20,12 +20,13 @@ set -o pipefail
 
 source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
-_warden_read_input || exit 0
+_warden_read_input || exit 0  # _trace "no input"
 
 TOOL_NAME=$(_warden_parse_tool_name)
+# _trace "TOOL_NAME=$TOOL_NAME"
 
 # Only handle MCP tools (tool names starting with mcp__)
-[[ "$TOOL_NAME" == mcp__* ]] || exit 0
+[[ "$TOOL_NAME" == mcp__* ]] || exit 0  # _trace "not MCP tool"
 
 # Extract MCP server name and operation for targeted guidance
 # e.g. mcp__llmx__llmx_search -> server=llmx, op=llmx_search
@@ -51,9 +52,9 @@ OUTPUT_SIZE=${#OUTPUT}
 WARDEN_MCP_THRESHOLD_BYTES=${WARDEN_MCP_THRESHOLD_BYTES:-10500}
 
 # Small outputs pass through unchanged
-_trace "tool=$TOOL_NAME size=$OUTPUT_SIZE thresh=$WARDEN_MCP_THRESHOLD_BYTES"
+# _trace "tool=$TOOL_NAME size=$OUTPUT_SIZE thresh=$WARDEN_MCP_THRESHOLD_BYTES"
 (( OUTPUT_SIZE <= WARDEN_MCP_THRESHOLD_BYTES )) && exit 0
-_trace "ABOVE threshold - processing"
+# _trace "ABOVE threshold - processing"
 
 # === STRIP NOISE (universal MCP cleanup) ===
 # Remove fields that burn tokens but the model never references:
