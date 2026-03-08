@@ -1,0 +1,19 @@
+{
+  "tool_name": "mcp__llmx__llmx_search",
+  "tool_input": {
+    "index_id": "abc123",
+    "query": "setup_alias",
+    "limit": 3,
+    "max_tokens": 2000
+  },
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"results\":[{\"chunk_id\":\"abc123\",\"score\":5.0,\"path\":\"src/main.rs\",\"start_line\":10,\"end_line\":20,\"content\":\"fn main() { println!(\\\"hello\\\"); }\"}],\"truncated_ids\":[],\"total_matches\":1}"
+      }
+    ]
+  },
+  "session_id": "test-mcp-002",
+  "transcript_path": "/home/zack/.claude/transcripts/test.jsonl"
+}
