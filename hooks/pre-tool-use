@@ -403,7 +403,7 @@ fi
 
 # === RECURSIVE GREP (main agent only - subagent already blocked above) ===
 if [[ "$IS_SUBAGENT" == false ]]; then
-    if [[ "$COMMAND" =~ (^|[[:space:];&|])grep[[:space:]].*([[:space:]]-[a-zA-Z]*[rR][a-zA-Z]*|--recursive) ]] && [[ ! "$COMMAND" =~ (-l[[:space:]]|--files-with-matches) ]]; then
+    if [[ "$COMMAND" =~ (^|[[:space:];&|])grep[[:space:]]+(-[a-zA-Z]*[rR][a-zA-Z]*|.*[[:space:]]-[a-zA-Z]*[rR][a-zA-Z]*|.*--recursive) ]] && [[ ! "$COMMAND" =~ (-l[[:space:]]|--files-with-matches) ]]; then
         [[ ! "$COMMAND" =~ \|[[:space:]]*(head|tail|wc) ]] && {
             _warden_emit_block "grep_recursive" 10000; _warden_deny "grep -r scans all - use rg or grep -l"
         }
