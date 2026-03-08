@@ -16,6 +16,7 @@ MAX_SIZE_MB=${WARDEN_READ_GUARD_MAX_MB:-2}
 MAX_SIZE_BYTES=$((MAX_SIZE_MB * 1024 * 1024))
 
 _warden_read_input || exit 0
+export WARDEN_SESSION_ID="$(_warden_parse_session_id)"
 
 # Extract file_path from tool_input
 IFS=$'\t' read -r FILE_PATH < <(_warden_parse_tool_input file_path)

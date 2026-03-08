@@ -13,6 +13,7 @@ set -o pipefail
 source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
 _warden_read_input || exit 0
+export WARDEN_SESSION_ID="$(_warden_parse_session_id)"
 
 # Parse tool info - detect subagent via transcript_path, get file path for type detection
 TOOL_NAME=$(_warden_parse_tool_name)

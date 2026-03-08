@@ -11,6 +11,7 @@ set -o pipefail
 source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
 _warden_read_input || exit 0
+export WARDEN_SESSION_ID="$(_warden_parse_session_id)"
 
 # Extract the source and file path of the config change
 SOURCE=$(_warden_parse_toplevel "source")

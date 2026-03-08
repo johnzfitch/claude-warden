@@ -515,6 +515,9 @@ _warden_emit_event() {
         [[ -f "$sf" ]] && prev=$(<"$sf" 2>/dev/null) && [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
         printf '%d\n' "$((prev + saved))" > "$sf"
     fi
+
+    # Track final output size for subagent byte correction (read by EXIT trap in post-tool-use)
+    _WARDEN_FINAL_SIZE="$final_bytes"
 }
 
 # Emit JSONL event for tool output size tracking

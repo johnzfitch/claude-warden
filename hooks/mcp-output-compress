@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# DEBUG TRACE
-_trace() { echo "[$(date +%H:%M:%S)] $*" >> /tmp/mcp-hook-trace.log; }
-_trace "START pid=$$"
-trap '_trace "EXIT code=$?"' EXIT
 # mcp-output-compress: Offload large MCP tool outputs to /tmp files
 #
 # When any MCP tool returns output exceeding WARDEN_MCP_THRESHOLD_BYTES,
@@ -24,12 +20,13 @@ set -o pipefail
 
 source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
-_warden_read_input || exit 0
+_warden_read_input || { _trace "no input"; exit 0; }
 
 TOOL_NAME=$(_warden_parse_tool_name)
+_trace "TOOL_NAME=$TOOL_NAME"
 
 # Only handle MCP tools (tool names starting with mcp__)
-[[ "$TOOL_NAME" == mcp__* ]] || exit 0
+[[ "$TOOL_NAME" == mcp__* ]] || { _trace "not MCP tool"; exit 0; }
 
 # Extract MCP server name and operation for targeted guidance
 # e.g. mcp__llmx__llmx_search -> server=llmx, op=llmx_search
@@ -45,8 +42,11 @@ SESSION_SHORT="${SESSION_ID:0:8}"
 [[ -z "$SESSION_SHORT" ]] && SESSION_SHORT="nosess"
 
 # Get output content and size
-OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
-[[ -z "$OUTPUT" ]] && exit 0
+# DEBUG: dump structure to see actual format
+_trace "tool_resp=$(printf '%s' "$WARDEN_INPUT" | jq -c '.tool_response[0] | keys' 2>/dev/null)"
+# MCP tools: tool_response is array with {type,text} objects directly
+OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response[0].text // .tool_response.content[0].text // ""' 2>/dev/null)
+[[ -z "$OUTPUT" ]] && { _trace "empty output"; exit 0; }
 OUTPUT_SIZE=${#OUTPUT}
 
 # Threshold: ~3000 tokens = ~10500 chars (conservative for structured data)
