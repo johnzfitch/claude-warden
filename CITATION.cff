@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use claude-warden in your research or tooling, please cite it as below."
+title: claude-warden
+abstract: >
+  Security hooks and token-saving middleware for Claude Code. Enforces
+  network security boundaries, prevents data exfiltration, applies quiet
+  command overrides, compresses large MCP outputs, and ships an OpenTelemetry
+  observability stack with Grafana dashboards.
+version: "0.4.0"
+date-released: "2026-03-08"
+license: MIT
+repository-code: https://github.com/johnzfitch/claude-warden
+authors:
+  - family-names: Fitch
+    given-names: Zack
+    alias: johnzfitch
+    email: johnzfitch2@gmail.com
+keywords:
+  - claude-code
+  - hooks
+  - llm
+  - security
+  - token-optimization
+  - opentelemetry
+  - monitoring

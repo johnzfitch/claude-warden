@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a new hook rule, override, or capability
+labels: [enhancement]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - New security rule (pre-tool-use)
+        - New quiet override
+        - MCP output compression
+        - Statusline metric
+        - Monitoring / OTEL / Grafana
+        - Install / uninstall
+        - Cross-platform support
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the token waste, security gap, or workflow friction you're running into.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: If you have a specific regex, hook pattern, or jq expression in mind, include it here.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I've checked that no existing rule covers this case
+        - label: I'm willing to submit a PR for this

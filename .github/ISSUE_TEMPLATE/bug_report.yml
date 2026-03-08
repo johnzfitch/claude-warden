@@ -1,0 +1,71 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, check that your hooks are installed (`ls -la ~/.claude/hooks/`) and that `WARDEN_EVENTS_FILE` is being written to.
+
+  - type: dropdown
+    id: hook
+    attributes:
+      label: Affected hook
+      options:
+        - pre-tool-use
+        - post-tool-use
+        - mcp-output-compress
+        - session-start / stop
+        - subagent-start / stop
+        - config-change
+        - statusline
+        - other / multiple
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include the tool call that triggered the issue and the hook output (check `~/.claude/.statusline/events.jsonl`).
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The raw JSON hook input if you have it (from `~/.claude/.statusline/events.jsonl` or a mock input file).
+      render: json
+
+  - type: input
+    id: version
+    attributes:
+      label: claude-warden version
+      placeholder: "v0.4.0 — run: cat ~/.claude/hooks/../VERSION or check git tag"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - macOS
+        - WSL
+    validations:
+      required: true
+
+  - type: input
+    id: bash-version
+    attributes:
+      label: Bash version
+      placeholder: "bash --version | head -1"

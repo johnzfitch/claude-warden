@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Usage questions & hook config help
+    url: https://github.com/johnzfitch/claude-warden/discussions
+    about: Ask questions about configuring hooks, quiet overrides, or the monitoring stack here.
+  - name: Claude Code hook documentation
+    url: https://docs.anthropic.com/en/docs/claude-code/hooks
+    about: Official Claude Code hooks reference.
