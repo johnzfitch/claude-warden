@@ -109,7 +109,7 @@ The remote installer downloads a release tarball, verifies its <abbr title="Secu
 To pin a version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash -s -- v0.3.0
+curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash -s -- v0.4.0
 ```
 
 ### Install from source (development)
