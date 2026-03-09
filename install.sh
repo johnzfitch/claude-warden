@@ -264,6 +264,9 @@ HOOK_FILES=(
     pre-compact
     config-change
     mcp-output-compress
+    elicitation
+    elicitation-result
+    instructions-loaded
 )
 
 info "Installing hooks ($MODE mode)..."

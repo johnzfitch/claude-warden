@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# elicitation: Track MCP server elicitation requests (user input requests)
+set -euo pipefail
+
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+_warden_read_input || exit 0
+
+# Extract elicitation info
+IFS=$'\t' read -r MCP_SERVER MODE ELICITATION_ID MESSAGE < <(
+    printf '%s' "$WARDEN_INPUT" | jq -r '[
+        .mcp_server_name // "unknown",
+        .mode // "form",
+        .elicitation_id // "",
+        .message // ""
+    ] | @tsv' 2>/dev/null
+) || exit 0
+
+# Sanitize for logging
+MCP_SERVER=$(_warden_sanitize_id "$MCP_SERVER")
+_warden_json_escape MESSAGE
+
+# Emit elicitation event to events.jsonl
+_TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+printf '{"timestamp":%d,"event_type":"elicitation","tool":"Elicitation","mcp_server":"%s","mode":"%s","elicitation_id":"%s","message":"%s"}\n' \
+    "$_TS" "$MCP_SERVER" "$MODE" "$ELICITATION_ID" "$MESSAGE" \
+    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+
+# Allow elicitation to proceed (exit 0 = show dialog normally)
+exit 0

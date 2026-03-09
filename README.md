@@ -214,7 +214,7 @@ The installer generates `warden.env.sh` and prints the line to add to your shell
 
 ```bash
 # claude-warden env
-source "$HOME/dev/claude-warden/warden.env.sh"
+source "$HOME/.claude/.warden/warden.env.sh"
 ```
 
 This exports <abbr title="OpenTelemetry">OTEL</abbr>, token limit, timeout, and sandbox vars from your chosen profile into every new shell. Re-running `install.sh` regenerates `warden.env.sh` with the current profile&rsquo;s values.

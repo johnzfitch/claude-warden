@@ -102,8 +102,16 @@ if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]]; then
     find "$WARDEN_SUBAGENT_STATE_DIR" -maxdepth 1 -type f ! -name '.*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
 fi
 
-# Log session end
-echo "[$END_TIME] Session ended: $SESSION_ID (duration: ${DURATION_MIN}m, dir: $PWD, reason: $REASON)" >> "$LOG_FILE"
+# Log session end with enhanced reason tracking
+# New in 2.1.70: bypass_permissions_disabled reason
+REASON_DISPLAY="$REASON"
+case "$REASON" in
+    bypass_permissions_disabled)
+        REASON_DISPLAY="bypass mode disabled"
+        ;;
+esac
+
+echo "[$END_TIME] Session ended: $SESSION_ID (duration: ${DURATION_MIN}m, dir: $PWD, reason: $REASON_DISPLAY)" >> "$LOG_FILE"
 
 # Record reset reason for statusline
 if [ -n "$REASON" ]; then

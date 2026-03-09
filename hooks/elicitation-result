@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# elicitation-result: Track MCP server elicitation responses
+set -euo pipefail
+
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+_warden_read_input || exit 0
+
+# Extract result info
+IFS=$'\t' read -r MCP_SERVER ELICITATION_ID ACTION MODE < <(
+    printf '%s' "$WARDEN_INPUT" | jq -r '[
+        .mcp_server_name // "unknown",
+        .elicitation_id // "",
+        .action // "unknown",
+        .mode // "form"
+    ] | @tsv' 2>/dev/null
+) || exit 0
+
+# Sanitize for logging
+MCP_SERVER=$(_warden_sanitize_id "$MCP_SERVER")
+
+# Count content fields if present
+CONTENT_FIELDS=0
+if printf '%s' "$WARDEN_INPUT" | jq -e '.content | type == "object"' &>/dev/null; then
+    CONTENT_FIELDS=$(printf '%s' "$WARDEN_INPUT" | jq '.content | length' 2>/dev/null || echo 0)
+fi
+
+# Emit elicitation_result event to events.jsonl
+_TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+printf '{"timestamp":%d,"event_type":"elicitation_result","tool":"ElicitationResult","mcp_server":"%s","elicitation_id":"%s","action":"%s","mode":"%s","content_fields":%d}\n' \
+    "$_TS" "$MCP_SERVER" "$ELICITATION_ID" "$ACTION" "$MODE" "$CONTENT_FIELDS" \
+    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+
+# Allow result to be sent (exit 0 = send original response)
+exit 0
