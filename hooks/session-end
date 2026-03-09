@@ -116,7 +116,7 @@ echo "[$END_TIME] Session ended: $SESSION_ID (duration: ${DURATION_MIN}m, dir: $
 # Record reset reason for statusline
 if [ -n "$REASON" ]; then
     mkdir -p "$WARDEN_STATE_DIR"
-    printf '%s|%s|%s\n' "$(date +%s)" "$REASON" "$SESSION_ID" > "$RESET_REASON_FILE.tmp.$$" && mv "$RESET_REASON_FILE.tmp.$$" "$RESET_REASON_FILE"
+    printf '%s|%s|%s\n' "$(date +%s)" "$REASON_DISPLAY" "$SESSION_ID" > "$RESET_REASON_FILE.tmp.$$" && mv "$RESET_REASON_FILE.tmp.$$" "$RESET_REASON_FILE"
 fi
 
 exit 0

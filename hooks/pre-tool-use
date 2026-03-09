@@ -26,11 +26,15 @@ _warden_record_tool_start "$TOOL_NAME"
 # === MCP TOOL TRACKING ===
 # Log MCP tool calls for separate monitoring (server name from mcp__server__tool pattern)
 if [[ "$TOOL_NAME" == mcp__* ]]; then
-    MCP_SERVER=$(echo "$TOOL_NAME" | cut -d_ -f3)
-    MCP_TOOL=$(echo "$TOOL_NAME" | cut -d_ -f4-)
+    _STRIPPED="${TOOL_NAME#mcp__}"
+    MCP_SERVER="${_STRIPPED%%__*}"
+    MCP_TOOL="${TOOL_NAME#mcp__${MCP_SERVER}__}"
     _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+    ESC_TOOL="$TOOL_NAME"; _warden_json_escape ESC_TOOL
+    ESC_SERVER="$MCP_SERVER"; _warden_json_escape ESC_SERVER
+    ESC_MCTOOL="$MCP_TOOL"; _warden_json_escape ESC_MCTOOL
     printf '{"timestamp":%d,"event_type":"mcp_tool_start","tool":"%s","mcp_server":"%s","mcp_tool":"%s"}\n' \
-        "$_TS" "$TOOL_NAME" "$MCP_SERVER" "$MCP_TOOL" \
+        "$_TS" "$ESC_TOOL" "$ESC_SERVER" "$ESC_MCTOOL" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 fi
 
