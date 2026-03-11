@@ -19,6 +19,9 @@ IFS=$'\t' read -r MCP_SERVER ELICITATION_ID ACTION MODE < <(
 
 # Sanitize for logging
 MCP_SERVER=$(_warden_sanitize_id "$MCP_SERVER")
+_warden_json_escape ELICITATION_ID
+_warden_json_escape ACTION
+_warden_json_escape MODE
 
 # Count content fields if present
 CONTENT_FIELDS=0

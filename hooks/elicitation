@@ -19,7 +19,10 @@ IFS=$'\t' read -r MCP_SERVER MODE ELICITATION_ID MESSAGE < <(
 
 # Sanitize for logging
 MCP_SERVER=$(_warden_sanitize_id "$MCP_SERVER")
+_warden_json_escape MODE
+_warden_json_escape ELICITATION_ID
 _warden_json_escape MESSAGE
+_warden_maybe_scrub MESSAGE
 
 # Emit elicitation event to events.jsonl
 _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))

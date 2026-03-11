@@ -36,22 +36,22 @@ The `timestamp` field is **relative to session start** (not epoch). The OTEL col
 ### New hook events (Claude Code 2.1.70+)
 **Elicitation** — fires when an MCP server requests user input (form/URL). Hook can observe, auto-fill, or block elicitation requests.
 ```json
-{"event_type":"elicitation","mcp_server":"server-name","mode":"form","elicitation_id":"<uuid>","message":"..."}
+{"timestamp":42,"event_type":"elicitation","tool":"Elicitation","mcp_server":"server-name","mode":"form","elicitation_id":"<uuid>","message":"..."}
 ```
 
 **ElicitationResult** — fires after user responds to an MCP elicitation, before sending to MCP server. Hook can filter/modify responses.
 ```json
-{"event_type":"elicitation_result","mcp_server":"server-name","elicitation_id":"<uuid>","action":"accept","mode":"form","content_fields":3}
+{"timestamp":42,"event_type":"elicitation_result","tool":"ElicitationResult","mcp_server":"server-name","elicitation_id":"<uuid>","action":"accept","mode":"form","content_fields":3}
 ```
 
 **InstructionsLoaded** — fires when CLAUDE.md or memory files are loaded. Purely observational (no blocking).
 ```json
-{"event_type":"instructions_loaded","file_path":"/path/to/CLAUDE.md","memory_type":"User","load_reason":"session_start","glob_count":2}
+{"timestamp":42,"event_type":"instructions_loaded","tool":"InstructionsLoaded","file_path":"/path/to/CLAUDE.md","memory_type":"User","load_reason":"session_start","glob_count":2}
 ```
 
 **MCP tool tracking** — `pre-tool-use` now emits `mcp_tool_start` events for MCP tools (pattern: `mcp__server__tool`).
 ```json
-{"event_type":"mcp_tool_start","tool":"mcp__server__tool","mcp_server":"server","mcp_tool":"tool"}
+{"timestamp":42,"event_type":"mcp_tool_start","tool":"mcp__server__tool","mcp_server":"server","mcp_tool":"tool"}
 ```
 
 ### Latency tracking

@@ -16,8 +16,10 @@ IFS=$'\t' read -r FILE_PATH MEMORY_TYPE LOAD_REASON < <(
     ] | @tsv' 2>/dev/null
 ) || exit 0
 
-# Escape file path for JSON
+# Escape strings for JSON
 _warden_json_escape FILE_PATH
+_warden_json_escape MEMORY_TYPE
+_warden_json_escape LOAD_REASON
 
 # Count globs if present
 GLOB_COUNT=0

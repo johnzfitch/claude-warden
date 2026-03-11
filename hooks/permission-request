@@ -26,8 +26,8 @@ case "$NORM_CMD" in
     *"chmod -R 777 /"*|*"chown -R"*"/"*)
         printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Blocked destructive command"}}}\n'
         exit 0 ;;
-    # Fork bombs
-    *':(){:|:&};:'*|*':(){ :|:&};:'*)
+    # Fork bombs (all spacing variants)
+    *':(){:|:&};:'*|*':(){ :|:& };:'*|*':(){ :|:&};:'*)
         printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Blocked fork bomb"}}}\n'
         exit 0 ;;
     # Remote code execution via pipe

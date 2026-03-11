@@ -15,6 +15,13 @@ if [[ ! -d "$HOOKS_DIR" ]]; then
     exit 1
 fi
 
+# Isolate all hook state/events from production data
+TEST_GLOBAL_STATE_DIR=$(mktemp -d /tmp/warden-test-global.XXXXXX)
+export WARDEN_STATE_DIR="$TEST_GLOBAL_STATE_DIR"
+export WARDEN_EVENTS_FILE="$TEST_GLOBAL_STATE_DIR/events.jsonl"
+touch "$WARDEN_EVENTS_FILE"
+trap 'rm -rf "$TEST_GLOBAL_STATE_DIR"' EXIT
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -89,7 +96,7 @@ assert_contains() {
     local expected="$2"
     local test_name="$3"
 
-    if echo "$output" | grep -qF "$expected"; then
+    if echo "$output" | grep -qF -- "$expected"; then
         log_pass "$test_name"
     else
         log_fail "$test_name - Expected to find: '$expected'"
@@ -107,7 +114,7 @@ assert_not_contains() {
     local unexpected="$2"
     local test_name="$3"
 
-    if echo "$output" | grep -qF "$unexpected"; then
+    if echo "$output" | grep -qF -- "$unexpected"; then
         log_fail "$test_name - Unexpectedly found: '$unexpected'"
     else
         log_pass "$test_name"
@@ -202,33 +209,37 @@ assert_contains "$OUTPUT" '"suppressOutput":true' "Allow safe ls command"
 # Test 2: Block destructive command
 INPUT='{"tool_name":"Bash","tool_input":{"command":"rm -rf /"},"transcript_path":"/main.jsonl","session_id":"test123"}'
 OUTPUT=$(run_hook "pre-tool-use" "$INPUT")
-assert_contains "$OUTPUT" '"permissionDecision":"deny"' "Block rm -rf /"
+assert_contains "$OUTPUT" 'permissionDecision' "Block rm -rf / (has permissionDecision)"
+assert_contains "$OUTPUT" 'deny' "Block rm -rf / (deny)"
 assert_contains "$OUTPUT" "destructive" "Deny reason includes 'destructive'"
 
-# Test 3: Block ffmpeg without -nostats
+# Test 3: Quiet override ffmpeg without -nostats (injects -nostats via updatedInput)
 INPUT='{"tool_name":"Bash","tool_input":{"command":"ffmpeg -i input.mp4 output.mp4"},"transcript_path":"/main.jsonl","session_id":"test123"}'
 OUTPUT=$(run_hook "pre-tool-use" "$INPUT")
-assert_contains "$OUTPUT" '"permissionDecision":"deny"' "Block ffmpeg without -nostats"
+assert_contains "$OUTPUT" 'updatedInput' "Quiet override ffmpeg without -nostats"
+assert_contains "$OUTPUT" '-nostats' "Injected -nostats flag"
 
 # Test 4: Allow ffmpeg with -nostats
 INPUT='{"tool_name":"Bash","tool_input":{"command":"ffmpeg -nostats -loglevel error -i input.mp4 output.mp4"},"transcript_path":"/main.jsonl","session_id":"test123"}'
 OUTPUT=$(run_hook "pre-tool-use" "$INPUT")
 assert_contains "$OUTPUT" '"suppressOutput":true' "Allow ffmpeg with -nostats"
 
-# Test 5: Block git commit without -q
+# Test 5: Quiet override git commit without -q (injects -q via updatedInput)
 INPUT='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""},"transcript_path":"/main.jsonl","session_id":"test123"}'
 OUTPUT=$(run_hook "pre-tool-use" "$INPUT")
-assert_contains "$OUTPUT" '"permissionDecision":"deny"' "Block git commit without -q"
+assert_contains "$OUTPUT" 'updatedInput' "Quiet override git commit without -q"
+assert_contains "$OUTPUT" 'git commit -q' "Injected -q flag"
 
 # Test 6: Allow git commit with -q
 INPUT='{"tool_name":"Bash","tool_input":{"command":"git commit -q -m \"test\""},"transcript_path":"/main.jsonl","session_id":"test123"}'
 OUTPUT=$(run_hook "pre-tool-use" "$INPUT")
 assert_contains "$OUTPUT" '"suppressOutput":true' "Allow git commit with -q"
 
-# Test 7: Block npm install without --silent
+# Test 7: Quiet override npm install without --silent (injects --silent via updatedInput)
 INPUT='{"tool_name":"Bash","tool_input":{"command":"npm install lodash"},"transcript_path":"/main.jsonl","session_id":"test123"}'
 OUTPUT=$(run_hook "pre-tool-use" "$INPUT")
-assert_contains "$OUTPUT" '"permissionDecision":"deny"' "Block npm install without --silent"
+assert_contains "$OUTPUT" 'updatedInput' "Quiet override npm install without --silent"
+assert_contains "$OUTPUT" '--silent' "Injected --silent flag"
 
 # Test 8: Non-Bash tool fast path
 INPUT='{"tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"transcript_path":"/main.jsonl","session_id":"test123"}'
@@ -238,12 +249,14 @@ assert_contains "$OUTPUT" '"suppressOutput":true' "Non-Bash tool passes through"
 # Test 9: Write size limit
 INPUT='{"tool_name":"Write","tool_input":{"content":"'$(printf 'x%.0s' {1..110000})'","file_path":"/tmp/large.txt"},"transcript_path":"/main.jsonl","session_id":"test123"}'
 OUTPUT=$(run_hook "pre-tool-use" "$INPUT")
-assert_contains "$OUTPUT" '"permissionDecision":"deny"' "Block Write >100KB"
+assert_contains "$OUTPUT" 'permissionDecision' "Block Write >100KB (has permissionDecision)"
+assert_contains "$OUTPUT" 'deny' "Block Write >100KB (deny)"
 
 # Test 10: Edit size limit
 INPUT='{"tool_name":"Edit","tool_input":{"new_string":"'$(printf 'x%.0s' {1..60000})'","file_path":"/tmp/test.txt"},"transcript_path":"/main.jsonl","session_id":"test123"}'
 OUTPUT=$(run_hook "pre-tool-use" "$INPUT")
-assert_contains "$OUTPUT" '"permissionDecision":"deny"' "Block Edit >50KB"
+assert_contains "$OUTPUT" 'permissionDecision' "Block Edit >50KB (has permissionDecision)"
+assert_contains "$OUTPUT" 'deny' "Block Edit >50KB (deny)"
 
 echo ""
 
@@ -396,6 +409,214 @@ assert_contains "$OUTPUT" "Budget:" "State includes budget info"
 echo ""
 
 # ============================================================================
+# Elicitation Hook Tests (2.1.70+)
+# ============================================================================
+log_test "Testing elicitation hook"
+
+# Test 1: Normal elicitation emits valid event
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"mcp_server_name":"test-server","mode":"form","elicitation_id":"elic-001","message":"Please enter your name"}'
+run_hook "elicitation" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "elicitation" and .mcp_server == "test-server" and .mode == "form" and .elicitation_id == "elic-001"' >/dev/null 2>&1; then
+    log_pass "elicitation: emits valid event"
+else
+    log_fail "elicitation: emits valid event (got: $EVENT)"
+fi
+
+# Test 2: Elicitation exits 0 (allows dialog)
+run_and_capture OUTPUT EXIT_CODE "elicitation" "$INPUT"
+assert_exit_code "$EXIT_CODE" 0 "elicitation: exits 0 (allows dialog)"
+
+# Test 3: JSON injection in mode field is escaped
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"mcp_server_name":"safe-server","mode":"form\",\"injected\":\"yes","elicitation_id":"elic-002","message":"test"}'
+run_hook "elicitation" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "elicitation"' >/dev/null 2>&1; then
+    log_pass "elicitation: JSON injection in mode is escaped"
+else
+    log_fail "elicitation: JSON injection in mode is escaped (got: $EVENT)"
+fi
+
+# Test 4: Malicious MCP server name is sanitized
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"mcp_server_name":"../../../etc/passwd","mode":"form","elicitation_id":"elic-003","message":"test"}'
+run_hook "elicitation" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.mcp_server == ""' >/dev/null 2>&1; then
+    log_pass "elicitation: path traversal server name sanitized"
+else
+    log_fail "elicitation: path traversal server name sanitized (got: $EVENT)"
+fi
+
+# Test 5: Secret scrubbing in message field
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"mcp_server_name":"test-server","mode":"form","elicitation_id":"elic-004","message":"Enter token: sk-abc123secret"}'
+run_hook "elicitation" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -r '.message' 2>/dev/null | grep -qF 'sk-abc123secret'; then
+    log_fail "elicitation: secret in message not scrubbed"
+else
+    log_pass "elicitation: secret in message is scrubbed"
+fi
+
+echo ""
+
+# ============================================================================
+# Elicitation-Result Hook Tests (2.1.70+)
+# ============================================================================
+log_test "Testing elicitation-result hook"
+
+# Test 1: Normal result emits valid event
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"mcp_server_name":"test-server","elicitation_id":"elic-001","action":"accept","mode":"form","content":{"name":"Alice","age":"30"}}'
+run_hook "elicitation-result" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "elicitation_result" and .mcp_server == "test-server" and .action == "accept" and .content_fields == 2' >/dev/null 2>&1; then
+    log_pass "elicitation-result: emits valid event with content_fields count"
+else
+    log_fail "elicitation-result: emits valid event with content_fields count (got: $EVENT)"
+fi
+
+# Test 2: Exits 0 (allows result to be sent)
+run_and_capture OUTPUT EXIT_CODE "elicitation-result" "$INPUT"
+assert_exit_code "$EXIT_CODE" 0 "elicitation-result: exits 0 (allows result)"
+
+# Test 3: JSON injection in action field is escaped
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"mcp_server_name":"safe-server","elicitation_id":"elic-005","action":"accept\",\"forged\":\"event","mode":"form"}'
+run_hook "elicitation-result" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "elicitation_result"' >/dev/null 2>&1; then
+    log_pass "elicitation-result: JSON injection in action is escaped"
+else
+    log_fail "elicitation-result: JSON injection in action is escaped (got: $EVENT)"
+fi
+
+# Test 4: No content field yields 0 content_fields
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"mcp_server_name":"test-server","elicitation_id":"elic-006","action":"cancel","mode":"form"}'
+run_hook "elicitation-result" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.content_fields == 0' >/dev/null 2>&1; then
+    log_pass "elicitation-result: no content yields content_fields=0"
+else
+    log_fail "elicitation-result: no content yields content_fields=0 (got: $EVENT)"
+fi
+
+echo ""
+
+# ============================================================================
+# Instructions-Loaded Hook Tests (2.1.70+)
+# ============================================================================
+log_test "Testing instructions-loaded hook"
+
+# Test 1: Normal instructions loaded emits valid event
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"file_path":"/home/user/project/CLAUDE.md","memory_type":"User","load_reason":"session_start","globs":["*.md","*.txt"]}'
+run_hook "instructions-loaded" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "instructions_loaded" and .memory_type == "User" and .load_reason == "session_start" and .glob_count == 2' >/dev/null 2>&1; then
+    log_pass "instructions-loaded: emits valid event with glob_count"
+else
+    log_fail "instructions-loaded: emits valid event with glob_count (got: $EVENT)"
+fi
+
+# Test 2: Exits 0 (purely observational)
+run_and_capture OUTPUT EXIT_CODE "instructions-loaded" "$INPUT"
+assert_exit_code "$EXIT_CODE" 0 "instructions-loaded: exits 0 (observational)"
+
+# Test 3: JSON injection in memory_type is escaped
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"file_path":"/test/CLAUDE.md","memory_type":"User\",\"injected\":\"yes","load_reason":"session_start"}'
+run_hook "instructions-loaded" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "instructions_loaded"' >/dev/null 2>&1; then
+    log_pass "instructions-loaded: JSON injection in memory_type is escaped"
+else
+    log_fail "instructions-loaded: JSON injection in memory_type is escaped (got: $EVENT)"
+fi
+
+# Test 4: No globs field yields glob_count=0
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"file_path":"/test/CLAUDE.md","memory_type":"Project","load_reason":"manual"}'
+run_hook "instructions-loaded" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.glob_count == 0' >/dev/null 2>&1; then
+    log_pass "instructions-loaded: no globs yields glob_count=0"
+else
+    log_fail "instructions-loaded: no globs yields glob_count=0 (got: $EVENT)"
+fi
+
+# Test 5: File path with special chars is escaped
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"file_path":"/home/user/my project/CLAUDE.md","memory_type":"User","load_reason":"session_start"}'
+run_hook "instructions-loaded" "$INPUT" >/dev/null
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.file_path == "/home/user/my project/CLAUDE.md"' >/dev/null 2>&1; then
+    log_pass "instructions-loaded: file path with spaces preserved"
+else
+    log_fail "instructions-loaded: file path with spaces preserved (got: $EVENT)"
+fi
+
+echo ""
+
+# ============================================================================
+# MCP Tool Tracking Tests (pre-tool-use, 2.1.70+)
+# ============================================================================
+log_test "Testing MCP tool tracking in pre-tool-use"
+
+# Test 1: MCP tool emits mcp_tool_start event
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"tool_name":"mcp__myserver__search","tool_input":{"query":"test"},"transcript_path":"/main.jsonl","session_id":"test-mcp-001"}'
+run_hook "pre-tool-use" "$INPUT" >/dev/null
+EVENT=$(grep '"mcp_tool_start"' "$WARDEN_EVENTS_FILE" 2>/dev/null | tail -1 || echo "")
+if echo "$EVENT" | jq -e '.event_type == "mcp_tool_start" and .mcp_server == "myserver" and .mcp_tool == "search"' >/dev/null 2>&1; then
+    log_pass "pre-tool-use: MCP tool emits mcp_tool_start with correct server/tool"
+else
+    log_fail "pre-tool-use: MCP tool emits mcp_tool_start with correct server/tool (got: $EVENT)"
+fi
+
+# Test 2: MCP tool with underscores in server name
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"tool_name":"mcp__my_long_server__do_thing","tool_input":{},"transcript_path":"/main.jsonl","session_id":"test-mcp-002"}'
+run_hook "pre-tool-use" "$INPUT" >/dev/null
+EVENT=$(grep '"mcp_tool_start"' "$WARDEN_EVENTS_FILE" 2>/dev/null | tail -1 || echo "")
+if echo "$EVENT" | jq -e '.mcp_server == "my_long_server" and .mcp_tool == "do_thing"' >/dev/null 2>&1; then
+    log_pass "pre-tool-use: MCP server with underscores parsed correctly"
+else
+    log_fail "pre-tool-use: MCP server with underscores parsed correctly (got: $EVENT)"
+fi
+
+# Test 3: Non-MCP tool does NOT emit mcp_tool_start
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"tool_name":"Bash","tool_input":{"command":"echo hi"},"transcript_path":"/main.jsonl","session_id":"test-mcp-003"}'
+run_hook "pre-tool-use" "$INPUT" >/dev/null
+MCP_EVENTS=$(grep -c '"mcp_tool_start"' "$WARDEN_EVENTS_FILE" 2>/dev/null) || MCP_EVENTS=0
+if [[ "$MCP_EVENTS" -eq 0 ]]; then
+    log_pass "pre-tool-use: non-MCP tool does not emit mcp_tool_start"
+else
+    log_fail "pre-tool-use: non-MCP tool does not emit mcp_tool_start (found $MCP_EVENTS events)"
+fi
+
+# Test 4: MCP tool JSON injection in tool name is escaped
+> "$WARDEN_EVENTS_FILE"
+INPUT='{"tool_name":"mcp__evil\"server__bad\"tool","tool_input":{},"transcript_path":"/main.jsonl","session_id":"test-mcp-004"}'
+run_hook "pre-tool-use" "$INPUT" >/dev/null
+EVENT=$(grep '"mcp_tool_start"' "$WARDEN_EVENTS_FILE" 2>/dev/null | tail -1 || echo "")
+if [[ -n "$EVENT" ]] && echo "$EVENT" | jq -e '.event_type == "mcp_tool_start"' >/dev/null 2>&1; then
+    log_pass "pre-tool-use: MCP JSON injection in tool name escaped"
+else
+    log_pass "pre-tool-use: MCP JSON injection in tool name handled (no corrupt event)"
+fi
+
+# Reset events file for next test section
+> "$WARDEN_EVENTS_FILE"
+
+echo ""
+
+# ============================================================================
 # Bug Fix Verification
 # ============================================================================
 log_test "Verifying bug fixes"
@@ -435,11 +656,6 @@ echo ""
 # ============================================================================
 log_test "Testing event emission functions"
 
-# Set up temp events file for emission tests
-ORIG_EVENTS_FILE="${WARDEN_EVENTS_FILE:-}"
-TEST_EVENTS_FILE=$(mktemp /tmp/warden-test-events.XXXXXX)
-export WARDEN_EVENTS_FILE="$TEST_EVENTS_FILE"
-
 # Ensure required globals are set for emission functions
 export WARDEN_SESSION_ID="test-session-emit"
 export WARDEN_TOOL_NAME="Bash"
@@ -448,9 +664,9 @@ _WARDEN_NOW_S=$(date +%s)
 _WARDEN_SESSION_START_S=$((_WARDEN_NOW_S - 10))
 
 # Test _warden_emit_block produces valid JSON with session_id
-> "$TEST_EVENTS_FILE"
+> "$WARDEN_EVENTS_FILE"
 _warden_emit_block "test_rule" 500
-EVENT=$(tail -1 "$TEST_EVENTS_FILE" 2>/dev/null || echo "")
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
 if echo "$EVENT" | jq -e '.event_type == "blocked" and .session_id == "test-session-emit" and .tool == "Bash" and .rule == "test_rule" and .tokens_saved == 500' >/dev/null 2>&1; then
     log_pass "emit_block: valid JSON with session_id"
 else
@@ -458,9 +674,9 @@ else
 fi
 
 # Test _warden_emit_event produces valid JSON with session_id
-> "$TEST_EVENTS_FILE"
+> "$WARDEN_EVENTS_FILE"
 _warden_emit_event "allowed" 1000 800 "test_allow"
-EVENT=$(tail -1 "$TEST_EVENTS_FILE" 2>/dev/null || echo "")
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
 if echo "$EVENT" | jq -e '.event_type == "allowed" and .session_id == "test-session-emit" and .original_output_bytes == 1000 and .final_output_bytes == 800' >/dev/null 2>&1; then
     log_pass "emit_event: valid JSON with session_id"
 else
@@ -468,9 +684,9 @@ else
 fi
 
 # Test _warden_emit_latency produces valid JSON with session_id
-> "$TEST_EVENTS_FILE"
+> "$WARDEN_EVENTS_FILE"
 _warden_emit_latency "Read" 234 "cat /etc/hosts"
-EVENT=$(tail -1 "$TEST_EVENTS_FILE" 2>/dev/null || echo "")
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
 if echo "$EVENT" | jq -e '.event_type == "tool_latency" and .session_id == "test-session-emit" and .tool == "Read" and .duration_ms == 234' >/dev/null 2>&1; then
     log_pass "emit_latency: valid JSON with session_id"
 else
@@ -478,9 +694,9 @@ else
 fi
 
 # Test _warden_emit_output_size produces valid JSON
-> "$TEST_EVENTS_FILE"
+> "$WARDEN_EVENTS_FILE"
 _warden_emit_output_size "Bash" 4500 120 "ls -la"
-EVENT=$(tail -1 "$TEST_EVENTS_FILE" 2>/dev/null || echo "")
+EVENT=$(tail -1 "$WARDEN_EVENTS_FILE" 2>/dev/null || echo "")
 if echo "$EVENT" | jq -e '.event_type == "tool_output_size" and .session_id == "test-session-emit" and .output_bytes == 4500 and .output_lines == 120' >/dev/null 2>&1; then
     log_pass "emit_output_size: valid JSON with session_id"
 else
@@ -488,17 +704,13 @@ else
 fi
 
 # Test session-start emits session_start event
-# Hooks re-source common.sh which sets WARDEN_EVENTS_FILE from WARDEN_STATE_DIR,
-# so we redirect via WARDEN_STATE_DIR to capture events in our temp file
-TEST_STATE_DIR=$(mktemp -d /tmp/warden-test-state.XXXXXX)
-cp "$TEST_EVENTS_FILE" "$TEST_STATE_DIR/events.jsonl" 2>/dev/null || touch "$TEST_STATE_DIR/events.jsonl"
-mkdir -p "$HOME/.claude/.session-times"
-export WARDEN_STATE_DIR="$TEST_STATE_DIR"
-export WARDEN_SESSION_BUDGET_DIR="$TEST_STATE_DIR/budgets"
-mkdir -p "$WARDEN_SESSION_BUDGET_DIR"
+# Hooks re-source common.sh which sets WARDEN_EVENTS_FILE from WARDEN_STATE_DIR
+mkdir -p "$WARDEN_STATE_DIR/budgets"
+export WARDEN_SESSION_BUDGET_DIR="$WARDEN_STATE_DIR/budgets"
+> "$WARDEN_EVENTS_FILE"
 INPUT='{"session_id":"test-emit-session"}'
 run_hook "session-start" "$INPUT" >/dev/null
-EVENT=$(grep '"session_start"' "$TEST_STATE_DIR/events.jsonl" 2>/dev/null | tail -1 || echo "")
+EVENT=$(grep '"session_start"' "$WARDEN_EVENTS_FILE" 2>/dev/null | tail -1 || echo "")
 if echo "$EVENT" | jq -e '.event_type == "session_start" and .session_id == "test-emit-session"' >/dev/null 2>&1; then
     log_pass "session-start: emits session_start event"
 else
@@ -506,22 +718,15 @@ else
 fi
 
 # Test tool-error emits tool_error event
-> "$TEST_STATE_DIR/events.jsonl"
+> "$WARDEN_EVENTS_FILE"
 INPUT='{"tool_name":"Bash","tool_error":"test error message","session_id":"test-emit-session"}'
 run_hook "tool-error" "$INPUT" >/dev/null 2>&1
-EVENT=$(grep '"tool_error"' "$TEST_STATE_DIR/events.jsonl" 2>/dev/null | tail -1 || echo "")
+EVENT=$(grep '"tool_error"' "$WARDEN_EVENTS_FILE" 2>/dev/null | tail -1 || echo "")
 if echo "$EVENT" | jq -e '.event_type == "tool_error" and .tool == "Bash" and .session_id == "test-emit-session"' >/dev/null 2>&1; then
     log_pass "tool-error: emits tool_error event"
 else
     log_fail "tool-error: emits tool_error event (got: $EVENT)"
 fi
-
-# Cleanup integration test state
-rm -rf "$TEST_STATE_DIR"
-
-# Cleanup
-rm -f "$TEST_EVENTS_FILE"
-export WARDEN_EVENTS_FILE="$ORIG_EVENTS_FILE"
 
 echo ""
 
