@@ -671,11 +671,11 @@ out="$(append_segment_if_fits "$out" "$SEGMENT" "$STATUSLINE_MAX_BYTES")"
 SEGMENT=""
 if [ "$SUB_COUNT" -gt 0 ] || [ "$CLR_COUNT" -gt 0 ]; then
     if [ "$SUB_COUNT" -gt 0 ] && [ "$CLR_COUNT" -gt 0 ]; then
-        SEGMENT="${DIM}Sub:${RESET}${SUB_COUNT} ${DIM}Clr:${RESET}${CLR_COUNT}"
+        SEGMENT="${DIM}Sub:${SUB_COUNT}${RESET} ${DIM}Clr:${CLR_COUNT}${RESET}"
     elif [ "$SUB_COUNT" -gt 0 ]; then
-        SEGMENT="${DIM}Sub:${RESET}${SUB_COUNT}"
+        SEGMENT="${DIM}Sub:${SUB_COUNT}${RESET}"
     else
-        SEGMENT="${DIM}Clr:${RESET}${CLR_COUNT}"
+        SEGMENT="${DIM}Clr:${CLR_COUNT}${RESET}"
     fi
 else
     _vibes=(
@@ -1860,7 +1860,7 @@ out="$(append_segment_if_fits "$out" "$SEGMENT" "$STATUSLINE_MAX_BYTES")"
 SEGMENT=""
 if [ "$SHOW_RESET" -eq 1 ]; then
     if [ -n "$RESET_LABEL" ]; then
-        SEGMENT="${DIM}Rst:${RESET}${RESET_LABEL}"
+        SEGMENT="${DIM}Rst:${RESET_LABEL}${RESET}"
     else
         SEGMENT="${DIM}Rst${RESET}"
     fi

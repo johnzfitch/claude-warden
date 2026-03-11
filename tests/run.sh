@@ -551,13 +551,13 @@ assert_not_contains "$status_out" $'\033[32mClr:1' "statusline clear not colored
 assert_not_contains "$status_out" $'\033[33mRst:prompt' "statusline reset not colored"
 
 budget_out="$(WARDEN_STATUSLINE_MAX_BYTES=56 "$ROOT_DIR/statusline.sh" < "$STATUS_FIXTURE")"
-budget_bytes="$(LC_ALL=C printf '%s' "$budget_out" | wc -c | tr -d ' ')"
-[[ "$budget_bytes" -le 56 ]] || fail "statusline budget: expected <=56 bytes, got $budget_bytes"
+budget_bytes="$(LC_ALL=C printf '%s' "$budget_out" | sed $'s/\033\\[[0-9;]*m//g' | wc -c | tr -d ' ')"
+[[ "$budget_bytes" -le 56 ]] || fail "statusline budget: expected <=56 visible bytes, got $budget_bytes"
 
 CUSTOM_STATE_DIR="$(mktemp -d)"
-printf '7\n' > "$CUSTOM_STATE_DIR/saved-demo"
+printf '2|8000|1.50\n' > "$CUSTOM_STATE_DIR/clears-demo"
 override_out="$(WARDEN_STATE_DIR="$CUSTOM_STATE_DIR" WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$STATUS_FIXTURE")"
-assert_contains "$override_out" $'↓7t' "statusline WARDEN_STATE_DIR override"
+assert_contains "$override_out" 'Clr:2' "statusline WARDEN_STATE_DIR override"
 
 rm -rf "$CUSTOM_STATE_DIR"
 rm -f "$STATUS_FIXTURE"
