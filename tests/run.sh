@@ -85,6 +85,16 @@ assert_stderr_contains() {
   grep -qF "$needle" "$err_file" || fail "$label: expected stderr to contain: $needle"
 }
 
+assert_contains() {
+  local haystack="$1" needle="$2" label="$3"
+  [[ "$haystack" == *"$needle"* ]] || fail "$label: expected output to contain: $needle"
+}
+
+assert_not_contains() {
+  local haystack="$1" needle="$2" label="$3"
+  [[ "$haystack" != *"$needle"* ]] || fail "$label: expected output not to contain: $needle"
+}
+
 assert_structured_deny() {
   local out_file="$1" label="$2"
   jq -e '.hookSpecificOutput.permissionDecision == "deny"' < "$out_file" >/dev/null \
@@ -516,5 +526,40 @@ rc=$?
 set -e
 assert_exit 0 "$rc" "statusline"
 rm -f "$out" "$err"
+
+echo "[tests] statusline (budget, plain segments, env override)"
+STATUS_FIXTURE="$(mktemp)"
+cat > "$STATUS_FIXTURE" <<'JSON'
+{"session_id":"demo","model":{"display_name":"Claude Opus 4.6"},"context_window":{"context_window_size":200000,"used_percentage":"42.3","current_usage":{"input_tokens":78500,"output_tokens":6200,"cache_creation_input_tokens":12400,"cache_read_input_tokens":67800}},"cost":{"total_cost_usd":5.14,"total_lines_added":321,"total_lines_removed":123},"tool_count":65}
+JSON
+
+printf '65|500000|Bash:rg|%s\n' "$(date +%s)" > "$HOME/.claude/.statusline/session-demo"
+printf '2029|Bash\n' > "$HOME/.claude/.statusline/latency-demo"
+printf '%s|prompt_input_exit|demo\n' "$(date +%s)" > "$HOME/.claude/.statusline/reset-reason"
+printf '1|5000|5.14\n' > "$HOME/.claude/.statusline/clears-demo"
+
+status_out="$(WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$STATUS_FIXTURE")"
+assert_contains "$status_out" "+321/-123" "statusline plain loc"
+assert_contains "$status_out" "Clr:1" "statusline clears"
+assert_contains "$status_out" "Rst:prompt" "statusline reset label shortened"
+assert_not_contains "$status_out" "Tok:" "statusline no synthetic token segment"
+assert_not_contains "$status_out" $'\033[32m+321' "statusline loc not green"
+assert_not_contains "$status_out" $'\033[31m-123' "statusline loc not red"
+assert_not_contains "$status_out" $'\033[31mClr:1' "statusline clear not colored red"
+assert_not_contains "$status_out" $'\033[33mClr:1' "statusline clear not colored yellow"
+assert_not_contains "$status_out" $'\033[32mClr:1' "statusline clear not colored green"
+assert_not_contains "$status_out" $'\033[33mRst:prompt' "statusline reset not colored"
+
+budget_out="$(WARDEN_STATUSLINE_MAX_BYTES=56 "$ROOT_DIR/statusline.sh" < "$STATUS_FIXTURE")"
+budget_bytes="$(LC_ALL=C printf '%s' "$budget_out" | sed $'s/\033\\[[0-9;]*m//g' | wc -c | tr -d ' ')"
+[[ "$budget_bytes" -le 56 ]] || fail "statusline budget: expected <=56 visible bytes, got $budget_bytes"
+
+CUSTOM_STATE_DIR="$(mktemp -d)"
+printf '2|8000|1.50\n' > "$CUSTOM_STATE_DIR/clears-demo"
+override_out="$(WARDEN_STATE_DIR="$CUSTOM_STATE_DIR" WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$STATUS_FIXTURE")"
+assert_contains "$override_out" 'Clr:2' "statusline WARDEN_STATE_DIR override"
+
+rm -rf "$CUSTOM_STATE_DIR"
+rm -f "$STATUS_FIXTURE"
 
 echo "OK"

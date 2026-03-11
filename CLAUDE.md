@@ -29,9 +29,30 @@ Every line is a JSON object with at minimum:
 ```json
 {"timestamp": <relative_seconds>, "event_type": "<type>", "tool": "<tool_name>"}
 ```
-Event types: `allowed`, `blocked`, `truncated`, `tool_latency`, `tool_output_size`, `completed`
+Event types: `allowed`, `blocked`, `truncated`, `tool_latency`, `tool_output_size`, `completed`, `session_start`, `session_end`, `elicitation`, `elicitation_result`, `instructions_loaded`, `mcp_tool_start`
 
 The `timestamp` field is **relative to session start** (not epoch). The OTEL collector filelog receiver uses ingestion time as the log timestamp and preserves the relative value as `session_relative_ts`.
+
+### New hook events (Claude Code 2.1.70+)
+**Elicitation** — fires when an MCP server requests user input (form/URL). Hook can observe, auto-fill, or block elicitation requests.
+```json
+{"timestamp":42,"event_type":"elicitation","tool":"Elicitation","mcp_server":"server-name","mode":"form","elicitation_id":"<uuid>","message":"..."}
+```
+
+**ElicitationResult** — fires after user responds to an MCP elicitation, before sending to MCP server. Hook can filter/modify responses.
+```json
+{"timestamp":42,"event_type":"elicitation_result","tool":"ElicitationResult","mcp_server":"server-name","elicitation_id":"<uuid>","action":"accept","mode":"form","content_fields":3}
+```
+
+**InstructionsLoaded** — fires when CLAUDE.md or memory files are loaded. Purely observational (no blocking).
+```json
+{"timestamp":42,"event_type":"instructions_loaded","tool":"InstructionsLoaded","file_path":"/path/to/CLAUDE.md","memory_type":"User","load_reason":"session_start","glob_count":2}
+```
+
+**MCP tool tracking** — `pre-tool-use` now emits `mcp_tool_start` events for MCP tools (pattern: `mcp__server__tool`).
+```json
+{"timestamp":42,"event_type":"mcp_tool_start","tool":"mcp__server__tool","mcp_server":"server","mcp_tool":"tool"}
+```
 
 ### Latency tracking
 - `pre-tool-use` calls `_warden_record_tool_start "$TOOL_NAME"` which writes `date +%s%N` to a state file

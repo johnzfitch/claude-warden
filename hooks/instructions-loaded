@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# instructions-loaded: Track CLAUDE.md and memory file loading
+set -euo pipefail
+
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+_warden_read_input || exit 0
+
+# Extract instruction file info
+IFS=$'\t' read -r FILE_PATH MEMORY_TYPE LOAD_REASON < <(
+    printf '%s' "$WARDEN_INPUT" | jq -r '[
+        .file_path // "unknown",
+        .memory_type // "unknown",
+        .load_reason // "unknown"
+    ] | @tsv' 2>/dev/null
+) || exit 0
+
+# Escape strings for JSON
+_warden_json_escape FILE_PATH
+_warden_json_escape MEMORY_TYPE
+_warden_json_escape LOAD_REASON
+
+# Count globs if present
+GLOB_COUNT=0
+if printf '%s' "$WARDEN_INPUT" | jq -e '.globs | type == "array"' &>/dev/null; then
+    GLOB_COUNT=$(printf '%s' "$WARDEN_INPUT" | jq '.globs | length' 2>/dev/null || echo 0)
+fi
+
+# Emit instructions_loaded event to events.jsonl
+_TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+printf '{"timestamp":%d,"event_type":"instructions_loaded","tool":"InstructionsLoaded","file_path":"%s","memory_type":"%s","load_reason":"%s","glob_count":%d}\n' \
+    "$_TS" "$FILE_PATH" "$MEMORY_TYPE" "$LOAD_REASON" "$GLOB_COUNT" \
+    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+
+# This is a purely observational hook (no hookSpecificOutput supported)
+exit 0
