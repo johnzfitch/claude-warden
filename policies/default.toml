@@ -1,0 +1,85 @@
+# claude-warden default security policy
+# Copy to ~/.claude/.warden/policy.toml and customize
+
+[general]
+fail_mode = "closed"  # block on daemon error
+
+[bash]
+# Simple commands allowed without AST parsing (Tier 1 fast path)
+allow_simple = [
+    "ls", "cat", "head", "tail", "wc", "stat", "file", "du",
+    "md5sum", "sha256sum", "sha1sum", "cksum",
+    "whoami", "hostname", "type", "man", "locale",
+    "tree", "rg", "grep", "awk", "sed", "sort", "uniq", "cut",
+    "git", "npm", "cargo", "make", "pip", "pip3",
+    "docker", "kubectl",
+    "curl", "wget",
+    "ssh", "scp", "rsync",
+    "echo", "printf", "test", "true", "false", "date", "id", "uname",
+    "which", "dirname", "basename", "realpath", "readlink",
+    "mkdir", "cp", "mv", "touch", "chmod", "chown", "ln",
+    "diff", "patch", "tar", "gzip", "gunzip", "zip", "unzip",
+    "find", "xargs", "tee", "tr", "rev", "fold", "fmt", "column",
+    "python", "python3", "ruby", "node", "bun", "deno", "go", "rustc",
+    "java", "javac", "dotnet", "gcc", "g++", "clang",
+]
+
+# Always denied
+deny = ["mkfs", "dd", "nc", "ncat", "netcat", "socat", "nmap", "masscan", "zmap"]
+
+# Pipe-to-interpreter detection
+block_interpreter_pipe = true
+interpreters = ["bash", "sh", "zsh", "python", "python3", "perl", "ruby", "node"]
+
+[network]
+block_metadata = ["169.254.169.254", "metadata.google.internal", "100.100.100.200"]
+block_private = true
+block_data_upload = true
+
+[subagent]
+deny_commands = ["find", "grep", "ssh", "scp", "rsync"]
+
+[quiet_overrides.git_commit]
+match_command = "git commit"
+flag = "-q"
+not_present = ["-q", "--quiet"]
+
+[quiet_overrides.git_clone]
+match_command = "git clone"
+flag = "-q"
+not_present = ["-q", "--quiet"]
+
+[quiet_overrides.git_fetch]
+match_command = "git fetch"
+flag = "-q"
+not_present = ["-q", "--quiet"]
+
+[quiet_overrides.git_pull]
+match_command = "git pull"
+flag = "-q"
+not_present = ["-q", "--quiet"]
+
+[quiet_overrides.npm_install]
+match_command = "npm install"
+flag = "--silent"
+not_present = ["--silent", "--quiet"]
+
+[quiet_overrides.cargo_build]
+match_command = "cargo build"
+flag = "-q"
+not_present = ["-q", "--quiet"]
+
+[quiet_overrides.make]
+match_command = "make"
+flag = "-s"
+not_present = ["-s", "--silent"]
+
+[quiet_overrides.pip_install]
+match_command = "pip install"
+flag = "-q"
+not_present = ["-q", "--quiet"]
+
+[quiet_overrides.docker_build]
+match_command = "docker build"
+flag = "-q"
+not_present = ["-q", "--quiet"]

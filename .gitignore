@@ -29,6 +29,9 @@ config/user.json
 # Generated shell env helper (written to ~/.claude/.warden/ by install.sh)
 warden.env.sh
 
+# Rust build artifacts
+target/
+
 # Common editor/OS noise
 .DS_Store
 .idea/

@@ -1,0 +1,99 @@
+{
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "$HOME/.claude/hooks/session-start",
+        "timeout": 15
+      }]
+    }],
+    "Setup": [{
+      "hooks": [{
+        "type": "command",
+        "command": "$HOME/.claude/hooks/setup",
+        "timeout": 15
+      }]
+    }],
+    "SessionEnd": [{
+      "hooks": [{
+        "type": "command",
+        "command": "$HOME/.claude/hooks/session-end",
+        "timeout": 10
+      }]
+    }],
+    "PreToolUse": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "$HOME/.claude/hooks/liveness",
+          "asyncRewake": true
+        }]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [{
+          "type": "http",
+          "url": "http://127.0.0.1:7483/hook",
+          "timeout": 5
+        }]
+      }
+    ],
+    "PostToolUse": [{
+      "matcher": ".*",
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 10 }]
+    }],
+    "PostToolUseFailure": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "PermissionRequest": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "Stop": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "PreCompact": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "SubagentStart": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "SubagentStop": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "ConfigChange": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "Notification": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 3 }]
+    }],
+    "Elicitation": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "ElicitationResult": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "InstructionsLoaded": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 3 }]
+    }],
+    "UserPromptSubmit": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "TeammateIdle": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "TaskCompleted": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }],
+    "WorktreeCreate": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 10 }]
+    }],
+    "WorktreeRemove": [{
+      "hooks": [{ "type": "http", "url": "http://127.0.0.1:7483/hook", "timeout": 5 }]
+    }]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "$HOME/.claude/statusline.sh",
+    "padding": 0
+  }
+}
