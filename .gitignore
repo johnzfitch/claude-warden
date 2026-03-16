@@ -20,8 +20,9 @@ docs/ANALYSIS-*.md
 __pycache__/
 *.py[cod]
 
-# Claude Code local settings (keep the repo clean by default)
+# Claude Code local state (keep the repo clean by default)
 .claude/settings.local.json
+.claude/worktrees/
 
 # User config overrides (created from config/user.json.template)
 config/user.json

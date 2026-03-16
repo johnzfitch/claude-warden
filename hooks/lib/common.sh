@@ -103,29 +103,46 @@ _warden_with_lock() {
         sleep 0.1
         attempt=$((attempt + 1))
         if (( attempt >= max_attempts )); then
-            # Stale lock — break it
+            # Check if owning process is still alive before breaking
+            local owner_pid=""
+            [[ -f "$lockdir/pid" ]] && owner_pid=$(<"$lockdir/pid" 2>/dev/null)
+            if [[ -n "$owner_pid" ]] && kill -0 "$owner_pid" 2>/dev/null; then
+                # Owner is alive but slow -- wait one more cycle
+                sleep 0.5
+            fi
             rm -rf "$lockdir" 2>/dev/null
             mkdir "$lockdir" 2>/dev/null || true
             break
         fi
     done
+    # Record our PID so other waiters can check liveness
+    printf '%d' "$$" > "$lockdir/pid" 2>/dev/null || true
     "$func"
-    rmdir "$lockdir" 2>/dev/null || true
+    rm -rf "$lockdir" 2>/dev/null || true
 }
 
-# Session start timestamp (cached for this invocation)
-if [[ -f "$WARDEN_STATE_DIR/.session_start" ]]; then
-    _WARDEN_SESSION_START_NS=$(cat "$WARDEN_STATE_DIR/.session_start" 2>/dev/null)
-    # Handle both formats: seconds-only and seconds.nanoseconds
-    if [[ "$_WARDEN_SESSION_START_NS" == *.* ]]; then
-        _WARDEN_SESSION_START_S=$(cut -d. -f1 <<< "$_WARDEN_SESSION_START_NS")
-    else
-        _WARDEN_SESSION_START_S="$_WARDEN_SESSION_START_NS"
-    fi
-else
-    _WARDEN_SESSION_START_S=$(date +%s)
-fi
+# Session start timestamp (initial value, refined by _warden_resolve_session_start).
+# No global file -- each session writes .session_start-$sid only.
+# This initial value is a safe fallback until the hook parses session_id.
+_WARDEN_SESSION_START_S=$(date +%s)
 export _WARDEN_SESSION_START_S
+
+# Refine session start to a per-session file (call after parsing session_id).
+# Fixes: concurrent sessions sharing a single global .session_start would skew
+# all relative timestamps for the non-latest session.
+_warden_resolve_session_start() {
+    local sid="$1"
+    [[ -z "$sid" ]] && return
+    local per_session="$WARDEN_STATE_DIR/.session_start-$sid"
+    if [[ -f "$per_session" ]]; then
+        _WARDEN_SESSION_START_NS=$(cat "$per_session" 2>/dev/null)
+        if [[ "$_WARDEN_SESSION_START_NS" == *.* ]]; then
+            _WARDEN_SESSION_START_S=$(cut -d. -f1 <<< "$_WARDEN_SESSION_START_NS")
+        else
+            _WARDEN_SESSION_START_S="$_WARDEN_SESSION_START_NS"
+        fi
+    fi
+}
 
 # Current timestamp (captured once)
 export _WARDEN_NOW_S=$(date +%s)
@@ -159,6 +176,8 @@ export WARDEN_BUDGET_TOTAL=${WARDEN_BUDGET_TOTAL:-280000}
 # ==============================================================================
 # Tracks estimated token consumption per session (~3.5 bytes/token).
 # State: single file with consumed count. Total from WARDEN_BUDGET_TOTAL.
+# Legacy budget-cli state is intentionally ignored; claude-warden owns this
+# budget path inline under ~/.claude/.warden/.
 
 WARDEN_BUDGET_STATE="${HOME}/.claude/.warden/budget.state"
 WARDEN_BUDGET_CACHE="$WARDEN_STATE_DIR/budget-export"
@@ -232,9 +251,10 @@ _warden_write_budget_prom() {
     util=0; (( total > 0 )) && util=$(( consumed * 100 / total ))
 
     active=0
-    if [[ -f "$WARDEN_STATE_DIR/subagent-count" ]]; then
-        _sc_raw=$(<"$WARDEN_STATE_DIR/subagent-count")
-        IFS='|' read -r _ _sc_count _ <<< "$_sc_raw"
+    local _sc_file="$WARDEN_STATE_DIR/subagent-count-${WARDEN_SESSION_ID:-}"
+    if [[ -n "${WARDEN_SESSION_ID:-}" && -f "$_sc_file" ]]; then
+        local _sc_count=""
+        IFS='|' read -r _sc_count _ < "$_sc_file" 2>/dev/null
         [[ "$_sc_count" =~ ^[0-9]+$ ]] && active="$_sc_count"
     fi
 
@@ -334,6 +354,12 @@ _warden_parse_toplevel() {
         value="${BASH_REMATCH[1]}"
     fi
 
+    # Fallback to jq if the match contains backslashes (possible escaped quotes)
+    # or if the regex missed entirely (empty value for a field that exists)
+    if [[ "$value" == *\\* ]] || { [[ -z "$value" ]] && [[ "$WARDEN_INPUT" == *"\"$field\""* ]]; }; then
+        value=$(printf '%s' "$WARDEN_INPUT" | jq -r ".$field // \"\"" 2>/dev/null) || value=""
+    fi
+
     printf '%s' "$value"
 }
 
@@ -388,7 +414,7 @@ _warden_sanitize_id() {
 # Returns: 0 if subagent, 1 if main agent
 _warden_is_subagent() {
     local transcript_path="$1"
-    [[ "$transcript_path" == *"/subagents/"* || "$transcript_path" == *"/tmp/"* ]]
+    [[ "$transcript_path" == *"/subagents/"* ]]
 }
 
 # Extract agent ID from transcript path
@@ -633,13 +659,14 @@ _warden_deny() {
 
 # Quiet override: modify command via updatedInput and signal post-tool-use (PreToolUse)
 # Usage: _warden_quiet_override RULE MODIFIED_COMMAND
-# Writes per-invocation state file for post-tool-use reminder (keyed by tool+PID
-# to prevent races when multiple tool calls overlap), emits event, outputs updatedInput JSON.
+# Writes per-invocation state file for post-tool-use reminder (keyed by tool+session_id
+# to prevent races when multiple sessions overlap), emits event, outputs updatedInput JSON.
 _warden_quiet_override() {
     local rule="$1" cmd="$2"
     local tool="${WARDEN_TOOL_NAME:-Bash}"
+    local sid="${WARDEN_SESSION_ID:-$$}"
     mkdir -p "$WARDEN_STATE_DIR"
-    printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override-${tool}-$$"
+    printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override-${tool}-${sid}"
     _warden_emit_event "allowed" 0 0 "$rule"
     jq -n --arg cmd "$cmd" \
         '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":$cmd}}}'
@@ -710,12 +737,15 @@ _warden_validate_git() {
 
 # Record tool start timestamp for latency measurement
 # Usage: _warden_record_tool_start "$TOOL_NAME"
-# Writes nanosecond timestamp to state file
+# Writes nanosecond timestamp to state file keyed by session_id (not PID).
+# Session-scoping prevents concurrent sessions from stealing each other's
+# start markers. Within a session, tool calls are serialized by Claude Code.
 _warden_record_tool_start() {
     local tool_name="$1"
     [[ -z "$tool_name" ]] && return
     mkdir -p "$WARDEN_STATE_DIR"
-    _warden_date_ns > "$WARDEN_STATE_DIR/.tool-start-${tool_name}-$$" 2>/dev/null
+    local key="${tool_name}-${WARDEN_SESSION_ID:-$$}"
+    _warden_date_ns > "$WARDEN_STATE_DIR/.tool-start-${key}" 2>/dev/null
 }
 
 # Compute tool latency from recorded start timestamp
@@ -728,20 +758,13 @@ _warden_compute_tool_latency() {
     WARDEN_TOOL_START_NS=""
     WARDEN_TOOL_END_NS=""
 
-    # Find the most recent start file for this tool (any PID)
+    # Session-scoped lookup only (no glob fallback -- wrong match is worse than no match)
     local start_file=""
-    local newest_file=""
-    local newest_mtime=0
-    for f in "$WARDEN_STATE_DIR"/.tool-start-"${tool_name}"-*; do
-        [[ -f "$f" ]] || continue
-        local mtime
-        mtime=$(_warden_stat_mtime "$f")
-        if (( mtime > newest_mtime )); then
-            newest_mtime=$mtime
-            newest_file="$f"
-        fi
-    done
-    start_file="$newest_file"
+    local sid="${WARDEN_SESSION_ID:-}"
+    if [[ -n "$sid" ]]; then
+        local candidate="$WARDEN_STATE_DIR/.tool-start-${tool_name}-${sid}"
+        [[ -f "$candidate" ]] && start_file="$candidate"
+    fi
 
     [[ -z "$start_file" || ! -f "$start_file" ]] && return 1
 

@@ -5,7 +5,7 @@ set -euo pipefail
 # Source shared library
 source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
-SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count"
+# Per-session count files prevent cross-session interference
 
 _warden_read_input || exit 0
 
@@ -16,6 +16,7 @@ IFS=$'\t' read -r AGENT_ID SESSION_ID WORKTREE_PATH < <(
 AGENT_ID=$(_warden_sanitize_id "$AGENT_ID")
 SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
 [[ -z "$AGENT_ID" ]] && AGENT_ID="unknown"
+_warden_resolve_session_start "$SESSION_ID"
 
 # === BUDGET TRACKING ===
 # Use actual cumulative output bytes tracked by post-tool-use (~3.5 bytes/token)
@@ -54,17 +55,19 @@ if [ -f "$START_FILE" ]; then
     >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 fi
 
-# Decrement active subagent count (with cross-platform locking)
-if [ -n "$SESSION_ID" ] && [ -f "$SUBAGENT_COUNT_FILE" ]; then
-  _decrement_count() {
-    IFS='|' read -r PREV_SESSION PREV_COUNT _PREV_TS < "$SUBAGENT_COUNT_FILE"
-    if [ "$PREV_SESSION" = "$SESSION_ID" ]; then
+# Decrement active subagent count (per-session file)
+if [ -n "$SESSION_ID" ]; then
+  SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count-$SESSION_ID"
+  if [ -f "$SUBAGENT_COUNT_FILE" ]; then
+    _decrement_count() {
+      PREV_COUNT=0
+      IFS='|' read -r PREV_COUNT _PREV_TS < "$SUBAGENT_COUNT_FILE" 2>/dev/null
       [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
       [ "$PREV_COUNT" -gt 0 ] && PREV_COUNT=$((PREV_COUNT - 1))
-      printf '%s|%s|%s\n' "$SESSION_ID" "$PREV_COUNT" "$(date +%s)" > "$SUBAGENT_COUNT_FILE.tmp.$$" && mv "$SUBAGENT_COUNT_FILE.tmp.$$" "$SUBAGENT_COUNT_FILE"
-    fi
-  }
-  _warden_with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _decrement_count
+      printf '%s|%s\n' "$PREV_COUNT" "$(date +%s)" > "$SUBAGENT_COUNT_FILE.tmp.$$" && mv "$SUBAGENT_COUNT_FILE.tmp.$$" "$SUBAGENT_COUNT_FILE"
+    }
+    _warden_with_lock "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock.d" _decrement_count
+  fi
 fi
 _warden_write_budget_prom
 
