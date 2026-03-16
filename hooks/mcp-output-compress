@@ -38,6 +38,7 @@ MCP_OP="${TOOL_NAME#mcp__${MCP_SERVER}__}"
 # Session ID for file naming (links offloaded files to conversations)
 SESSION_ID=$(_warden_parse_session_id)
 export WARDEN_SESSION_ID="$SESSION_ID"
+_warden_resolve_session_start "$SESSION_ID"
 SESSION_SHORT="${SESSION_ID:0:8}"
 [[ -z "$SESSION_SHORT" ]] && SESSION_SHORT="nosess"
 

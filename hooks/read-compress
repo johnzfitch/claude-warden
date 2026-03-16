@@ -14,6 +14,7 @@ source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
 _warden_read_input || exit 0
 export WARDEN_SESSION_ID="$(_warden_parse_session_id)"
+_warden_resolve_session_start "$WARDEN_SESSION_ID"
 
 # Parse tool info - detect subagent via transcript_path, get file path for type detection
 TOOL_NAME=$(_warden_parse_tool_name)

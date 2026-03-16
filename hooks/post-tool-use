@@ -24,6 +24,9 @@ export WARDEN_TOOL_NAME="$TOOL_NAME"
 export WARDEN_COMMAND="$COMMAND"
 export WARDEN_SESSION_ID="$(_warden_sanitize_id "$SESSION_ID")"
 
+# Resolve per-session start timestamp (fixes cross-session relative time skew)
+_warden_resolve_session_start "$WARDEN_SESSION_ID"
+
 [[ "$OUTPUT_SIZE" =~ ^[0-9]+$ ]] || OUTPUT_SIZE=0
 
 # === TOOL OUTPUT SIZE TRACKING (Phase 1 observability) ===
@@ -45,41 +48,45 @@ if (( OUTPUT_SIZE > 0 )); then
     _warden_emit_output_size "$TOOL_NAME" "$OUTPUT_SIZE" "$OUTPUT_LINES" "$COMMAND"
 fi
 
-# === Session state: single file, single read+write ===
+# === Session state: single file, single read+write (locked) ===
 if [[ -n "$WARDEN_SESSION_ID" ]]; then
     STATE_FILE="$WARDEN_STATE_DIR/session-$WARDEN_SESSION_ID"
     mkdir -p "$WARDEN_STATE_DIR"
 
-    # Read previous state (count|top_bytes|top_label|timestamp)
-    PREV_COUNT=0; PREV_BYTES=0; PREV_LABEL=""; PREV_TS=0
-    if [[ -f "$STATE_FILE" ]]; then
-        IFS='|' read -r PREV_COUNT PREV_BYTES PREV_LABEL PREV_TS < "$STATE_FILE" 2>/dev/null
-    fi
-    [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
-    [[ "$PREV_BYTES" =~ ^[0-9]+$ ]] || PREV_BYTES=0
-
-    NEW_COUNT=$((PREV_COUNT + 1))
-
-    # Build tool label for top-output tracking
-    TOP_LABEL="$PREV_LABEL"
-    TOP_BYTES="$PREV_BYTES"
-    if (( OUTPUT_SIZE > PREV_BYTES )); then
-        TOP_BYTES="$OUTPUT_SIZE"
-        if [[ "$TOOL_NAME" == "Bash" && -n "$COMMAND" ]]; then
-            CMD="${COMMAND#"${COMMAND%%[![:space:]]*}"}"
-            TOP_LABEL="Bash:${CMD%%[[:space:]]*}"
-        else
-            TOP_LABEL="$TOOL_NAME"
+    # Locked read-modify-write to prevent lost increments under concurrency
+    _update_session_state() {
+        # Read previous state (count|top_bytes|top_label|timestamp)
+        PREV_COUNT=0; PREV_BYTES=0; PREV_LABEL=""; PREV_TS=0
+        if [[ -f "$STATE_FILE" ]]; then
+            IFS='|' read -r PREV_COUNT PREV_BYTES PREV_LABEL PREV_TS < "$STATE_FILE" 2>/dev/null
         fi
-    fi
-    # Sanitize TOP_LABEL for pipe delimiter (prevents state file corruption)
-    TOP_LABEL="${TOP_LABEL//|/_}"
+        [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
+        [[ "$PREV_BYTES" =~ ^[0-9]+$ ]] || PREV_BYTES=0
 
-    # Single write: count|top_bytes|top_label|timestamp
-    printf '%s|%s|%s|%s\n' "$NEW_COUNT" "$TOP_BYTES" "$TOP_LABEL" "$(date +%s)" > "$STATE_FILE"
+        NEW_COUNT=$((PREV_COUNT + 1))
+
+        # Build tool label for top-output tracking
+        TOP_LABEL="$PREV_LABEL"
+        TOP_BYTES="$PREV_BYTES"
+        if (( OUTPUT_SIZE > PREV_BYTES )); then
+            TOP_BYTES="$OUTPUT_SIZE"
+            if [[ "$TOOL_NAME" == "Bash" && -n "$COMMAND" ]]; then
+                CMD="${COMMAND#"${COMMAND%%[![:space:]]*}"}"
+                TOP_LABEL="Bash:${CMD%%[[:space:]]*}"
+            else
+                TOP_LABEL="$TOOL_NAME"
+            fi
+        fi
+        # Sanitize TOP_LABEL for pipe delimiter (prevents state file corruption)
+        TOP_LABEL="${TOP_LABEL//|/_}"
+
+        # Single write: count|top_bytes|top_label|timestamp
+        printf '%s|%s|%s|%s\n' "$NEW_COUNT" "$TOP_BYTES" "$TOP_LABEL" "$(date +%s)" > "$STATE_FILE"
+    }
+    _warden_with_lock "$WARDEN_STATE_DIR/session-$WARDEN_SESSION_ID.lock.d" _update_session_state
 
     # Budget check every 50 calls (infrequent, fine to be slow)
-    if (( NEW_COUNT % 50 == 0 )); then
+    if [[ "${NEW_COUNT:-0}" =~ ^[0-9]+$ ]] && (( NEW_COUNT % 50 == 0 )); then
         ALERT_FILE="$WARDEN_STATE_DIR/budget-alert"
         UTIL=$(_warden_budget_export 2>/dev/null | jq -r '.utilization // 0' | cut -d. -f1)
         if [[ "$UTIL" =~ ^[0-9]+$ ]] && (( UTIL >= 90 )); then
@@ -288,20 +295,13 @@ fi
 if [[ "$TOOL_NAME" == "Bash" ]]; then
     # Note: tool_input.command in PostToolUse reflects the updatedInput from pre-tool-use,
     # so the quiet flags are already present. We detect the override by checking for the
-    # injected flag pattern that wouldn't appear naturally (e.g. "git clone -q" right after subcommand).
-    # Use a state file written by pre-tool-use to reliably detect overrides.
-    # Find per-invocation quiet-override state file (keyed by tool+PID in pre-tool-use).
-    # Consume the most recent one for this tool, matching the latency tracking pattern.
+    # state file written by pre-tool-use (keyed by tool+session_id for concurrency safety).
+    # Session-scoped lookup only (no glob fallback -- wrong match is worse than no reminder)
     _QUIET_STATE=""
-    _QUIET_NEWEST_MTIME=0
-    for _qf in "$WARDEN_STATE_DIR"/.quiet-override-"${TOOL_NAME}"-*; do
-        [[ -f "$_qf" ]] || continue
-        _qf_mtime=$(_warden_stat_mtime "$_qf")
-        if (( _qf_mtime > _QUIET_NEWEST_MTIME )); then
-            _QUIET_NEWEST_MTIME=$_qf_mtime
-            _QUIET_STATE="$_qf"
-        fi
-    done
+    if [[ -n "${WARDEN_SESSION_ID:-}" ]]; then
+        _candidate="$WARDEN_STATE_DIR/.quiet-override-${TOOL_NAME}-${WARDEN_SESSION_ID}"
+        [[ -f "$_candidate" ]] && _QUIET_STATE="$_candidate"
+    fi
     _QUIET_REMINDER=""
     if [[ -n "$_QUIET_STATE" && -f "$_QUIET_STATE" ]]; then
         _QUIET_RULE=$(<"$_QUIET_STATE")

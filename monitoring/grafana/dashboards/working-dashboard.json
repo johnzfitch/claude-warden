@@ -101,7 +101,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum(claude_code_cost_usage_USD_total)",
+          "expr": "sum(claude_code_cost_usage_USD_total) or sum(claude_warden_cost_usage_USD_total)",
           "instant": true,
           "refId": "A"
         }
@@ -158,7 +158,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum(claude_code_token_usage_tokens_total)",
+          "expr": "sum(claude_code_token_usage_tokens_total) or sum(claude_warden_token_usage_tokens_total)",
           "instant": true,
           "refId": "A"
         }
@@ -215,7 +215,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum(claude_code_active_time_seconds_total)",
+          "expr": "sum(claude_code_active_time_seconds_total) or sum(claude_warden_active_time_seconds_total)",
           "instant": true,
           "refId": "A"
         }
@@ -272,7 +272,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum(claude_code_session_count_total)",
+          "expr": "sum(claude_code_session_count_total) or sum(claude_warden_session_count_total)",
           "instant": true,
           "refId": "A"
         }
@@ -555,7 +555,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (model)(claude_code_cost_usage_USD_total)",
+          "expr": "sum by (model)(claude_code_cost_usage_USD_total) or sum by (model)(claude_warden_cost_usage_USD_total)",
           "instant": true,
           "legendFormat": "{{model}}",
           "refId": "A"
@@ -609,7 +609,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (type)(claude_code_token_usage_tokens_total)",
+          "expr": "sum by (type)(claude_code_token_usage_tokens_total) or sum by (type)(claude_warden_token_usage_tokens_total)",
           "instant": true,
           "legendFormat": "{{type}}",
           "refId": "A"
@@ -654,7 +654,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (model)(rate(claude_code_cost_usage_USD_total[5m]))",
+          "expr": "sum by (model)(rate(claude_code_cost_usage_USD_total[5m])) or sum by (model)(rate(claude_warden_cost_usage_USD_total[5m]))",
           "legendFormat": "{{model}}",
           "refId": "A"
         }
@@ -705,7 +705,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (type)(rate(claude_code_token_usage_tokens_total[5m]))",
+          "expr": "sum by (type)(rate(claude_code_token_usage_tokens_total[5m])) or sum by (type)(rate(claude_warden_token_usage_tokens_total[5m]))",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
@@ -893,7 +893,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum(claude_code_token_usage_tokens_total)",
+          "expr": "sum(claude_code_token_usage_tokens_total) or sum(claude_warden_token_usage_tokens_total)",
           "legendFormat": "actual (API)",
           "refId": "A"
         },
@@ -970,7 +970,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "max(claude_budget_consumed_tokens) / clamp_min(sum(claude_code_token_usage_tokens_total), 1)",
+          "expr": "max(claude_budget_consumed_tokens) / clamp_min((sum(claude_code_token_usage_tokens_total) or sum(claude_warden_token_usage_tokens_total)), 1)",
           "instant": true,
           "refId": "A"
         }

@@ -128,6 +128,12 @@ case "$(uname -s)" in
 esac
 info "Platform: $PLATFORM"
 
+LEGACY_BUDGET_STATE="$CLAUDE_DIR/.budget/budget.json"
+if [[ -f "$LEGACY_BUDGET_STATE" ]]; then
+    warn "Legacy budget-cli state detected at $LEGACY_BUDGET_STATE"
+    dim "claude-warden uses inline state at $CLAUDE_DIR/.warden/budget.state; remove the legacy file if other tooling still reads it"
+fi
+
 # === Profile selection ===
 AVAILABLE_PROFILES=()
 for pf in "$CONFIG_DIR/profiles"/*.json; do

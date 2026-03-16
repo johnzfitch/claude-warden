@@ -15,6 +15,7 @@ _warden_read_input || exit 0
 TOOL_NAME=$(_warden_parse_tool_name)
 SESSION_ID=$(_warden_parse_session_id)
 export WARDEN_SESSION_ID="$(_warden_sanitize_id "$SESSION_ID")"
+_warden_resolve_session_start "$WARDEN_SESSION_ID"
 ERROR_MSG=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_error // .error // "unknown error"' 2>/dev/null)
 
 # === ERROR LOGGING (to file) ===

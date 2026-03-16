@@ -38,6 +38,7 @@ receivers:
             - session_stop
             - subagent_start
             - subagent_stop
+            - compaction
           warn:
             - blocked
             - truncated

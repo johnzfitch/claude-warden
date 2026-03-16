@@ -11,6 +11,7 @@ _warden_read_input || exit 0
 SESSION_ID=$(_warden_parse_session_id)
 SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
 [[ -z "$SESSION_ID" ]] && exit 0
+_warden_resolve_session_start "$SESSION_ID"
 
 # === GATHER SESSION STATE ===
 STATE_FILE="$WARDEN_STATE_DIR/session-$SESSION_ID"

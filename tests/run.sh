@@ -24,7 +24,11 @@ export HOME="$TMP_HOME"
 unset WARDEN_STATE_DIR WARDEN_EVENTS_FILE WARDEN_SESSION_BUDGET_DIR WARDEN_SUBAGENT_STATE_DIR
 mkdir -p "$HOME/.claude/.statusline"
 touch "$HOME/.claude/.statusline/events.jsonl"
-printf '%s.000000000\n' "$(date +%s)" > "$HOME/.claude/.statusline/.session_start"
+# Per-session start files for test fixtures that use session IDs
+_TEST_START_TS="$(date +%s).000000000"
+for _sid in demo-session size-test quiet-test demo metric-demo; do
+    printf '%s\n' "$_TEST_START_TS" > "$HOME/.claude/.statusline/.session_start-$_sid"
+done
 
 echo "[checks] bash -n (syntax)"
 find "$ROOT_DIR/hooks" -maxdepth 1 -type f ! -name '_token-count-bg' -print0 | xargs -0 bash -n
@@ -477,9 +481,9 @@ assert_exit 0 "$rc" "read-compress reminder read"
 assert_jq_modifyOutput_no_system_reminder "$out" "read-compress reminder read"
 
 echo "[tests] post-tool-use (quiet override reminder via state file)"
-# Simulate a pre-tool-use quiet override by writing per-invocation state, then run post-tool-use
+# Simulate a pre-tool-use quiet override by writing per-session state, then run post-tool-use
 QUIET_FIXTURE="$(mktemp)"
-printf '%s' "npm_quiet_override" > "$HOME/.claude/.statusline/.quiet-override-Bash-$$"
+printf '%s' "npm_quiet_override" > "$HOME/.claude/.statusline/.quiet-override-Bash-quiet-test"
 jq -n '{
   tool_name:"Bash", session_id:"quiet-test",
   tool_input:{command:"npm install --silent express"},
@@ -561,5 +565,41 @@ assert_contains "$override_out" 'Clr:2' "statusline WARDEN_STATE_DIR override"
 
 rm -rf "$CUSTOM_STATE_DIR"
 rm -f "$STATUS_FIXTURE"
+
+echo "[tests] statusline (fallback context math + metrics export)"
+METRIC_FIXTURE="$(mktemp)"
+cat > "$METRIC_FIXTURE" <<'JSON'
+{"session_id":"metric-demo","model":{"display_name":"Claude Sonnet 4.6"},"context_window":{"context_window_size":200000,"total_input_tokens":12000,"total_output_tokens":3000,"current_usage":{"input_tokens":10000,"output_tokens":60000,"cache_creation_input_tokens":5000,"cache_read_input_tokens":10000}},"cost":{"total_cost_usd":1.25,"total_duration_ms":4200}}
+JSON
+
+metric_status="$(WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$METRIC_FIXTURE")"
+metric_status_plain="$(LC_ALL=C printf '%s' "$metric_status" | sed $'s/\033\\[[0-9;]*m//g')"
+assert_contains "$metric_status_plain" "12.5%/200k" "statusline fallback excludes output tokens"
+
+PROM_FILE="$HOME/.claude/.monitoring/textfile/claude-code-session-metric-demo.prom"
+[[ -f "$PROM_FILE" ]] || fail "statusline metrics export: missing $PROM_FILE"
+prom_text="$(cat "$PROM_FILE")"
+assert_contains "$prom_text" 'claude_warden_token_usage_tokens_total{session_id="metric-demo",model="Claude Sonnet 4.6",type="input"} 12000' \
+  "statusline metrics export input tokens"
+assert_contains "$prom_text" 'claude_warden_token_usage_tokens_total{session_id="metric-demo",model="Claude Sonnet 4.6",type="output"} 3000' \
+  "statusline metrics export output tokens"
+assert_contains "$prom_text" 'claude_warden_cost_usage_USD_total{session_id="metric-demo",model="Claude Sonnet 4.6"} 1.25' \
+  "statusline metrics export cost"
+
+mkdir -p "$HOME/.claude/.session-times"
+date +%s > "$HOME/.claude/.session-times/metric-demo.start"
+END_FIXTURE="$(mktemp)"
+cat > "$END_FIXTURE" <<'JSON'
+{"session_id":"metric-demo","reason":"user_exit"}
+JSON
+IFS=$'\t' read -r rc out err < <(run_hook session-end "$END_FIXTURE")
+assert_exit 0 "$rc" "session-end metrics cleanup"
+# Prom file is preserved via tombstone for one scrape interval (60s)
+[[ -f "$PROM_FILE" ]] || fail "session-end metrics cleanup: prom file should be preserved until tombstone expires"
+[[ -f "$PROM_FILE.tombstone" ]] || fail "session-end metrics cleanup: expected tombstone file"
+# Verify tombstone contains a timestamp
+_tombstone_val=$(<"$PROM_FILE.tombstone")
+[[ "$_tombstone_val" =~ ^[0-9]+$ ]] || fail "session-end metrics cleanup: tombstone should contain epoch timestamp"
+rm -f "$METRIC_FIXTURE" "$END_FIXTURE" "$PROM_FILE" "$PROM_FILE.tombstone"
 
 echo "OK"

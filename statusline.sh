@@ -123,6 +123,57 @@ format_percent_from_tenths() {
     fi
 }
 
+escape_prom_label() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\n'/ }"
+    value="${value//$'\r'/ }"
+    printf '%s' "$value"
+}
+
+write_session_metrics_prom() {
+    local session_id="$1"
+    local model="$2"
+    local total_input="$3"
+    local total_output="$4"
+    local duration_ms="$5"
+    local cost_usd="$6"
+
+    [ -n "$session_id" ] || return 0
+
+    local prom_dir="${HOME}/.claude/.monitoring/textfile"
+    local prom_file="${prom_dir}/claude-code-session-${session_id}.prom"
+    local model_label active_seconds tmp_file
+
+    mkdir -p "$prom_dir" 2>/dev/null || return 0
+    model_label="$(escape_prom_label "$model")"
+    active_seconds="$(LC_NUMERIC=C awk -v ms="$duration_ms" 'BEGIN { printf "%.3f", ms / 1000 }' 2>/dev/null)"
+    if [[ ! "$active_seconds" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        active_seconds="0"
+    fi
+    if [[ ! "$cost_usd" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+        cost_usd="0"
+    fi
+
+    tmp_file="${prom_file}.tmp.$$"
+    {
+        printf '# HELP claude_warden_cost_usage_USD_total Current session cost exported by claude-warden statusline\n'
+        printf '# TYPE claude_warden_cost_usage_USD_total gauge\n'
+        printf 'claude_warden_cost_usage_USD_total{session_id="%s",model="%s"} %s\n' "$session_id" "$model_label" "$cost_usd"
+        printf '# HELP claude_warden_token_usage_tokens_total Current session token totals exported by claude-warden statusline\n'
+        printf '# TYPE claude_warden_token_usage_tokens_total gauge\n'
+        printf 'claude_warden_token_usage_tokens_total{session_id="%s",model="%s",type="input"} %s\n' "$session_id" "$model_label" "$total_input"
+        printf 'claude_warden_token_usage_tokens_total{session_id="%s",model="%s",type="output"} %s\n' "$session_id" "$model_label" "$total_output"
+        printf '# HELP claude_warden_active_time_seconds_total Current session active time exported by claude-warden statusline\n'
+        printf '# TYPE claude_warden_active_time_seconds_total gauge\n'
+        printf 'claude_warden_active_time_seconds_total{session_id="%s",model="%s"} %s\n' "$session_id" "$model_label" "$active_seconds"
+        printf '# HELP claude_warden_session_count_total Active sessions exported by claude-warden statusline\n'
+        printf '# TYPE claude_warden_session_count_total gauge\n'
+        printf 'claude_warden_session_count_total{session_id="%s",model="%s"} 1\n' "$session_id" "$model_label"
+    } > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$prom_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null
+}
+
 abbreviate_model() {
     local model="$1"
 
@@ -285,6 +336,8 @@ USED_PCT_DISPLAY="0"
 # tool defs, CLAUDE.md — everything in the context window). current_usage only
 # counts API-reported tokens and consistently under-reports by ~10%.
 # Fall back to computing from current_usage when used_percentage is absent.
+# Claude reports context usage from input-side tokens only; output_tokens are
+# billed, but they do not consume context-window percentage.
 if [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
     whole="${BASH_REMATCH[1]}"
     dec="${BASH_REMATCH[3]}"
@@ -295,7 +348,7 @@ if [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
     PCT_TENTHS=$((whole * 10 + dec))
     USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
 elif [ "$HAS_CURR" = "1" ] && [ "$CONTEXT_SIZE" -gt 0 ]; then
-    CTX_USED=$((CURR_IN + CURR_OUT + CACHE_CREATE + CACHE_READ))
+    CTX_USED=$((CURR_IN + CACHE_CREATE + CACHE_READ))
     PCT_TENTHS=$((CTX_USED * 1000 / CONTEXT_SIZE))
     USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
 fi
@@ -303,7 +356,7 @@ fi
 # CTX_USED: compute from current_usage when available (for delta/clear detection),
 # otherwise derive from percentage.
 if [ "$HAS_CURR" = "1" ]; then
-    CTX_USED=$((CURR_IN + CURR_OUT + CACHE_CREATE + CACHE_READ))
+    CTX_USED=$((CURR_IN + CACHE_CREATE + CACHE_READ))
 elif [ "$CONTEXT_SIZE" -gt 0 ] && [ "$PCT_TENTHS" -gt 0 ]; then
     CTX_USED=$((CONTEXT_SIZE * PCT_TENTHS / 1000))
 fi
@@ -487,11 +540,11 @@ if [ -z "$TOOL_COUNT" ] && [[ "$TOOL_COUNT_RAW" =~ ^[0-9]+$ ]] && [ "$TOOL_COUNT
 fi
 
 SUB_COUNT=0
-SUB_COUNT_FILE="$STATE_DIR/subagent-count"
-if [ -f "$SUB_COUNT_FILE" ]; then
-    SUB_SESSION="" SUB_VALUE="" _SUB_TS=""
-    IFS='|' read -r SUB_SESSION SUB_VALUE _SUB_TS < "$SUB_COUNT_FILE" 2>/dev/null || true
-    if [ "${SUB_SESSION:-}" = "$SESSION_ID" ]; then
+if [ -n "$SESSION_ID" ]; then
+    SUB_COUNT_FILE="$STATE_DIR/subagent-count-$SESSION_ID"
+    if [ -f "$SUB_COUNT_FILE" ]; then
+        SUB_VALUE="" _SUB_TS=""
+        IFS='|' read -r SUB_VALUE _SUB_TS < "$SUB_COUNT_FILE" 2>/dev/null || true
         SUB_COUNT=$(num_or_zero "${SUB_VALUE:-0}")
     fi
 fi
@@ -587,6 +640,21 @@ LINES_REMOVED=$(num_or_zero "$LINES_REMOVED")
 
 DURATION_MS=$(num_or_zero "$DURATION_MS")
 API_DURATION_MS=$(num_or_zero "$API_DURATION_MS")
+write_session_metrics_prom "$SESSION_ID" "$MODEL" "$TOTAL_INPUT" "$TOTAL_OUTPUT" "$DURATION_MS" "$COST_USD"
+
+# Reap tombstoned prom files (session-end delays deletion for one scrape interval)
+_PROM_DIR="${HOME}/.claude/.monitoring/textfile"
+if [ -d "$_PROM_DIR" ]; then
+    for _ts_file in "$_PROM_DIR"/*.tombstone; do
+        [ -f "$_ts_file" ] || continue
+        _ts_val=""
+        read -r _ts_val < "$_ts_file" 2>/dev/null || continue
+        [[ "$_ts_val" =~ ^[0-9]+$ ]] || continue
+        if [ $((NOW_TS - _ts_val)) -ge 60 ]; then
+            rm -f "${_ts_file%.tombstone}" "$_ts_file" 2>/dev/null
+        fi
+    done
+fi
 
 # Budget (parse known-format JSON without jq to avoid process spawn)
 BUDGET_PCT=""

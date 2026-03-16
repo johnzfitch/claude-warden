@@ -17,6 +17,7 @@ IFS=$'\t' read -r REASON TOOL_NAME SESSION_ID < <(
 ) || exit 0
 
 SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
+_warden_resolve_session_start "$SESSION_ID"
 
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 

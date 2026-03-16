@@ -307,8 +307,8 @@ Warden includes an optional observability stack in `monitoring/` that persists h
 |---|---|---|---|
 | Loki | `grafana/loki:3.4.2` | 3100 | Log aggregation (30-day retention, <abbr title="Time Series Database">TSDB</abbr> filesystem storage) |
 | <abbr title="OpenTelemetry">OTEL</abbr> Collector | `otel/opentelemetry-collector-contrib` | 4317/4318 | Receives <abbr title="OpenTelemetry Protocol">OTLP</abbr> logs + traces, tails `events.jsonl`, exports to Loki + Tempo |
-| Prometheus | `prom/prometheus` | 9090 | Metrics (Claude Code <abbr title="OpenTelemetry Protocol">OTLP</abbr> metrics + node-exporter textfiles) |
-| Node Exporter | `prom/node-exporter` | 9101 | Textfile collector for warden budget metrics |
+| Prometheus | `prom/prometheus` | 9090 | Metrics (Claude Code <abbr title="OpenTelemetry Protocol">OTLP</abbr> metrics plus claude-warden textfile fallbacks) |
+| Node Exporter | `prom/node-exporter` | 9101 | Textfile collector for claude-warden budget and session metrics |
 | Tempo | `grafana/tempo:2.7.2` | 3200/3205 | Distributed trace storage and visualization |
 | Grafana | `grafana/grafana` | 3000 | Dashboards (<samp>admin</samp>/<samp>admin</samp>) |
 
