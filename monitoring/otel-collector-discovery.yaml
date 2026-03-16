@@ -1,0 +1,52 @@
+# Discovery-mode OTEL collector config
+# Captures ALL native Claude Code OTEL signals to flat files for schema analysis.
+# Deliberately omits filelog/warden to isolate native from hook-generated data.
+#
+# Usage: scripts/discover-otel-schema.sh (or manually via docker run)
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+exporters:
+  file/metrics:
+    path: /data/metrics.jsonl
+
+  file/logs:
+    path: /data/logs.jsonl
+
+  file/traces:
+    path: /data/traces.jsonl
+
+  debug:
+    verbosity: detailed
+    sampling_initial: 99999
+    sampling_thereafter: 1
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/metrics, debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/logs, debug]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/traces, debug]
+
+  telemetry:
+    logs:
+      level: "debug"
