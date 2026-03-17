@@ -1,0 +1,13 @@
+[Unit]
+Description=Warden Collector - Claude Code telemetry aggregator
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/warden-collector
+Restart=on-failure
+RestartSec=5
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target

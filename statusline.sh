@@ -332,13 +332,25 @@ CTX_USED=0
 PCT_TENTHS=0
 USED_PCT_DISPLAY="0"
 
-# Percentage: prefer used_percentage from Claude Code (includes system prompt,
-# tool defs, CLAUDE.md — everything in the context window). current_usage only
-# counts API-reported tokens and consistently under-reports by ~10%.
-# Fall back to computing from current_usage when used_percentage is absent.
-# Claude reports context usage from input-side tokens only; output_tokens are
-# billed, but they do not consume context-window percentage.
-if [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
+# Context % priority:
+# 1. Collector (OTEL-sourced, tracks context growth between API calls)
+# 2. Claude Code's used_percentage (stale between API calls)
+# 3. Computed from current_usage fields (least accurate)
+COLLECTOR_ADDR="${WARDEN_COLLECTOR_ADDR:-127.0.0.1:9464}"
+COLLECTOR_PCT=""
+if [ -n "$SESSION_ID" ]; then
+    COLLECTOR_JSON="$(curl -sf --max-time 0.05 \
+        "http://${COLLECTOR_ADDR}/v1/sessions/${SESSION_ID}/context" 2>/dev/null)" || COLLECTOR_JSON=""
+    if [ -n "$COLLECTOR_JSON" ]; then
+        COLLECTOR_PCT="$(printf '%s' "$COLLECTOR_JSON" | jq -r '.used_pct // empty' 2>/dev/null)" || COLLECTOR_PCT=""
+    fi
+fi
+
+if [ -n "$COLLECTOR_PCT" ] && [[ "$COLLECTOR_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    # Collector has OTEL data with pending tool tokens — most accurate
+    PCT_TENTHS=$(printf '%s' "$COLLECTOR_PCT" | awk '{printf "%d", $1 * 10}')
+    USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
+elif [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
     whole="${BASH_REMATCH[1]}"
     dec="${BASH_REMATCH[3]}"
     dec="${dec:0:1}"
@@ -392,11 +404,18 @@ STATE_FILE="$STATE_DIR/state${SESSION_ID:+-$SESSION_ID}"
 REASON_FILE="$STATE_DIR/reset-reason"
 mkdir -p "$STATE_DIR"
 
+# Diagnostic: log key context values to debug % accuracy and compact behavior
+printf '%s sid=%s model="%s" pct_raw="%s" ctx=%s curr_in=%s curr_out=%s cc=%s cr=%s has_curr=%s\n' \
+    "$(date +%H:%M:%S)" "$SESSION_ID" "$MODEL" "$USED_PCT_RAW" \
+    "$CONTEXT_SIZE" "$CURR_IN" "$CURR_OUT" "$CACHE_CREATE" "$CACHE_READ" "$HAS_CURR" \
+    >> "$STATE_DIR/statusline-debug.log" 2>/dev/null
+
 PREV_SESSION=""
 PREV_TOTAL_IN=0
 PREV_TOTAL_OUT=0
 PREV_CTX=0
 PREV_COST_USD="0"
+PREV_MODEL=""
 RESET_TS=0
 RESET_REASON=""
 
@@ -414,6 +433,7 @@ if [ -f "$STATE_FILE" ]; then
         PREV_TOTAL_OUT=$(num_or_zero "$PREV_F3")
         PREV_CTX=$(num_or_zero "$PREV_F4")
         PREV_COST_USD="${_P6:-0}"
+        PREV_MODEL="${_P13:-}"
         RESET_TS=$(num_or_zero "$PREV_F14")
         RESET_REASON="${PREV_F15:-}"
     else
@@ -439,6 +459,13 @@ PREV_COST_USD="$(normalize_cost_usd "${PREV_COST_USD:-0}" "$PREV_TOTAL")"
 SAME_SESSION=0
 if [ -n "$SESSION_ID" ] && [ "$PREV_SESSION" = "$SESSION_ID" ]; then
     SAME_SESSION=1
+fi
+
+# Model bleed fix: Claude Code sends the current global model setting to all
+# sessions, so switching models in one terminal changes ALL statuslines.
+# Use cached per-session model unless tokens changed (actual API call happened).
+if [ "$SAME_SESSION" -eq 1 ] && [ -n "$PREV_MODEL" ] && [ "$TOTAL" -eq "$PREV_TOTAL" ]; then
+    MODEL="$PREV_MODEL"
 fi
 
 # Token reset and context clear only valid within the same session.
