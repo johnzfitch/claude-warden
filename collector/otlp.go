@@ -81,6 +81,17 @@ func (kv KeyValue) BoolVal() bool {
 	return kv.Value.BoolValue
 }
 
+// contextWindowForModel returns the context window size for known models.
+func contextWindowForModel(model string) int {
+	switch {
+	case strings.Contains(model, "opus"), strings.Contains(model, "sonnet"),
+		strings.Contains(model, "haiku"):
+		return 200000
+	default:
+		return 200000
+	}
+}
+
 // attrMap converts a slice of KeyValue into a lookup map.
 func attrMap(attrs []KeyValue) map[string]KeyValue {
 	m := make(map[string]KeyValue, len(attrs))
@@ -224,8 +235,7 @@ func (h *OTLPHandler) processLLMRequest(ctx context.Context, sessionID string, s
 	// Total context = input_tokens + cache_read + cache_create.
 	totalContext := inputTokens + cacheRead + cacheCreate
 
-	// Determine context window from model (200k for Claude 3.5/4 family)
-	contextWindow := 200000
+	contextWindow := contextWindowForModel(model)
 
 	slog.Info("llm_request",
 		"session", sessionID,

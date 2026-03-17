@@ -348,7 +348,7 @@ fi
 
 if [ -n "$COLLECTOR_PCT" ] && [[ "$COLLECTOR_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
     # Collector has OTEL data with pending tool tokens — most accurate
-    PCT_TENTHS=$(printf '%s' "$COLLECTOR_PCT" | awk '{printf "%d", $1 * 10}')
+    PCT_TENTHS=$(printf '%s' "$COLLECTOR_PCT" | LC_NUMERIC=C awk '{printf "%d", $1 * 10}')
     USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
 elif [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
     whole="${BASH_REMATCH[1]}"
@@ -404,11 +404,12 @@ STATE_FILE="$STATE_DIR/state${SESSION_ID:+-$SESSION_ID}"
 REASON_FILE="$STATE_DIR/reset-reason"
 mkdir -p "$STATE_DIR"
 
-# Diagnostic: log key context values to debug % accuracy and compact behavior
-printf '%s sid=%s model="%s" pct_raw="%s" ctx=%s curr_in=%s curr_out=%s cc=%s cr=%s has_curr=%s\n' \
-    "$(date +%H:%M:%S)" "$SESSION_ID" "$MODEL" "$USED_PCT_RAW" \
-    "$CONTEXT_SIZE" "$CURR_IN" "$CURR_OUT" "$CACHE_CREATE" "$CACHE_READ" "$HAS_CURR" \
-    >> "$STATE_DIR/statusline-debug.log" 2>/dev/null
+if [ "${WARDEN_DEBUG:-}" = "1" ]; then
+    printf '%s sid=%s model="%s" pct_raw="%s" ctx=%s curr_in=%s curr_out=%s cc=%s cr=%s has_curr=%s\n' \
+        "$(date +%H:%M:%S)" "$SESSION_ID" "$MODEL" "$USED_PCT_RAW" \
+        "$CONTEXT_SIZE" "$CURR_IN" "$CURR_OUT" "$CACHE_CREATE" "$CACHE_READ" "$HAS_CURR" \
+        >> "$STATE_DIR/statusline-debug.log" 2>/dev/null
+fi
 
 PREV_SESSION=""
 PREV_TOTAL_IN=0

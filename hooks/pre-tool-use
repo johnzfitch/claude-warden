@@ -46,9 +46,6 @@ IS_SUBAGENT=false
 AGENT_TYPE=""
 AGENT_ID=""
 
-printf '[pre] tool=%s tp="%s"\n' "$TOOL_NAME" "$TRANSCRIPT_PATH" \
-    >> "$WARDEN_STATE_DIR/subagent-debug.log" 2>/dev/null
-
 if _warden_is_subagent "$TRANSCRIPT_PATH"; then
     IS_SUBAGENT=true
     AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")

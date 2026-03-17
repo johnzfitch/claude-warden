@@ -29,6 +29,10 @@ func (a *APIHandler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 // HandleSessionContext returns context data for a single session.
 // GET /v1/sessions/{session_id}/context
 func (a *APIHandler) HandleSessionContext(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	// Extract session_id from path: /v1/sessions/{id}/context
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/sessions/"), "/")
 	if len(parts) < 1 || parts[0] == "" {
@@ -55,6 +59,10 @@ func (a *APIHandler) HandleSessionContext(w http.ResponseWriter, r *http.Request
 // HandleSessions lists all sessions.
 // GET /v1/sessions
 func (a *APIHandler) HandleSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	sessions, err := a.store.ListSessions(r.Context())
 	if err != nil {
 		slog.Warn("list sessions failed", "err", err)

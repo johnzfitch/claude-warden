@@ -151,14 +151,17 @@ func (s *Store) UpsertSessionFromSpan(ctx context.Context, sessionID, model stri
 
 // AccumulateToolTokens adds result_tokens from a tool span to the session's
 // pending output, tracking context growth between LLM requests.
+// Creates the session row if it doesn't exist (tool span before llm_request).
 func (s *Store) AccumulateToolTokens(ctx context.Context, sessionID string, resultTokens int) error {
 	now := time.Now().UnixNano()
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE sessions
-		SET pending_output_tokens = pending_output_tokens + ?,
-		    tool_count = tool_count + 1,
-		    updated_at_ns = ?
-		WHERE session_id = ?`, resultTokens, now, sessionID)
+		INSERT INTO sessions (session_id, pending_output_tokens, tool_count, started_at_ns, updated_at_ns)
+		VALUES (?, ?, 1, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			pending_output_tokens = sessions.pending_output_tokens + excluded.pending_output_tokens,
+			tool_count = sessions.tool_count + 1,
+			updated_at_ns = excluded.updated_at_ns`,
+		sessionID, resultTokens, now, now)
 	return err
 }
 

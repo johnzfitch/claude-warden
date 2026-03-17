@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -55,12 +56,15 @@ func main() {
 	// OTLP server (receives traces from Claude Code)
 	otlpMux := http.NewServeMux()
 	otlpMux.HandleFunc("/v1/traces", otlpHandler.HandleTraces)
-	// Accept metrics and logs too (store raw, extract later)
+	// Accept metrics and logs — ACK to avoid sender errors, log for visibility.
+	// Phase 2: persist these signals or forward to the existing OTEL collector.
 	otlpMux.HandleFunc("/v1/metrics", func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("metrics received (not yet persisted)")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "{}")
 	})
 	otlpMux.HandleFunc("/v1/logs", func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("logs received (not yet persisted)")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "{}")
 	})
@@ -102,15 +106,19 @@ func main() {
 
 	go func() {
 		slog.Info("OTLP server listening", "addr", otlpAddr)
-		errCh <- otlpServer.ListenAndServe()
+		if err := otlpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
 	}()
 
 	go func() {
 		slog.Info("API server listening", "addr", apiAddr)
-		errCh <- apiServer.ListenAndServe()
+		if err := apiServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
 	}()
 
-	// Wait for shutdown signal
+	// Wait for shutdown signal or fatal server error
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -118,7 +126,7 @@ func main() {
 	case sig := <-sigCh:
 		slog.Info("shutting down", "signal", sig)
 	case err := <-errCh:
-		slog.Error("server error", "err", err)
+		slog.Error("server error, shutting down", "err", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -126,7 +134,6 @@ func main() {
 
 	otlpServer.Shutdown(ctx)
 	apiServer.Shutdown(ctx)
-	store.Close()
 
 	slog.Info("collector stopped")
 }
