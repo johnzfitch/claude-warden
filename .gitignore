@@ -41,3 +41,13 @@ tests/verbosity/results.txt
 # Demo artifacts
 demo/claude-warden-demo.mp4
 demo/mock-inputs/pre-tool-use-write-large.json
+
+# Go build artifacts
+collector/warden-collector
+
+# Scratch directories
+playground/
+target/
+
+# Claude Code project config (auto-generated)
+.claude/

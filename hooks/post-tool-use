@@ -83,7 +83,7 @@ if [[ -n "$WARDEN_SESSION_ID" ]]; then
         # Single write: count|top_bytes|top_label|timestamp
         printf '%s|%s|%s|%s\n' "$NEW_COUNT" "$TOP_BYTES" "$TOP_LABEL" "$(date +%s)" > "$STATE_FILE"
     }
-    _warden_with_lock "$WARDEN_STATE_DIR/session-$WARDEN_SESSION_ID.lock.d" _update_session_state
+    _warden_with_lock "$WARDEN_STATE_DIR/session-$WARDEN_SESSION_ID.lock" _update_session_state
 
     # Budget check every 50 calls (infrequent, fine to be slow)
     if [[ "${NEW_COUNT:-0}" =~ ^[0-9]+$ ]] && (( NEW_COUNT % 50 == 0 )); then
@@ -106,6 +106,9 @@ fi
 TRANSCRIPT_PATH=$(_warden_parse_transcript_path)
 IS_SUBAGENT=false
 AGENT_ID=""
+
+printf '[post] tool=%s tp="%s"\n' "$TOOL_NAME" "$TRANSCRIPT_PATH" \
+    >> "$WARDEN_STATE_DIR/subagent-debug.log" 2>/dev/null
 
 if _warden_is_subagent "$TRANSCRIPT_PATH"; then
     IS_SUBAGENT=true

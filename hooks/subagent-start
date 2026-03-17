@@ -27,12 +27,8 @@ if ! _warden_budget_check; then
   UTIL=$(echo "$STATS" | jq -r '.utilization // 100')
   CONSUMED=$(echo "$STATS" | jq -r '.consumed // 0')
   TOTAL=$(echo "$STATS" | jq -r '.total_limit // 0')
-  cat << EOF
-{
-  "continue": false,
-  "stopReason": "Budget exhausted (${UTIL}% used). ${CONSUMED}/${TOTAL} tokens. Wait for subagents or increase WARDEN_BUDGET_TOTAL."
-}
-EOF
+  jq -n --arg reason "Budget exhausted (${UTIL}% used). ${CONSUMED}/${TOTAL} tokens. Wait for subagents or increase WARDEN_BUDGET_TOTAL." \
+    '{"continue":false,"stopReason":$reason}'
   exit 0
 fi
 
@@ -83,7 +79,7 @@ if [ -n "$SESSION_ID" ]; then
     [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
     printf '%s|%s\n' "$((PREV_COUNT + 1))" "$EPOCH" > "$SUBAGENT_COUNT_FILE.tmp.$$" && mv "$SUBAGENT_COUNT_FILE.tmp.$$" "$SUBAGENT_COUNT_FILE"
   }
-  _warden_with_lock "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock.d" _increment_count
+  _warden_with_lock "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock" _increment_count
 fi
 _warden_write_budget_prom
 
@@ -111,14 +107,8 @@ case "$AGENT_TYPE" in
 esac
 
 if [[ -n "$GUIDANCE" ]]; then
-  cat << EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "SubagentStart",
-    "additionalContext": "$GUIDANCE"
-  }
-}
-EOF
+  jq -n --arg ctx "$GUIDANCE" \
+    '{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":$ctx}}'
 fi
 
 exit 0

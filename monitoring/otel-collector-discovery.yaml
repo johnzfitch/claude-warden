@@ -8,9 +8,9 @@ receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 0.0.0.0:4317
+        endpoint: 0.0.0.0:4327
       http:
-        endpoint: 0.0.0.0:4318
+        endpoint: 0.0.0.0:4328
 
 processors:
   batch:
@@ -50,3 +50,10 @@ service:
   telemetry:
     logs:
       level: "debug"
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: "0.0.0.0"
+                port: 8898

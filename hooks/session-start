@@ -45,4 +45,21 @@ if [ -n "$SESSION_ID" ]; then
     >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 fi
 
+# === GIT CONTEXT SNAPSHOT ===
+# Inject branch, dirty count, and last commit so the model doesn't need
+# to spend a tool call on git status/log to orient itself.
+if git rev-parse --is-inside-work-tree &>/dev/null; then
+  GIT_BRANCH=$(git branch --show-current 2>/dev/null)
+  [[ -z "$GIT_BRANCH" ]] && GIT_BRANCH="detached"
+  GIT_DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+  GIT_LAST=$(git log -1 --format='%h %s' 2>/dev/null || echo "")
+
+  CTX="[Git] ${GIT_BRANCH}"
+  (( GIT_DIRTY > 0 )) && CTX+=" (${GIT_DIRTY} dirty)"
+  [[ -n "$GIT_LAST" ]] && CTX+=", last: ${GIT_LAST}"
+
+  jq -n --arg ctx "$CTX" \
+    '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":$ctx}}'
+fi
+
 exit 0

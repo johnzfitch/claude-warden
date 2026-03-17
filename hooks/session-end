@@ -24,7 +24,7 @@ SESSION_PROM_FILE="$HOME/.claude/.monitoring/textfile/claude-code-session-${SESS
 # Calculate terminal agent duration
 SESSION_START_FILE="$HOME/.claude/.session-times/$SESSION_ID.start"
 if [ -f "$SESSION_START_FILE" ]; then
-  START_EPOCH=$(cat "$SESSION_START_FILE")
+  START_EPOCH=$(_warden_read_numeric "$SESSION_START_FILE" "$_WARDEN_NOW_S")
   END_EPOCH=$(date +%s)
   DURATION=$((END_EPOCH - START_EPOCH))
   DURATION_MIN=$((DURATION / 60))
@@ -55,6 +55,7 @@ if [ -f "$SESSION_START_FILE" ]; then
     END_JSON=$(_warden_budget_export)
     END_CONSUMED=$(echo "$END_JSON" | jq -r '.consumed // 0')
     DELTA=$((END_CONSUMED - START_CONSUMED))
+    (( DELTA < 0 )) && DELTA=0  # Budget was reset mid-session; clamp
 
     # Initialize CSV if needed
     mkdir -p "$(dirname "$SESSION_COST_LOG")"
@@ -63,7 +64,9 @@ if [ -f "$SESSION_START_FILE" ]; then
     fi
 
     # Count subagents for this session
-    SUBAGENT_COUNT=$(grep ",$SESSION_ID," "$AGENT_STATS" 2>/dev/null | grep ",subagent," | grep ",completed" | awk 'END{print NR}' || echo 0)
+    SUBAGENT_COUNT=$(awk -F',' -v sid="$SESSION_ID" \
+        '$6 == sid && $3 == "subagent" && $7 == "completed" { count++ } END { print count+0 }' \
+        "$AGENT_STATS" 2>/dev/null)
 
     # Log session cost
     echo "$(_warden_date_iso),$SESSION_ID,$DURATION,$START_CONSUMED,$END_CONSUMED,$DELTA,$SUBAGENT_COUNT" >> "$SESSION_COST_LOG"
@@ -107,7 +110,8 @@ if [[ -d "$WARDEN_STATE_DIR" ]]; then
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'peak-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.session_start-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'subagent-count-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    # Stale lock dirs (owner process long dead)
+    # Stale locks: flock files + legacy mkdir lock dirs
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '*.lock' -mmin +60 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type d -name '*.lock.d' -mmin +60 -exec rm -rf {} + 2>/dev/null || true
 fi
 if [[ -d "$WARDEN_SUBAGENT_STATE_DIR" ]]; then
@@ -141,7 +145,9 @@ rm -f "$WARDEN_STATE_DIR"/.quiet-override-*-"$SESSION_ID" 2>/dev/null
 rm -f "$WARDEN_STATE_DIR/latency-$SESSION_ID" 2>/dev/null
 rm -f "$WARDEN_STATE_DIR/saved-$SESSION_ID" 2>/dev/null
 rm -f "$WARDEN_STATE_DIR/session-$SESSION_ID" 2>/dev/null
-# Remove per-session lock dirs (safe: session is ending, no concurrent holders)
+# Remove per-session lock files + legacy lock dirs
+rm -f "$WARDEN_STATE_DIR/session-$SESSION_ID.lock" 2>/dev/null
+rm -f "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock" 2>/dev/null
 rm -rf "$WARDEN_STATE_DIR/session-$SESSION_ID.lock.d" 2>/dev/null
 rm -rf "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock.d" 2>/dev/null
 

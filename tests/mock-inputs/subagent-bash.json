@@ -1,0 +1,8 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ls -la"
+  },
+  "session_id": "test-subagent-001",
+  "transcript_path": "/home/zack/.claude/projects/test/test-subagent-001/subagents/agent-a1234567890abcdef.jsonl"
+}

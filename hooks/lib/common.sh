@@ -90,35 +90,45 @@ _warden_json_escape() {
 }
 
 # ==============================================================================
-# CROSS-PROCESS LOCKING (mkdir-based, portable)
+# CROSS-PROCESS LOCKING (flock on Linux/WSL, mkdir fallback on macOS)
 # ==============================================================================
 
-# Execute a function while holding a directory-based lock.
-# Usage: _warden_with_lock LOCKDIR FUNC
-# Uses mkdir atomicity (POSIX). Stale locks broken after 5s.
+# Execute a function while holding an advisory lock.
+# Usage: _warden_with_lock LOCKFILE FUNC [ARGS...]
+# Linux/WSL: fd-based flock (kernel-level, race-free, auto-releases on exit).
+# macOS: mkdir fallback with explicit acquisition tracking (never runs unlocked).
 _warden_with_lock() {
-    local lockdir="$1" func="$2"
-    local max_attempts=50 attempt=0
-    while ! mkdir "$lockdir" 2>/dev/null; do
-        sleep 0.1
-        attempt=$((attempt + 1))
-        if (( attempt >= max_attempts )); then
-            # Check if owning process is still alive before breaking
-            local owner_pid=""
-            [[ -f "$lockdir/pid" ]] && owner_pid=$(<"$lockdir/pid" 2>/dev/null)
-            if [[ -n "$owner_pid" ]] && kill -0 "$owner_pid" 2>/dev/null; then
-                # Owner is alive but slow -- wait one more cycle
-                sleep 0.5
+    local lockfile="$1"; shift
+    mkdir -p "$(dirname "$lockfile")" 2>/dev/null || true
+    if command -v flock &>/dev/null; then
+        exec 200>"$lockfile"
+        flock -w 5 200 || return 1
+        "$@"
+        local rc=$?
+        flock -u 200
+        exec 200>&-
+        return $rc
+    else
+        # macOS fallback: mkdir-based with correct acquisition tracking
+        local max_attempts=50 attempt=0 acquired=false
+        while (( attempt < max_attempts )); do
+            if mkdir "$lockfile.d" 2>/dev/null; then
+                acquired=true
+                break
             fi
-            rm -rf "$lockdir" 2>/dev/null
-            mkdir "$lockdir" 2>/dev/null || true
-            break
+            sleep 0.1
+            attempt=$((attempt + 1))
+        done
+        if [[ "$acquired" == true ]]; then
+            "$@"
+            local rc=$?
+            rmdir "$lockfile.d" 2>/dev/null || true
+            return $rc
         fi
-    done
-    # Record our PID so other waiters can check liveness
-    printf '%d' "$$" > "$lockdir/pid" 2>/dev/null || true
-    "$func"
-    rm -rf "$lockdir" 2>/dev/null || true
+        # Not acquired after 5s -- skip silently.
+        # Better to miss one budget increment than corrupt state.
+        return 1
+    fi
 }
 
 # Session start timestamp (initial value, refined by _warden_resolve_session_start).
@@ -207,7 +217,7 @@ _warden_budget_update() {
         consumed=$((consumed + tokens))
         _warden_budget_write "$consumed"
     }
-    _warden_with_lock "${WARDEN_BUDGET_STATE}.lock.d" _budget_add
+    _warden_with_lock "${WARDEN_BUDGET_STATE}.lock" _budget_add
 }
 
 # Check if budget is available (exit 0 = ok, exit 1 = exhausted)
@@ -215,6 +225,29 @@ _warden_budget_check() {
     local consumed
     consumed=$(_warden_budget_read)
     (( consumed < WARDEN_BUDGET_TOTAL ))
+}
+
+# Accumulate tokens saved under lock (prevents concurrent read-modify-write loss)
+_warden_accumulate_saved() {
+    local tokens="$1"
+    local sid="${WARDEN_SESSION_ID:-}"
+    [[ -z "$sid" ]] && return
+    (( tokens <= 0 )) 2>/dev/null && return
+    local sf="$WARDEN_STATE_DIR/saved-$sid"
+    _accum() {
+        local prev=0
+        [[ -f "$sf" ]] && prev=$(<"$sf" 2>/dev/null) && [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+        printf '%d\n' "$((prev + tokens))" > "$sf"
+    }
+    _warden_with_lock "$sf.lock" _accum
+}
+
+# Read a numeric value from a file with fallback (prevents arithmetic errors on corrupt/empty files)
+_warden_read_numeric() {
+    local file="$1" fallback="${2:-0}"
+    local val=""
+    [[ -f "$file" ]] && val=$(<"$file" 2>/dev/null)
+    [[ "$val" =~ ^[0-9]+$ ]] && printf '%s' "$val" || printf '%s' "$fallback"
 }
 
 # Export budget state as JSON to stdout AND write cache for statusline
@@ -350,7 +383,7 @@ _warden_parse_toplevel() {
     local value=""
 
     # Extract using bash parameter expansion: "field":"value"
-    if [[ "$WARDEN_INPUT" =~ \"$field\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+    if [[ "$WARDEN_INPUT" =~ \"$field\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
         value="${BASH_REMATCH[1]}"
     fi
 
@@ -496,12 +529,7 @@ _warden_emit_block() {
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 
     # Accumulate tokens saved for statusline
-    if (( tokens > 0 )) && [[ -n "${WARDEN_SESSION_ID:-}" ]]; then
-        local sf="$WARDEN_STATE_DIR/saved-$WARDEN_SESSION_ID"
-        local prev=0
-        [[ -f "$sf" ]] && prev=$(<"$sf" 2>/dev/null) && [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
-        printf '%d\n' "$((prev + tokens))" > "$sf"
-    fi
+    _warden_accumulate_saved "$tokens"
 }
 
 # Emit JSONL event for post-tool-use accounting
@@ -535,12 +563,7 @@ _warden_emit_event() {
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 
     # Accumulate tokens saved for statusline
-    if (( saved > 0 )) && [[ -n "${WARDEN_SESSION_ID:-}" ]]; then
-        local sf="$WARDEN_STATE_DIR/saved-$WARDEN_SESSION_ID"
-        local prev=0
-        [[ -f "$sf" ]] && prev=$(<"$sf" 2>/dev/null) && [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
-        printf '%d\n' "$((prev + saved))" > "$sf"
-    fi
+    _warden_accumulate_saved "$saved"
 
     # Track final output size for subagent byte correction (read by EXIT trap in post-tool-use)
     _WARDEN_FINAL_SIZE="$final_bytes"

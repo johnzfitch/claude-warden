@@ -100,7 +100,7 @@ Guidelines:
 
 ### Cross-process state
 
-- **Locking**: use `_warden_with_lock LOCKDIR FUNC` for read-modify-write operations on shared state files. It uses atomic `mkdir` (POSIX-portable) with 5-second stale lock detection.
+- **Locking**: use `_warden_with_lock LOCKFILE FUNC [ARGS...]` for read-modify-write operations on shared state files. Uses fd-based `flock` on Linux/WSL (kernel-level, race-free) with `mkdir` fallback on macOS. Lock files use `.lock` extension.
 - **Per-invocation state**: when pre-tool-use writes state for post-tool-use to consume, use per-invocation filenames (e.g., `.quiet-override-${TOOL}-$$`) to prevent races when multiple tool calls overlap. Post-tool-use finds the most recent file by mtime.
 
 ## Pull Requests

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+exit 0  # DEPRECATED: use session-start + session-end instead
 # session-lifecycle: DEPRECATED — not registered in settings.hooks.json.
 # The separate session-start and session-end hooks are the active implementations.
 # This file is kept for backward compatibility with older installs that may reference it.

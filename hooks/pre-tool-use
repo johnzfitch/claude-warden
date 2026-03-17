@@ -46,6 +46,9 @@ IS_SUBAGENT=false
 AGENT_TYPE=""
 AGENT_ID=""
 
+printf '[pre] tool=%s tp="%s"\n' "$TOOL_NAME" "$TRANSCRIPT_PATH" \
+    >> "$WARDEN_STATE_DIR/subagent-debug.log" 2>/dev/null
+
 if _warden_is_subagent "$TRANSCRIPT_PATH"; then
     IS_SUBAGENT=true
     AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
@@ -67,19 +70,18 @@ if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
     CALL_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.calls"
     BYTE_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.bytes"
 
-    # Read + increment call count
-    CURRENT_CALLS=0
-    if [[ -f "$CALL_FILE" ]]; then
-        RAW=$(cat "$CALL_FILE" 2>/dev/null || echo "0")
-        if [[ "$RAW" == *"|"* ]]; then
-            CURRENT_CALLS=$(echo "$RAW" | cut -d'|' -f2)
-        else
-            CURRENT_CALLS="$RAW"
+    # Read + increment call count (locked: concurrent tool calls from same subagent)
+    _update_call_count() {
+        CURRENT_CALLS=0
+        if [[ -f "$CALL_FILE" ]]; then
+            RAW=$(cat "$CALL_FILE" 2>/dev/null || echo "0")
+            [[ "$RAW" == *"|"* ]] && CURRENT_CALLS=$(echo "$RAW" | cut -d'|' -f2) || CURRENT_CALLS="$RAW"
+            [[ ! "$CURRENT_CALLS" =~ ^[0-9]+$ ]] && CURRENT_CALLS=0
         fi
-        [[ ! "$CURRENT_CALLS" =~ ^[0-9]+$ ]] && CURRENT_CALLS=0
-    fi
-    NEW_CALLS=$((CURRENT_CALLS + 1))
-    printf '%s|%s|%s\n' "$AGENT_ID" "$NEW_CALLS" "$(date +%s)" > "$CALL_FILE"
+        NEW_CALLS=$((CURRENT_CALLS + 1))
+        printf '%s|%s|%s\n' "$AGENT_ID" "$NEW_CALLS" "$(date +%s)" > "$CALL_FILE"
+    }
+    _warden_with_lock "$CALL_FILE.lock" _update_call_count
 
     # Read cumulative output bytes (written by post-tool-use)
     CURRENT_BYTES=0

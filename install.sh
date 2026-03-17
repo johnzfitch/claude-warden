@@ -275,6 +275,16 @@ HOOK_FILES=(
     instructions-loaded
 )
 
+# Remove deprecated hooks from previous installs
+DEPRECATED_HOOKS=(session-lifecycle)
+for hook in "${DEPRECATED_HOOKS[@]}"; do
+    DST="$HOOKS_DIR/$hook"
+    if [[ -e "$DST" ]] || [[ -L "$DST" ]]; then
+        warn "Removing deprecated hook: $hook"
+        run rm -f "$DST"
+    fi
+done
+
 info "Installing hooks ($MODE mode)..."
 for hook in "${HOOK_FILES[@]}"; do
     SRC="$WARDEN_DIR/hooks/$hook"

@@ -32,7 +32,12 @@ fi
 
 command -v jq &>/dev/null || { echo "Error: jq required" >&2; exit 1; }
 
+# Cleanup on exit/interrupt: stop the collector container
+cleanup() { "$RUNTIME" stop "$CONTAINER_NAME" 2>/dev/null || true; }
+trap cleanup EXIT
+
 # Clean up previous runs
+[[ -z "$DATA_DIR" ]] && { echo "Error: DATA_DIR is empty" >&2; exit 1; }
 rm -rf "$DATA_DIR"
 mkdir -p "$DATA_DIR"
 touch "$DATA_DIR/metrics.jsonl" "$DATA_DIR/logs.jsonl" "$DATA_DIR/traces.jsonl"
@@ -60,7 +65,7 @@ echo "Exercise: multiple tools, a subagent, deny a tool, compact."
 echo ""
 echo "Required env vars (set before launching Claude Code):"
 echo "  export CLAUDE_CODE_ENABLE_TELEMETRY=true"
-echo "  export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318"
+echo "  export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4328"
 echo ""
 echo "Optional (more data):"
 echo "  export OTEL_LOG_TOOL_CONTENT=true     # PII: tool I/O in spans"

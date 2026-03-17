@@ -27,20 +27,18 @@ fi
 # Session duration
 DURATION_MIN="unknown"
 if [[ -f "$SESSION_START_FILE" ]]; then
-    START_TIME=$(cat "$SESSION_START_FILE")
+    START_TIME=$(_warden_read_numeric "$SESSION_START_FILE" "$_WARDEN_NOW_S")
     NOW=$(date +%s)
     DURATION_SEC=$((NOW - START_TIME))
     DURATION_MIN=$((DURATION_SEC / 60))
 fi
 
-# Active subagent count
+# Active subagent count (per-session file since Phase 3)
 SUBAGENT_COUNT=0
-SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count"
+SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count-$SESSION_ID"
 if [[ -f "$SUBAGENT_COUNT_FILE" ]]; then
-    IFS='|' read -r COUNT_SESSION COUNT _REST < "$SUBAGENT_COUNT_FILE" 2>/dev/null
-    if [[ "$COUNT_SESSION" == "$SESSION_ID" && "$COUNT" =~ ^[0-9]+$ ]]; then
-        SUBAGENT_COUNT="$COUNT"
-    fi
+    IFS='|' read -r COUNT _REST < "$SUBAGENT_COUNT_FILE" 2>/dev/null
+    [[ "$COUNT" =~ ^[0-9]+$ ]] && SUBAGENT_COUNT="$COUNT"
 fi
 
 # Budget state
@@ -64,13 +62,6 @@ printf '{"timestamp":%d,"event_type":"compaction","tool":"PreCompact","session_i
     >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 
 # === INJECT INTO COMPACTION CONTEXT ===
-cat << EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreCompact",
-    "additionalContext": "$SUMMARY"
-  }
-}
-EOF
+jq -n --arg ctx "$SUMMARY" '{"systemMessage":$ctx}'
 
 exit 0

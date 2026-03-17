@@ -33,7 +33,7 @@ fi
 # === METRICS COLLECTION ===
 START_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.start"
 if [ -f "$START_FILE" ]; then
-  START_TIME=$(cat "$START_FILE")
+  START_TIME=$(_warden_read_numeric "$START_FILE" "$_WARDEN_NOW_S")
   END_TIME=$(date +%s)
   DURATION=$((END_TIME - START_TIME))
   AGENT_TYPE=$(grep 'AGENT_TYPE=' "$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null | head -1 | cut -d= -f2 || echo "unknown")
@@ -66,7 +66,7 @@ if [ -n "$SESSION_ID" ]; then
       [ "$PREV_COUNT" -gt 0 ] && PREV_COUNT=$((PREV_COUNT - 1))
       printf '%s|%s\n' "$PREV_COUNT" "$(date +%s)" > "$SUBAGENT_COUNT_FILE.tmp.$$" && mv "$SUBAGENT_COUNT_FILE.tmp.$$" "$SUBAGENT_COUNT_FILE"
     }
-    _warden_with_lock "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock.d" _decrement_count
+    _warden_with_lock "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock" _decrement_count
   fi
 fi
 _warden_write_budget_prom

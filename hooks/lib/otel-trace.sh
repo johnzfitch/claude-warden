@@ -2,6 +2,7 @@
 # otel-trace.sh -- Lightweight OTLP/HTTP trace span emitter for warden hooks
 # Emits a single span per tool call to the OTEL collector via curl.
 # Designed to be sourced and called fire-and-forget from post-tool-use.
+# NOTE: heredoc interpolation intentional -- file removed in Phase 4 (native OTEL replaces it)
 
 OTEL_TRACE_ENDPOINT="${OTEL_TRACE_ENDPOINT:-http://localhost:4318/v1/traces}"
 

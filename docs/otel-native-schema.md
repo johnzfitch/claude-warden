@@ -21,6 +21,14 @@ Without `CLAUDE_CODE_ENABLE_TELEMETRY=true`, no OTEL is exported to user endpoin
 | `claude_code_active_time_seconds_total` | counter | `session.id`, `model` | Wall-clock active time |
 | `claude_code_session_count_total` | counter | `session.id`, `model` | Session count |
 
+### Token Type Labels (live-confirmed 2.1.76)
+
+`type` values on `claude_code_token_usage_tokens_total`:
+- `input` — prompt tokens
+- `output` — completion tokens
+- `cacheCreation` — new prompt cache entries
+- `cacheRead` — prompt cache hits
+
 ### Metric Label Control
 
 | Variable | Default | Effect |
@@ -28,6 +36,23 @@ Without `CLAUDE_CODE_ENABLE_TELEMETRY=true`, no OTEL is exported to user endpoin
 | `OTEL_METRICS_INCLUDE_SESSION_ID` | true | Add `session.id` to metrics |
 | `OTEL_METRICS_INCLUDE_VERSION` | false | Add `service.version` to metrics |
 | `OTEL_METRICS_INCLUDE_ACCOUNT_UUID` | true | Add account UUID (PII risk) |
+
+### PII in Metric Labels (live-confirmed)
+
+The following PII labels appear on all metrics **by default**, independent of
+`OTEL_METRICS_INCLUDE_ACCOUNT_UUID`:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `user_email` | `user@example.com` | Always present |
+| `user_id` | SHA-256 hash | Always present |
+| `user_account_id` | `user_01Eiim...` | Always present |
+| `user_account_uuid` | UUID | Controlled by `OTEL_METRICS_INCLUDE_ACCOUNT_UUID` |
+| `organization_id` | UUID | Always present |
+| `terminal_type` | `kitty`, `iterm2` | Always present |
+
+**Recommendation:** If exporting to shared infrastructure, strip PII labels in
+the OTEL collector via a `transform` processor before the Prometheus exporter.
 
 ## Trace Spans
 
@@ -114,17 +139,21 @@ claude_code.interaction          <- top-level user turn
 
 ## Resource Attributes (Auto-Detected)
 
-| Attribute | Value |
-|-----------|-------|
-| `host.name` | hostname |
-| `host.arch` | x86_64, arm64 |
-| `host.id` | machine ID |
-| `os.type` | Linux, Darwin |
-| `os.version` | kernel version |
-| `service.instance.id` | random UUID per process |
-| `service.name` | `claude-code` |
-| `telemetry.sdk.name` | `opentelemetry` |
-| `telemetry.sdk.language` | `nodejs` |
+| Attribute | Value | Live-Confirmed |
+|-----------|-------|----------------|
+| `host.arch` | `amd64`, `arm64` | `amd64` |
+| `os.type` | `linux`, `darwin` | `linux` |
+| `os.version` | kernel version | `6.19.6-arch1-1` |
+| `service.name` | `claude-code` | `claude-code` |
+| `service.version` | semver | `2.1.76` |
+| `otel_scope_name` | instrumentation scope | `com.anthropic.claude_code` |
+| `otel_scope_version` | semver | `2.1.76` |
+| `terminal_type` | terminal emulator | `kitty` |
+| `host.name` | hostname | -- |
+| `host.id` | machine ID | -- |
+| `service.instance.id` | random UUID per process | -- |
+| `telemetry.sdk.name` | `opentelemetry` | -- |
+| `telemetry.sdk.language` | `nodejs` | -- |
 
 ## Logs (1P Event Pipeline)
 
