@@ -34,7 +34,7 @@ if [ -f "$SESSION_START_FILE" ]; then
 
   # Emit session_end event to events.jsonl for Loki/Grafana
   _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-  local _evt
+  _evt=""
   printf -v _evt '{"timestamp":%d,"event_type":"session_end","tool":"SessionEnd","session_id":"%s","duration_seconds":%d}' \
     "$_TS" "$SESSION_ID" "$DURATION"
   echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null

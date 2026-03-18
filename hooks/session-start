@@ -43,7 +43,7 @@ if [ -n "$SESSION_ID" ]; then
   _CWD_SAFE="$PWD"
   _warden_json_escape _CWD_SAFE
   _warden_json_escape SESSION_LABEL
-  local _evt
+  _evt=""
   printf -v _evt '{"timestamp":0,"event_type":"session_start","tool":"SessionStart","session_id":"%s","cwd":"%s","session_label":"%s"}' \
     "$SESSION_ID" "$_CWD_SAFE" "$SESSION_LABEL"
   echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null

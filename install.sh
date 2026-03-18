@@ -25,11 +25,17 @@ WARDEN_VERSION="unknown"
 MODE="symlink"
 DRY_RUN=false
 PROFILE=""
+LOGGING=""
+MONITORING=""
 
 for arg in "$@"; do
     case "$arg" in
         --copy) MODE="copy" ;;
         --dry-run) DRY_RUN=true ;;
+        --logging) LOGGING="yes" ;;
+        --no-logging) LOGGING="no" ;;
+        --monitoring) MONITORING="yes" ;;
+        --no-monitoring) MONITORING="no" ;;
         --profile=*) PROFILE="${arg#--profile=}" ;;
         --profile)
             # Next arg is the profile name (handled below)
@@ -37,11 +43,15 @@ for arg in "$@"; do
             continue
             ;;
         --help|-h)
-            echo "Usage: $0 [--copy] [--dry-run] [--profile NAME]"
+            echo "Usage: $0 [--copy] [--dry-run] [--profile NAME] [--logging|--no-logging] [--monitoring|--no-monitoring]"
             echo ""
             echo "Options:"
             echo "  --copy            Copy files instead of symlinking (default: symlink)"
             echo "  --dry-run         Show what would be done without making changes"
+            echo "  --logging         Build and install the Go collector for local event logging"
+            echo "  --no-logging      Skip collector setup (events still go to JSONL file)"
+            echo "  --monitoring      Start Docker monitoring stack (Grafana, Loki, Prometheus, OTEL)"
+            echo "  --no-monitoring   Skip monitoring stack setup"
             echo "  --profile NAME    Use a configuration profile:"
             echo "                      minimal   - Hooks only (no env/permission changes)"
             echo "                      standard  - Token limits + OTEL + safe permissions"
@@ -173,6 +183,66 @@ if [[ ! -f "$PROFILE_FILE" ]]; then
     exit 1
 fi
 info "Profile: $PROFILE"
+
+# === Logging / Collector prompt ===
+COLLECTOR_BIN_PATH="$HOME/.local/bin/warden-collector"
+COLLECTOR_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden"
+
+if [[ -z "$LOGGING" ]]; then
+    if [[ -t 0 ]]; then
+        echo ""
+        printf "${BOLD}Enable local logging collector?${RESET}\n"
+        echo ""
+        printf "  Stores hook events in SQLite for API queries and dashboards.\n"
+        printf "  Requires: Go 1.21+ (to build) | ~15MB disk\n"
+        printf "  Events still go to events.jsonl regardless.\n"
+        echo ""
+        printf "  Enable logging? [y/N]: "
+        read -r _LOG_CHOICE
+        case "${_LOG_CHOICE:-n}" in
+            [yY]*) LOGGING="yes" ;;
+            *)     LOGGING="no" ;;
+        esac
+    else
+        # Non-interactive: skip collector by default
+        LOGGING="no"
+    fi
+fi
+
+if [[ "$LOGGING" == "yes" ]]; then
+    info "Logging: enabled (collector will be built and installed)"
+else
+    info "Logging: disabled (events go to JSONL only)"
+fi
+
+# === Monitoring stack prompt ===
+MONITORING_DIR="$WARDEN_DIR/monitoring"
+
+if [[ -z "$MONITORING" ]]; then
+    if [[ -t 0 ]]; then
+        echo ""
+        printf "${BOLD}Start Docker monitoring stack?${RESET}\n"
+        echo ""
+        printf "  Loki, OTEL Collector, Prometheus, Node Exporter, Grafana, Tempo.\n"
+        printf "  Ports: Grafana 3000, Prometheus 9090, Loki 3100, OTEL 4317/4318\n"
+        printf "  Requires: Docker + Docker Compose\n"
+        echo ""
+        printf "  Start monitoring stack? [y/N]: "
+        read -r _MON_CHOICE
+        case "${_MON_CHOICE:-n}" in
+            [yY]*) MONITORING="yes" ;;
+            *)     MONITORING="no" ;;
+        esac
+    else
+        MONITORING="no"
+    fi
+fi
+
+if [[ "$MONITORING" == "yes" ]]; then
+    info "Monitoring: will start after installation"
+else
+    info "Monitoring: skipped"
+fi
 
 # === Build merged warden config ===
 # Merge order: defaults < profile < user overrides
@@ -347,6 +417,125 @@ if ! $DRY_RUN; then
     chmod +x "$HOOKS_DIR"/* 2>/dev/null || true
     [[ -d "$HOOKS_DIR/lib" ]] && chmod +x "$HOOKS_DIR/lib"/*.sh 2>/dev/null || true
     [[ -f "$STATUSLINE_DST" ]] && chmod +x "$STATUSLINE_DST"
+fi
+
+# === Build and install collector (if logging enabled) ===
+COLLECTOR_INSTALLED=false
+if [[ "$LOGGING" == "yes" ]]; then
+    info "Setting up Go collector..."
+
+    COLLECTOR_SRC="$WARDEN_DIR/collector"
+    if [[ ! -f "$COLLECTOR_SRC/main.go" ]]; then
+        error "Collector source not found at $COLLECTOR_SRC/"
+        dim "Clone the full repo or use --no-logging"
+    elif ! command -v go &>/dev/null; then
+        error "Go not found. Install Go 1.21+ to build the collector."
+        dim "  Arch: sudo pacman -S go"
+        dim "  macOS: brew install go"
+        dim "  Or download from https://go.dev/dl/"
+        dim "Skipping collector build."
+    else
+        GO_VERSION=$(go version | grep -oP '(\d+\.\d+)' | head -1)
+        dim "Found Go $GO_VERSION"
+
+        if $DRY_RUN; then
+            dim "(dry-run) Would build collector and install to $COLLECTOR_BIN_PATH"
+            COLLECTOR_INSTALLED=true  # Treat as success for summary
+        else
+            # Build
+            dim "Building warden-collector..."
+            if (cd "$COLLECTOR_SRC" && go build -o warden-collector . 2>&1); then
+                # Install
+                mkdir -p "$(dirname "$COLLECTOR_BIN_PATH")"
+
+                # Handle "text file busy" (binary currently running)
+                if [[ -f "$COLLECTOR_BIN_PATH" ]]; then
+                    RUNNING_PID=""
+                    PIDFILE="$COLLECTOR_STATE_DIR/collector.pid"
+                    if [[ -f "$PIDFILE" ]]; then
+                        RUNNING_PID=$(<"$PIDFILE")
+                        if [[ "$RUNNING_PID" =~ ^[0-9]+$ ]] && kill -0 "$RUNNING_PID" 2>/dev/null; then
+                            dim "Stopping running collector (pid $RUNNING_PID)..."
+                            kill "$RUNNING_PID" 2>/dev/null || true
+                            sleep 0.3
+                        fi
+                    fi
+                    rm -f "$COLLECTOR_BIN_PATH" 2>/dev/null || true
+                fi
+
+                cp "$COLLECTOR_SRC/warden-collector" "$COLLECTOR_BIN_PATH"
+                chmod +x "$COLLECTOR_BIN_PATH"
+                COLLECTOR_INSTALLED=true
+                dim "Installed $COLLECTOR_BIN_PATH"
+
+                # Ensure state directory exists
+                mkdir -p "$COLLECTOR_STATE_DIR"
+            else
+                error "Collector build failed. Skipping installation."
+            fi
+        fi
+    fi
+
+    # Inject WARDEN_COLLECTOR_ENABLED into merged env
+    WARDEN_ENV_JSON=$(printf '%s' "$WARDEN_ENV_JSON" | jq '. + {"WARDEN_COLLECTOR_ENABLED": "1"}')
+else
+    # Explicitly disable so hooks don't try to start the collector
+    WARDEN_ENV_JSON=$(printf '%s' "$WARDEN_ENV_JSON" | jq '. + {"WARDEN_COLLECTOR_ENABLED": "0"}')
+fi
+
+# === Start monitoring stack (if selected) ===
+MONITORING_STARTED=false
+if [[ "$MONITORING" == "yes" ]]; then
+    info "Starting monitoring stack..."
+
+    if ! command -v docker &>/dev/null; then
+        error "Docker not found. Install Docker to use the monitoring stack."
+        dim "  Arch: sudo pacman -S docker docker-compose"
+        dim "  macOS: brew install --cask docker"
+    elif ! docker info &>/dev/null 2>&1; then
+        error "Docker daemon not running. Start it first:"
+        dim "  sudo systemctl start docker"
+    else
+        COMPOSE_CMD="docker compose"
+        # Fall back to docker-compose if compose plugin not available
+        if ! docker compose version &>/dev/null 2>&1; then
+            if command -v docker-compose &>/dev/null; then
+                COMPOSE_CMD="docker-compose"
+            else
+                error "Neither 'docker compose' nor 'docker-compose' found."
+            fi
+        fi
+
+        if [[ -n "$COMPOSE_CMD" ]]; then
+            COMPOSE_FILE="$MONITORING_DIR/docker-compose.yml"
+            COMPOSE_ARGS=(-f "$COMPOSE_FILE")
+
+            # macOS needs the override file for port mappings instead of host networking
+            if [[ "$PLATFORM" == "macos" ]] && [[ -f "$MONITORING_DIR/docker-compose.macos.yml" ]]; then
+                COMPOSE_ARGS+=(-f "$MONITORING_DIR/docker-compose.macos.yml")
+                dim "Using macOS compose override (bridge networking)"
+            fi
+
+            # Ensure events.jsonl exists for the bind mount
+            mkdir -p "$HOME/.claude/.statusline"
+            touch "$HOME/.claude/.statusline/events.jsonl"
+            # Ensure textfile dir exists for node-exporter
+            mkdir -p "$HOME/.claude/.monitoring/textfile"
+
+            if $DRY_RUN; then
+                dim "(dry-run) Would run: $COMPOSE_CMD ${COMPOSE_ARGS[*]} up -d"
+                    MONITORING_STARTED=true
+            else
+                dim "Running: $COMPOSE_CMD ${COMPOSE_ARGS[*]} up -d"
+                if $COMPOSE_CMD "${COMPOSE_ARGS[@]}" up -d 2>&1 | while IFS= read -r line; do dim "$line"; done; then
+                    MONITORING_STARTED=true
+                    dim "Monitoring stack started"
+                else
+                    error "Failed to start monitoring stack. Check Docker logs."
+                fi
+            fi
+        fi
+    fi
 fi
 
 # === Generate warden.env (hook thresholds from merged config) ===
@@ -594,6 +783,14 @@ echo "  Hooks:      $HOOKS_DIR/ (${#HOOK_FILES[@]} hooks + lib, $MODE mode)"
 echo "  Config:     $WARDEN_ENV_DIR/warden.env"
 echo "  Statusline: $STATUSLINE_DST"
 echo "  Settings:   $SETTINGS_FILE"
+if $COLLECTOR_INSTALLED; then
+    echo "  Collector:  $COLLECTOR_BIN_PATH"
+    echo "  State:      $COLLECTOR_STATE_DIR/"
+elif [[ "$LOGGING" == "yes" ]]; then
+    echo "  Collector:  NOT INSTALLED (build failed, see errors above)"
+else
+    echo "  Collector:  disabled (use --logging to enable)"
+fi
 if [[ -n "${BACKUP_DIR:-}" ]]; then
     echo "  Backup:     $BACKUP_DIR/"
 fi
@@ -606,9 +803,24 @@ if [[ "$MODE" == "symlink" ]]; then
     echo "  Edits to $WARDEN_DIR/ take effect immediately."
     echo "  Run 'git pull' in the repo to update hooks."
 fi
+if $COLLECTOR_INSTALLED; then
+    echo "  Collector starts automatically on session-start."
+    echo "  API: http://127.0.0.1:9464/v1/sessions"
+fi
+if $MONITORING_STARTED; then
+    echo "  Grafana:    http://localhost:3000 (admin/admin)"
+    echo "  Prometheus: http://localhost:9090"
+    echo "  Loki:       http://localhost:3100"
+elif [[ "$MONITORING" == "yes" ]]; then
+    echo "  Monitoring: NOT STARTED (see errors above)"
+else
+    echo "  Monitoring: not started (use --monitoring to enable)"
+fi
 echo ""
-echo "  To change profile:  ./install.sh --profile <name>"
-echo "  To customize:       cp config/user.json.template config/user.json && edit"
+echo "  To change profile:    ./install.sh --profile <name>"
+echo "  To change logging:    ./install.sh --logging  OR  --no-logging"
+echo "  To change monitoring: ./install.sh --monitoring  OR  --no-monitoring"
+echo "  To customize:         cp config/user.json.template config/user.json && edit"
 
 if (( ${#SHELL_RC_NEEDED[@]} > 0 )); then
     echo ""
