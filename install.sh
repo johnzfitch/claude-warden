@@ -435,7 +435,7 @@ if [[ "$LOGGING" == "yes" ]]; then
         dim "  Or download from https://go.dev/dl/"
         dim "Skipping collector build."
     else
-        GO_VERSION=$(go version | grep -oP '(\d+\.\d+)' | head -1)
+        GO_VERSION=$(go version | sed -n 's/.*go\([0-9]*\.[0-9]*\).*/\1/p')
         dim "Found Go $GO_VERSION"
 
         if $DRY_RUN; then

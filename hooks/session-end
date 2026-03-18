@@ -154,11 +154,15 @@ rm -rf "$WARDEN_STATE_DIR/session-$SESSION_ID.lock.d" 2>/dev/null
 rm -rf "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock.d" 2>/dev/null
 
 # Delay prom file deletion so Prometheus can scrape the final state.
-# Write tombstone; statusline checks this and deletes after one scrape interval.
+# Write tombstone, then schedule background cleanup after 60s (one scrape
+# interval). This ensures cleanup happens even when no statusline renders
+# after the last session exits.
 if [[ -f "$SESSION_PROM_FILE" ]]; then
     printf '%d\n' "$(date +%s)" > "$SESSION_PROM_FILE.tombstone" 2>/dev/null
+    # Background reaper: wait for Prometheus to scrape, then delete both files
+    (sleep 60 && rm -f "$SESSION_PROM_FILE" "$SESSION_PROM_FILE.tombstone" 2>/dev/null) & disown
 else
-    rm -f "$SESSION_PROM_FILE" 2>/dev/null
+    rm -f "$SESSION_PROM_FILE" "$SESSION_PROM_FILE.tombstone" 2>/dev/null
 fi
 
 exit 0
