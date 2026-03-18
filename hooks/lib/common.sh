@@ -509,6 +509,85 @@ _warden_maybe_scrub() {
     eval "$_prev_nocasematch" 2>/dev/null || true
 }
 
+
+# ==============================================================================
+# COLLECTOR INTEGRATION
+# ==============================================================================
+
+
+# Start the Go collector if enabled and not already running.
+# Called once per session from session-start — NOT from per-tool hooks.
+# Uses /healthz probe (50ms timeout) to detect a running instance.
+# The collector is a single-writer SQLite process; starting a second
+# instance would fail on bind anyway, so this is safe to race.
+_warden_ensure_collector() {
+    [[ "${WARDEN_COLLECTOR_ENABLED:-1}" == "0" ]] && return 0
+
+    local _state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden"
+    local _pidfile="${_state_dir}/collector.pid"
+    local _logfile="${_state_dir}/collector.log"
+
+    # Fast path: pidfile check (stat + read + kill syscall, ~0ms)
+    if [[ -f "$_pidfile" ]]; then
+        local _pid
+        _pid=$(<"$_pidfile")
+        # Validate numeric and process alive
+        if [[ "$_pid" =~ ^[0-9]+$ ]] && kill -0 "$_pid" 2>/dev/null; then
+            # Guard against PID reuse: verify it is actually the collector
+            # /proc check is Linux-only; skip on macOS (PID reuse is rare enough)
+            if [[ -r "/proc/$_pid/comm" ]]; then
+                [[ "$(<"/proc/$_pid/comm")" == warden-collecto* ]] && return 0
+            else
+                return 0  # non-Linux: trust kill -0
+            fi
+        fi
+        # Stale pidfile — remove it
+        rm -f "$_pidfile" 2>/dev/null
+    fi
+
+    # Find the binary: env override -> installed -> dev tree
+    local _bin=""
+    for _candidate in \
+        "${WARDEN_COLLECTOR_BIN:-}" \
+        "$HOME/.local/bin/warden-collector" \
+        "${_SCRIPT_DIR}/../../collector/warden-collector"; do
+        [[ -n "$_candidate" && -x "$_candidate" ]] && { _bin="$_candidate"; break; }
+    done
+    [[ -z "$_bin" ]] && return 0  # no binary found, skip silently
+
+    # Ensure state dir exists (first-ever run)
+    [[ -d "$_state_dir" ]] || mkdir -p "$_state_dir" 2>/dev/null
+
+    # Rotate log if > 1MB
+    if [[ -f "$_logfile" ]]; then
+        local _logsz
+        _logsz=$(stat -c%s "$_logfile" 2>/dev/null || stat -f%z "$_logfile" 2>/dev/null || echo 0)
+        (( _logsz > 1048576 )) && mv -f "$_logfile" "${_logfile}.1" 2>/dev/null
+    fi
+
+    # Start in background, detached from hook process tree
+    nohup "$_bin" >> "$_logfile" 2>&1 &
+    disown
+
+    # Brief wait for bind, then verify via pidfile (not network)
+    sleep 0.15
+    [[ -f "$_pidfile" ]] && return 0
+    return 1
+}
+
+# Post event to local Go collector (async, non-blocking)
+# Falls back silently if collector is not running.
+# Usage: _warden_post_to_collector JSON_STRING
+_warden_post_to_collector() {
+    [[ "${WARDEN_COLLECTOR_ENABLED:-1}" == "0" ]] && return 0
+    local _payload="$1"
+    # Fire-and-forget: 100ms timeout, background, discard output
+    command curl -s --max-time 0.1 -X POST \
+        -H 'Content-Type: application/json' \
+        --data-raw "$_payload" \
+        "http://127.0.0.1:${WARDEN_COLLECTOR_PORT:-9464}/v1/ingest/hook" \
+        &>/dev/null &
+}
 # Emit JSONL event for blocked commands (pre-tool-use)
 # Usage: _warden_emit_block RULE TOKENS_SAVED [CMD_OVERRIDE]
 _warden_emit_block() {
@@ -524,9 +603,11 @@ _warden_emit_block() {
     _warden_json_escape rule
     _warden_maybe_scrub cmd_safe
 
-    printf '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
-        "$ts" "$tool_safe" "$sid_safe" "$cmd_safe" "$rule" "$tokens" \
-        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    local _evt
+    printf -v _evt '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}' \
+        "$ts" "$tool_safe" "$sid_safe" "$cmd_safe" "$rule" "$tokens"
+    echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    _warden_post_to_collector "$_evt"
 
     # Accumulate tokens saved for statusline
     _warden_accumulate_saved "$tokens"
@@ -557,10 +638,11 @@ _warden_emit_event() {
     _warden_json_escape sid_safe
     _warden_json_escape etype
     _warden_maybe_scrub cmd_safe
-
-    printf '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
-        "$ts" "$etype" "$tool_safe" "$sid_safe" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
-        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    local _evt
+    printf -v _evt '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}' \
+        "$ts" "$etype" "$tool_safe" "$sid_safe" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field"
+    echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    _warden_post_to_collector "$_evt"
 
     # Accumulate tokens saved for statusline
     _warden_accumulate_saved "$saved"
@@ -584,10 +666,11 @@ _warden_emit_output_size() {
     _warden_json_escape tool_name
     _warden_json_escape sid
     _warden_maybe_scrub cmd_safe
-
-    printf '{"timestamp":%d,"event_type":"tool_output_size","tool":"%s","session_id":"%s","output_bytes":%d,"output_lines":%d,"estimated_tokens":%d,"original_cmd":"%s"}\n' \
-        "$ts" "$tool_name" "$sid" "$output_bytes" "$output_lines" "$estimated_tokens" "$cmd_safe" \
-        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    local _evt
+    printf -v _evt '{"timestamp":%d,"event_type":"tool_output_size","tool":"%s","session_id":"%s","output_bytes":%d,"output_lines":%d,"estimated_tokens":%d,"original_cmd":"%s"}' \
+        "$ts" "$tool_name" "$sid" "$output_bytes" "$output_lines" "$estimated_tokens" "$cmd_safe"
+    echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    _warden_post_to_collector "$_evt"
 }
 
 # ==============================================================================
@@ -824,9 +907,11 @@ _warden_emit_latency() {
     _warden_json_escape sid
     _warden_maybe_scrub cmd_safe
 
-    printf '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","session_id":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}\n' \
-        "$ts" "$tool_name" "$sid" "$latency_ms" "$cmd_safe" \
-        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    local _evt
+    printf -v _evt '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","session_id":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}' \
+        "$ts" "$tool_name" "$sid" "$latency_ms" "$cmd_safe"
+    echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    _warden_post_to_collector "$_evt"
 }
 
 # ==============================================================================

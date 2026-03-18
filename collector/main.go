@@ -50,6 +50,13 @@ func main() {
 	}
 	defer store.Close()
 
+	// Write pidfile for cheap liveness checks from hooks
+	pidFile := filepath.Join(filepath.Dir(dbPath), "collector.pid")
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0o644); err != nil {
+		slog.Warn("write pidfile", "err", err)
+	}
+	defer os.Remove(pidFile)
+
 	otlpHandler := NewOTLPHandler(store)
 	apiHandler := NewAPIHandler(store)
 

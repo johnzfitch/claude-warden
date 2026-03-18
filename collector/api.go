@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -84,23 +85,33 @@ func (a *APIHandler) HandleHookIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var evt struct {
-		SessionID string `json:"session_id"`
-		EventType string `json:"event_type"`
-		ToolName  string `json:"tool_name"`
+	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
 	}
-	if err := json.NewDecoder(r.Body).Decode(&evt); err != nil {
+
+	var evt map[string]any
+	if err := json.Unmarshal(bodyBytes, &evt); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
 
-	// Re-encode the full payload for storage
-	payloadJSON, _ := json.Marshal(evt)
+	sessionID, _ := evt["session_id"].(string)
+	eventType, _ := evt["event_type"].(string)
+	toolName, _ := evt["tool_name"].(string)
 
-	if err := a.store.InsertHookEvent(r.Context(), evt.SessionID, evt.EventType, evt.ToolName, string(payloadJSON)); err != nil {
+	if err := a.store.InsertHookEvent(r.Context(), sessionID, eventType, toolName, string(bodyBytes)); err != nil {
 		slog.Warn("insert hook event failed", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+
+	// Create session row on lifecycle events so sessions appear before OTEL
+	if eventType == "session_start" && sessionID != "" {
+		if err := a.store.EnsureSession(r.Context(), sessionID); err != nil {
+			slog.Warn("ensure session failed", "session_id", sessionID, "err", err)
+		}
 	}
 
 	w.WriteHeader(http.StatusAccepted)

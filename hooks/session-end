@@ -34,9 +34,11 @@ if [ -f "$SESSION_START_FILE" ]; then
 
   # Emit session_end event to events.jsonl for Loki/Grafana
   _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-  printf '{"timestamp":%d,"event_type":"session_end","tool":"SessionEnd","session_id":"%s","duration_seconds":%d}\n' \
-    "$_TS" "$SESSION_ID" "$DURATION" \
-    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+  local _evt
+  printf -v _evt '{"timestamp":%d,"event_type":"session_end","tool":"SessionEnd","session_id":"%s","duration_seconds":%d}' \
+    "$_TS" "$SESSION_ID" "$DURATION"
+  echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+  _warden_post_to_collector "$_evt"
 
   # Emit root OTLP trace span — closes the waterfall; Tempo stitches tool spans to it
   START_NS_FILE="$HOME/.claude/.session-times/$SESSION_ID.start_ns"

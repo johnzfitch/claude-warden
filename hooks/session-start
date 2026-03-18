@@ -5,6 +5,9 @@ set -euo pipefail
 # Source shared library
 source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
+# Start collector if not running (once per session, not per tool call)
+_warden_ensure_collector
+
 _warden_read_input || exit 0
 
 SESSION_ID=$(_warden_parse_session_id)
@@ -40,9 +43,11 @@ if [ -n "$SESSION_ID" ]; then
   _CWD_SAFE="$PWD"
   _warden_json_escape _CWD_SAFE
   _warden_json_escape SESSION_LABEL
-  printf '{"timestamp":0,"event_type":"session_start","tool":"SessionStart","session_id":"%s","cwd":"%s","session_label":"%s"}\n' \
-    "$SESSION_ID" "$_CWD_SAFE" "$SESSION_LABEL" \
-    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+  local _evt
+  printf -v _evt '{"timestamp":0,"event_type":"session_start","tool":"SessionStart","session_id":"%s","cwd":"%s","session_label":"%s"}' \
+    "$SESSION_ID" "$_CWD_SAFE" "$SESSION_LABEL"
+  echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+  _warden_post_to_collector "$_evt"
 fi
 
 # === GIT CONTEXT SNAPSHOT ===

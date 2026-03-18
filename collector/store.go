@@ -183,3 +183,14 @@ func (s *Store) InsertHookEvent(ctx context.Context, sessionID, eventType, toolN
 		VALUES (?, ?, ?, ?, ?)`, sessionID, now, eventType, toolName, payloadJSON)
 	return err
 }
+
+// EnsureSession creates a session row if it doesn't already exist.
+// Called from hook ingest on session_start events so sessions appear
+// in the API even before OTEL spans arrive.
+func (s *Store) EnsureSession(ctx context.Context, sessionID string) error {
+	now := time.Now().UnixNano()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO sessions (session_id, started_at_ns, updated_at_ns)
+		VALUES (?, ?, ?)`, sessionID, now, now)
+	return err
+}
