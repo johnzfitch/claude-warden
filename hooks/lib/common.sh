@@ -101,20 +101,34 @@ _warden_with_lock() {
     local lockfile="$1"; shift
     mkdir -p "$(dirname "$lockfile")" 2>/dev/null || true
     if command -v flock &>/dev/null; then
-        exec 200>"$lockfile"
-        flock -w 5 200 || return 1
+        local _lock_fd
+        exec {_lock_fd}>"$lockfile"
+        flock -w 5 "$_lock_fd" || { exec {_lock_fd}>&-; return 1; }
         "$@"
         local rc=$?
-        flock -u 200
-        exec 200>&-
+        flock -u "$_lock_fd"
+        exec {_lock_fd}>&-
         return $rc
     else
         # macOS fallback: mkdir-based with correct acquisition tracking
         local max_attempts=50 attempt=0 acquired=false
         while (( attempt < max_attempts )); do
             if mkdir "$lockfile.d" 2>/dev/null; then
+                # Write our PID so others can detect staleness
+                printf '%d' $$ > "$lockfile.d/pid" 2>/dev/null
                 acquired=true
                 break
+            fi
+            # Check for stale lock: if holder PID is dead, break the lock
+            if (( attempt == 25 )); then
+                local _holder_pid=""
+                [[ -f "$lockfile.d/pid" ]] && _holder_pid=$(<"$lockfile.d/pid")
+                if [[ -n "$_holder_pid" && "$_holder_pid" =~ ^[0-9]+$ ]]; then
+                    if ! kill -0 "$_holder_pid" 2>/dev/null; then
+                        # Holder is dead — break the stale lock
+                        rm -rf "$lockfile.d" 2>/dev/null
+                    fi
+                fi
             fi
             sleep 0.1
             attempt=$((attempt + 1))
@@ -122,7 +136,7 @@ _warden_with_lock() {
         if [[ "$acquired" == true ]]; then
             "$@"
             local rc=$?
-            rmdir "$lockfile.d" 2>/dev/null || true
+            rm -rf "$lockfile.d" 2>/dev/null || true
             return $rc
         fi
         # Not acquired after 5s -- skip silently.
@@ -546,11 +560,12 @@ _warden_ensure_collector() {
     fi
 
     # Find the binary: env override -> installed -> dev tree
-    local _bin=""
+    local _bin="" _lib_dir
+    _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     for _candidate in \
         "${WARDEN_COLLECTOR_BIN:-}" \
         "$HOME/.local/bin/warden-collector" \
-        "${_SCRIPT_DIR}/../../collector/warden-collector"; do
+        "${_lib_dir}/../../collector/warden-collector"; do
         [[ -n "$_candidate" && -x "$_candidate" ]] && { _bin="$_candidate"; break; }
     done
     [[ -z "$_bin" ]] && return 0  # no binary found, skip silently

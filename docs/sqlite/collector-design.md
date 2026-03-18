@@ -1,6 +1,6 @@
 # SQLite Collector Design
 
-This document turns the current multi-surface `claude-warden` state model into a single-writer collector design backed by one SQLite database. The concrete schema lives in [schema.sql](/home/zack/dev/claude-warden/docs/sqlite/schema.sql).
+This document turns the current multi-surface `claude-warden` state model into a single-writer collector design backed by one SQLite database. The concrete schema lives in [schema.sql](docs/sqlite/schema.sql).
 
 ## Goals
 
@@ -97,7 +97,7 @@ These are the sources that `claude-warden` itself configures or writes today.
 
 ### Claude hook ingress
 
-Configured in [settings.hooks.json](/home/zack/dev/claude-warden/settings.hooks.json):
+Configured in [settings.hooks.json](settings.hooks.json):
 
 - `PreToolUse` -> `$HOME/.claude/hooks/pre-tool-use`
 - `PostToolUse` -> `$HOME/.claude/hooks/post-tool-use`
@@ -119,7 +119,7 @@ Configured in [settings.hooks.json](/home/zack/dev/claude-warden/settings.hooks.
 
 ### Hook event types currently emitted
 
-Observed from hook implementations under [hooks/](/home/zack/dev/claude-warden/hooks):
+Observed from hook implementations under [hooks/](hooks):
 
 - `session_start`
 - `session_end`
@@ -142,7 +142,7 @@ Important nuance: the repo does not currently emit a separate `suppressed` event
 
 ### `~/.claude` file surfaces written by `claude-warden`
 
-Current repo defaults come from [hooks/lib/common.sh](/home/zack/dev/claude-warden/hooks/lib/common.sh), [statusline.sh](/home/zack/dev/claude-warden/statusline.sh), and the hook scripts.
+Current repo defaults come from [hooks/lib/common.sh](hooks/lib/common.sh), [statusline.sh](statusline.sh), and the hook scripts.
 
 Canonical state files:
 
@@ -204,7 +204,7 @@ Optional capture wrapper outputs:
 
 ### Temp/offload surfaces written by the repo
 
-Observed in [hooks/mcp-output-compress](/home/zack/dev/claude-warden/hooks/mcp-output-compress) and [hooks/lib/common.sh](/home/zack/dev/claude-warden/hooks/lib/common.sh):
+Observed in [hooks/mcp-output-compress](hooks/mcp-output-compress) and [hooks/lib/common.sh](hooks/lib/common.sh):
 
 - `${TMPDIR:-/tmp}/claude-mcp-output/.seq-{session_short}`
 - `${TMPDIR:-/tmp}/claude-mcp-output/{session_short}-{mcp_server}-{mcp_op}-{seq}.txt`
@@ -218,7 +218,7 @@ These are the configured or observed endpoints in the current repo, not every ve
 
 ### Claude Code telemetry -> OTEL collector
 
-Configured in [config/defaults.json](/home/zack/dev/claude-warden/config/defaults.json):
+Configured in [config/defaults.json](config/defaults.json):
 
 - `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317`
 - `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`
@@ -232,13 +232,13 @@ This implies Claude Code may emit OTLP metrics and logs to:
 
 ### Hook trace egress
 
-Configured in [hooks/lib/otel-trace.sh](/home/zack/dev/claude-warden/hooks/lib/otel-trace.sh):
+Configured in [hooks/lib/otel-trace.sh](hooks/lib/otel-trace.sh):
 
 - `http://localhost:4318/v1/traces`
 
 ### OTEL collector
 
-Configured in [monitoring/otel-collector-config.yaml](/home/zack/dev/claude-warden/monitoring/otel-collector-config.yaml):
+Configured in [monitoring/otel-collector-config.yaml](monitoring/otel-collector-config.yaml):
 
 - ingest:
   - `0.0.0.0:4317` OTLP gRPC
@@ -249,14 +249,14 @@ Configured in [monitoring/otel-collector-config.yaml](/home/zack/dev/claude-ward
   - `http://localhost:3100/otlp` Loki OTLP HTTP
   - `localhost:3205` Tempo OTLP gRPC
 
-macOS Docker override swaps the Loki and Tempo targets to service names in [monitoring/macos/otel-collector-config.yaml](/home/zack/dev/claude-warden/monitoring/macos/otel-collector-config.yaml):
+macOS Docker override swaps the Loki and Tempo targets to service names in [monitoring/macos/otel-collector-config.yaml](monitoring/macos/otel-collector-config.yaml):
 
 - `http://loki:3100/otlp`
 - `tempo:3205`
 
 ### Prometheus
 
-Configured in [monitoring/prometheus.yml](/home/zack/dev/claude-warden/monitoring/prometheus.yml) and [monitoring/docker-compose.yml](/home/zack/dev/claude-warden/monitoring/docker-compose.yml):
+Configured in [monitoring/prometheus.yml](monitoring/prometheus.yml) and [monitoring/docker-compose.yml](monitoring/docker-compose.yml):
 
 - UI/API: `http://localhost:9090`
 - configured scrape targets:
@@ -267,14 +267,14 @@ Configured in [monitoring/prometheus.yml](/home/zack/dev/claude-warden/monitorin
 
 ### Node exporter
 
-Configured in [monitoring/docker-compose.yml](/home/zack/dev/claude-warden/monitoring/docker-compose.yml):
+Configured in [monitoring/docker-compose.yml](monitoring/docker-compose.yml):
 
 - `http://localhost:9101/metrics`
 - reads `~/.claude/.monitoring/textfile`
 
 ### Loki
 
-Configured in [monitoring/loki-config.yaml](/home/zack/dev/claude-warden/monitoring/loki-config.yaml):
+Configured in [monitoring/loki-config.yaml](monitoring/loki-config.yaml):
 
 - `http://localhost:3100`
 - `http://localhost:3100/ready`
@@ -284,7 +284,7 @@ Configured in [monitoring/loki-config.yaml](/home/zack/dev/claude-warden/monitor
 
 ### Tempo
 
-Configured in [monitoring/tempo-config.yaml](/home/zack/dev/claude-warden/monitoring/tempo-config.yaml):
+Configured in [monitoring/tempo-config.yaml](monitoring/tempo-config.yaml):
 
 - UI/API base: `http://localhost:3200`
 - `http://localhost:3200/ready`
@@ -294,7 +294,7 @@ Configured in [monitoring/tempo-config.yaml](/home/zack/dev/claude-warden/monito
 
 ### Grafana
 
-Configured in [monitoring/grafana/provisioning/datasources/datasources.yaml](/home/zack/dev/claude-warden/monitoring/grafana/provisioning/datasources/datasources.yaml):
+Configured in [monitoring/grafana/provisioning/datasources/datasources.yaml](monitoring/grafana/provisioning/datasources/datasources.yaml):
 
 - UI/API: `http://localhost:3000`
 - provisioned datasources:
@@ -314,14 +314,14 @@ Provisioned dashboard UIDs:
 
 ### Capture wrapper / MITM
 
-Configured in [capture/claude](/home/zack/dev/claude-warden/capture/claude):
+Configured in [capture/claude](capture/claude):
 
 - local proxy: `http://127.0.0.1:8080`
 - upstream target: `api.anthropic.com`
 - log file: `~/.claude/capture-mitm.log`
 - JSONL captures: `~/claude-captures/YYYY-MM-DD/capture-HHMMSS.jsonl`
 
-Capture record types from [capture/logger.py](/home/zack/dev/claude-warden/capture/logger.py):
+Capture record types from [capture/logger.py](capture/logger.py):
 
 - `stream_start`
 - `stream_chunk`

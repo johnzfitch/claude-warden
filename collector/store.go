@@ -165,14 +165,19 @@ func (s *Store) AccumulateToolTokens(ctx context.Context, sessionID string, resu
 	return err
 }
 
-// InsertSpan stores a raw OTLP span.
-func (s *Store) InsertSpan(ctx context.Context, traceID, spanID, parentSpanID, sessionID, name string, kind int, startNS, endNS, durationMS int64, attrsJSON, resourceJSON string) error {
-	_, err := s.db.ExecContext(ctx, `
+// InsertSpan stores a raw OTLP span. Returns true if the span was newly
+// inserted (false on duplicate, which happens on OTLP retries).
+func (s *Store) InsertSpan(ctx context.Context, traceID, spanID, parentSpanID, sessionID, name string, kind int, startNS, endNS, durationMS int64, attrsJSON, resourceJSON string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO spans (trace_id, span_id, parent_span_id, session_id, name, kind,
 		                             start_ns, end_ns, duration_ms, attrs_json, resource_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		traceID, spanID, parentSpanID, sessionID, name, kind, startNS, endNS, durationMS, attrsJSON, resourceJSON)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rows, _ := res.RowsAffected()
+	return rows > 0, nil
 }
 
 // InsertHookEvent stores a hook event.

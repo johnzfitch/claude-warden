@@ -82,11 +82,12 @@ func (kv KeyValue) BoolVal() bool {
 }
 
 // contextWindowForModel returns the context window size for known models.
+// Models with [1m] suffix or explicit 1M configurations get 1M window.
 func contextWindowForModel(model string) int {
+	m := strings.ToLower(model)
 	switch {
-	case strings.Contains(model, "opus"), strings.Contains(model, "sonnet"),
-		strings.Contains(model, "haiku"):
-		return 200000
+	case strings.Contains(m, "[1m]"), strings.Contains(m, "-1m"):
+		return 1000000
 	default:
 		return 200000
 	}
@@ -167,13 +168,18 @@ func (h *OTLPHandler) processSpans(ctx context.Context, req *ExportTraceRequest)
 
 				attrsJSON, _ := json.Marshal(span.Attributes)
 
-				if err := h.store.InsertSpan(ctx,
+				inserted, err := h.store.InsertSpan(ctx,
 					span.TraceID, span.SpanID, span.ParentSpanID,
 					sessionID, span.Name, span.Kind,
 					startNS, endNS, durationMS,
 					string(attrsJSON), string(resourceJSON),
-				); err != nil {
+				)
+				if err != nil {
 					slog.Warn("insert span failed", "err", err, "name", span.Name)
+					continue
+				}
+				if !inserted {
+					continue // duplicate span (OTLP retry), skip accumulation
 				}
 
 				// Extract llm_request spans to update session context
