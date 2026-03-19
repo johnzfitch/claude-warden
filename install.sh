@@ -796,9 +796,11 @@ echo "      v                    v            v"
 printf "  ${GREEN}statusline.sh${RESET}       ${GREEN}viewer UI${RESET}    ${GREEN}API queries${RESET}\n"
 echo "  (context %)         (:8477)      /v1/sessions"
 echo ""
+echo ""
 printf "  ${DIM}SQLite: $COLLECTOR_STATE_DIR/collector.db${RESET}\n"
 printf "  ${DIM}Binary: $COLLECTOR_BIN_PATH${RESET}\n"
 printf "  ${DIM}Starts automatically on session-start. Stops when idle.${RESET}\n"
+echo ""
 
 if $MONITORING_STARTED; then
     echo ""
