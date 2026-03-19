@@ -6,6 +6,8 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -87,8 +89,8 @@ func (s *Store) GetSessionContext(ctx context.Context, sessionID string) (*Sessi
 		return nil, err
 	}
 
-	// Estimated context = last known input + tool results accumulated since
-	sc.EstimatedContext = sc.InputTokens + sc.PendingOutputTokens
+	// Estimated context = raw input + cache_read + cache_create + tool results since last LLM call
+	sc.EstimatedContext = sc.InputTokens + sc.CacheReadTokens + sc.CacheCreateTokens + sc.PendingOutputTokens
 	if sc.ContextWindow > 0 {
 		sc.UsedPct = float64(sc.EstimatedContext) / float64(sc.ContextWindow) * 100
 		if sc.UsedPct > 100 {
@@ -97,7 +99,13 @@ func (s *Store) GetSessionContext(ctx context.Context, sessionID string) (*Sessi
 	}
 
 	// Extended fields for statusline
-	sc.CompactThresholdPct = 85 // default, could be made configurable
+	// Read compact threshold from Claude Code's env var, default 85%
+	sc.CompactThresholdPct = 85
+	if envPct := os.Getenv("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"); envPct != "" {
+		if v, err := strconv.Atoi(envPct); err == nil && v > 0 && v <= 100 {
+			sc.CompactThresholdPct = v
+		}
+	}
 	sc.EffectiveWindow = sc.ContextWindow - 20000
 	if sc.EffectiveWindow < 0 {
 		sc.EffectiveWindow = sc.ContextWindow
@@ -269,5 +277,104 @@ func (s *Store) EnsureSession(ctx context.Context, sessionID string) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO sessions (session_id, started_at_ns, updated_at_ns)
 		VALUES (?, ?, ?)`, sessionID, now, now)
+	return err
+}
+
+// BudgetResult is returned by IncrementSubagentBudget to tell the caller
+// whether the budget is exceeded (and a deny file should be written).
+type BudgetResult struct {
+	Exceeded    bool
+	Reason      string // "calls" or "bytes"
+	Current     int
+	Limit       int
+	WarnAt80Pct bool
+}
+
+// InitSubagent creates a budget row for a new subagent. Called on subagent_start.
+func (s *Store) InitSubagent(ctx context.Context, agentID, sessionID, agentType string, callLimit, byteLimit int) error {
+	now := time.Now().UnixNano()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO subagent_budgets
+			(agent_id, session_id, agent_type, call_limit, byte_limit, started_at_ns, updated_at_ns)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		agentID, sessionID, agentType, callLimit, byteLimit, now, now)
+	return err
+}
+
+// IncrementSubagentCall increments call count and checks budget.
+func (s *Store) IncrementSubagentCall(ctx context.Context, agentID string) (*BudgetResult, error) {
+	now := time.Now().UnixNano()
+
+	// Increment atomically
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE subagent_budgets
+		SET call_count = call_count + 1, updated_at_ns = ?
+		WHERE agent_id = ?`, now, agentID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read current state
+	var calls, limit int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT call_count, call_limit FROM subagent_budgets WHERE agent_id = ?`,
+		agentID).Scan(&calls, &limit)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &BudgetResult{Current: calls, Limit: limit}
+	if calls >= limit {
+		result.Exceeded = true
+		result.Reason = "calls"
+	} else if calls >= limit*80/100 {
+		result.WarnAt80Pct = true
+	}
+	return result, nil
+}
+
+// AddSubagentBytes adds output bytes and checks budget.
+func (s *Store) AddSubagentBytes(ctx context.Context, agentID string, bytes int) (*BudgetResult, error) {
+	now := time.Now().UnixNano()
+
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE subagent_budgets
+		SET byte_count = byte_count + ?, updated_at_ns = ?
+		WHERE agent_id = ?`, bytes, now, agentID)
+	if err != nil {
+		return nil, err
+	}
+
+	var total, limit int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT byte_count, byte_limit FROM subagent_budgets WHERE agent_id = ?`,
+		agentID).Scan(&total, &limit)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &BudgetResult{Current: total, Limit: limit}
+	if total >= limit {
+		result.Exceeded = true
+		result.Reason = "bytes"
+	} else if total >= limit*80/100 {
+		result.WarnAt80Pct = true
+	}
+	return result, nil
+}
+
+// MarkSubagentDenied sets the denied flag on a subagent budget.
+func (s *Store) MarkSubagentDenied(ctx context.Context, agentID string) error {
+	now := time.Now().UnixNano()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE subagent_budgets SET denied = 1, updated_at_ns = ?
+		WHERE agent_id = ?`, now, agentID)
+	return err
+}
+
+// RemoveSubagentBudget deletes the budget row on subagent stop.
+func (s *Store) RemoveSubagentBudget(ctx context.Context, agentID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM subagent_budgets WHERE agent_id = ?`, agentID)
 	return err
 }

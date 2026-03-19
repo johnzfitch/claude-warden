@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -81,16 +82,24 @@ func (kv KeyValue) BoolVal() bool {
 	return kv.Value.BoolValue
 }
 
-// contextWindowForModel returns the context window size for known models.
-// Models with [1m] suffix or explicit 1M configurations get 1M window.
+// contextWindowForModel returns the context window size.
+// Priority: CLAUDE_CODE_AUTO_COMPACT_WINDOW env > model suffix detection > default 200k.
+// This is inherently a guess — Claude Code doesn't export context_window in OTEL spans.
+// The env var override is the only reliable source when context windows change.
 func contextWindowForModel(model string) int {
-	m := strings.ToLower(model)
-	switch {
-	case strings.Contains(m, "[1m]"), strings.Contains(m, "-1m"):
-		return 1000000
-	default:
-		return 200000
+	if envWin := os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW"); envWin != "" {
+		if v, err := strconv.Atoi(envWin); err == nil && v > 0 {
+			return v
+		}
 	}
+	// 1M context detection
+	if os.Getenv("CLAUDE_CODE_DISABLE_1M_CONTEXT") != "1" {
+		m := strings.ToLower(model)
+		if strings.Contains(m, "[1m]") || strings.Contains(m, "-1m") {
+			return 1000000
+		}
+	}
+	return 200000
 }
 
 // attrMap converts a slice of KeyValue into a lookup map.
@@ -238,7 +247,8 @@ func (h *OTLPHandler) processLLMRequest(ctx context.Context, sessionID string, s
 	}
 
 	// input_tokens from the API is the non-cached new input.
-	// Total context = input_tokens + cache_read + cache_create.
+	// Store raw input_tokens separately so the stacked context gauge
+	// can show input, cache_read, and cache_create as distinct segments.
 	totalContext := inputTokens + cacheRead + cacheCreate
 
 	contextWindow := contextWindowForModel(model)
@@ -256,7 +266,7 @@ func (h *OTLPHandler) processLLMRequest(ctx context.Context, sessionID string, s
 
 	if err := h.store.UpsertSessionFromSpan(ctx,
 		sessionID, model, contextWindow,
-		totalContext, outputTokens, cacheRead, cacheCreate,
+		inputTokens, outputTokens, cacheRead, cacheCreate,
 	); err != nil {
 		slog.Warn("upsert session failed", "err", err, "session", sessionID)
 	}

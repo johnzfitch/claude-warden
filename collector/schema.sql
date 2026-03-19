@@ -49,6 +49,21 @@ CREATE TABLE IF NOT EXISTS hook_events (
 CREATE INDEX IF NOT EXISTS idx_hook_events_session ON hook_events(session_id, occurred_at_ns);
 CREATE INDEX IF NOT EXISTS idx_hook_events_type ON hook_events(event_type, occurred_at_ns);
 
+CREATE TABLE IF NOT EXISTS subagent_budgets (
+    agent_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL DEFAULT '',
+    call_count INTEGER NOT NULL DEFAULT 0,
+    byte_count INTEGER NOT NULL DEFAULT 0,
+    call_limit INTEGER NOT NULL DEFAULT 30,
+    byte_limit INTEGER NOT NULL DEFAULT 102400,
+    denied INTEGER NOT NULL DEFAULT 0,
+    started_at_ns INTEGER NOT NULL,
+    updated_at_ns INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_subagent_session ON subagent_budgets(session_id);
+
 CREATE TABLE IF NOT EXISTS meta_kv (
     key TEXT PRIMARY KEY,
     value TEXT,

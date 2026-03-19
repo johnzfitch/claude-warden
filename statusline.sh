@@ -355,7 +355,8 @@ if [ -n "$SESSION_ID" ] && [ -S "$COLLECTOR_SOCK" ]; then
             "COLLECTOR_SUBAGENT_COUNT=\(.subagent_count // 0)",
             "COLLECTOR_LAST_TOOL=\(.last_tool // "")",
             "COLLECTOR_LAST_TOOL_MS=\(.last_tool_duration_ms // "")",
-            "COLLECTOR_CACHE_HIT=\(.cache_hit_rate // "")"
+            "COLLECTOR_CACHE_HIT=\(.cache_hit_rate // "")",
+            "COLLECTOR_COMPACT_PCT=\(.compact_threshold_pct // 85)"
         ' 2>/dev/null)" || true
     fi
 fi
@@ -399,12 +400,16 @@ if [ -z "$PERCENT_INT" ] || ! [[ "$PERCENT_INT" =~ ^[0-9]+$ ]]; then
     PERCENT_INT=0
 fi
 
-if [ "$PERCENT_INT" -lt 50 ]; then
-    COLOR=$'\033[32m'  # Green
-elif [ "$PERCENT_INT" -lt 80 ]; then
-    COLOR=$'\033[33m'  # Yellow
+# Color thresholds derived from compact threshold (default 85%)
+# Yellow at 75% of compact threshold, red at compact threshold
+COMPACT_PCT="${COLLECTOR_COMPACT_PCT:-85}"
+YELLOW_AT=$((COMPACT_PCT * 75 / 100))
+if [ "$PERCENT_INT" -lt "$YELLOW_AT" ]; then
+    COLOR=$'\033[32m'  # Green: well below compact
+elif [ "$PERCENT_INT" -lt "$COMPACT_PCT" ]; then
+    COLOR=$'\033[33m'  # Yellow: approaching compact
 else
-    COLOR=$'\033[31m'  # Red
+    COLOR=$'\033[31m'  # Red: at or past compact threshold
 fi
 RESET=$'\033[0m'
 DIM=$'\033[2m'

@@ -42,7 +42,7 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 
 	// Ensure DB directory exists
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		slog.Error("create db dir", "err", err)
 		os.Exit(1)
 	}
@@ -56,13 +56,13 @@ func main() {
 
 	// Write pidfile for cheap liveness checks from hooks
 	pidFile := filepath.Join(filepath.Dir(dbPath), "collector.pid")
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0o644); err != nil {
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0o600); err != nil {
 		slog.Warn("write pidfile", "err", err)
 	}
 	defer os.Remove(pidFile)
 
 	otlpHandler := NewOTLPHandler(store)
-	apiHandler := NewAPIHandler(store)
+	apiHandler := NewAPIHandler(store, filepath.Dir(dbPath))
 
 	// OTLP server (receives traces from Claude Code)
 	otlpMux := http.NewServeMux()

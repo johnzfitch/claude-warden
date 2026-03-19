@@ -2,21 +2,29 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
 
+// validSessionID matches UUID v4 format (Claude Code session IDs).
+var validSessionID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 // APIHandler serves query endpoints for the collector.
 type APIHandler struct {
 	store     *Store
+	stateDir  string // for deny-file writes
 	startTime time.Time
 }
 
-func NewAPIHandler(store *Store) *APIHandler {
-	return &APIHandler{store: store, startTime: time.Now()}
+func NewAPIHandler(store *Store, stateDir string) *APIHandler {
+	return &APIHandler{store: store, stateDir: stateDir, startTime: time.Now()}
 }
 
 func (a *APIHandler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +49,10 @@ func (a *APIHandler) HandleSessionContext(w http.ResponseWriter, r *http.Request
 		return
 	}
 	sessionID := parts[0]
+	if !validSessionID.MatchString(sessionID) {
+		http.Error(w, "invalid session_id format", http.StatusBadRequest)
+		return
+	}
 
 	sc, err := a.store.GetSessionContext(r.Context(), sessionID)
 	if err != nil {
@@ -99,7 +111,11 @@ func (a *APIHandler) HandleHookIngest(w http.ResponseWriter, r *http.Request) {
 
 	sessionID, _ := evt["session_id"].(string)
 	eventType, _ := evt["event_type"].(string)
-	toolName, _ := evt["tool_name"].(string)
+	// Hooks emit "tool", not "tool_name" — check both for compatibility
+	toolName, _ := evt["tool"].(string)
+	if toolName == "" {
+		toolName, _ = evt["tool_name"].(string)
+	}
 
 	if err := a.store.InsertHookEvent(r.Context(), sessionID, eventType, toolName, string(bodyBytes)); err != nil {
 		slog.Warn("insert hook event failed", "err", err)
@@ -114,6 +130,87 @@ func (a *APIHandler) HandleHookIngest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Subagent budget management — async deny-file pattern
+	agentID, _ := evt["agent_id"].(string)
+	if agentID != "" {
+		a.handleSubagentBudget(r, eventType, agentID, sessionID, evt)
+	}
+
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte(`{"status":"accepted"}`))
+}
+
+// handleSubagentBudget processes subagent lifecycle events and manages deny files.
+func (a *APIHandler) handleSubagentBudget(r *http.Request, eventType, agentID, sessionID string, evt map[string]any) {
+	ctx := r.Context()
+
+	switch eventType {
+	case "subagent_start":
+		agentType, _ := evt["agent_type"].(string)
+		callLimit := intFromAny(evt["call_limit"], 30)
+		byteLimit := intFromAny(evt["byte_limit"], 102400)
+		if err := a.store.InitSubagent(ctx, agentID, sessionID, agentType, callLimit, byteLimit); err != nil {
+			slog.Warn("init subagent budget failed", "err", err, "agent_id", agentID)
+		}
+
+	case "subagent_tool_call":
+		result, err := a.store.IncrementSubagentCall(ctx, agentID)
+		if err != nil {
+			slog.Warn("increment subagent call failed", "err", err, "agent_id", agentID)
+			return
+		}
+		if result.Exceeded {
+			a.writeDenyFile(agentID, fmt.Sprintf("calls %d/%d", result.Current, result.Limit))
+			a.store.MarkSubagentDenied(ctx, agentID)
+		}
+
+	case "subagent_bytes":
+		bytes := intFromAny(evt["bytes"], 0)
+		if bytes <= 0 {
+			return
+		}
+		result, err := a.store.AddSubagentBytes(ctx, agentID, bytes)
+		if err != nil {
+			slog.Warn("add subagent bytes failed", "err", err, "agent_id", agentID)
+			return
+		}
+		if result.Exceeded {
+			a.writeDenyFile(agentID, fmt.Sprintf("bytes %d/%d", result.Current, result.Limit))
+			a.store.MarkSubagentDenied(ctx, agentID)
+		}
+
+	case "subagent_stop":
+		a.removeDenyFile(agentID)
+		if err := a.store.RemoveSubagentBudget(ctx, agentID); err != nil {
+			slog.Warn("remove subagent budget failed", "err", err, "agent_id", agentID)
+		}
+	}
+}
+
+// writeDenyFile creates a budget-deny file that pre-tool-use can stat.
+func (a *APIHandler) writeDenyFile(agentID, reason string) {
+	path := filepath.Join(a.stateDir, "budget-deny-"+agentID)
+	if err := os.WriteFile(path, []byte(reason), 0o600); err != nil {
+		slog.Warn("write deny file failed", "err", err, "agent_id", agentID)
+	}
+	slog.Info("budget exceeded, deny file written", "agent_id", agentID, "reason", reason)
+}
+
+// removeDenyFile removes a budget-deny file on subagent stop.
+func (a *APIHandler) removeDenyFile(agentID string) {
+	path := filepath.Join(a.stateDir, "budget-deny-"+agentID)
+	os.Remove(path)
+}
+
+// intFromAny extracts an int from interface{} (JSON numbers are float64).
+func intFromAny(v any, fallback int) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case string:
+		// ignore non-numeric
+	}
+	return fallback
 }

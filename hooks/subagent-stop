@@ -18,60 +18,9 @@ SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
 [[ -z "$AGENT_ID" ]] && AGENT_ID="unknown"
 _warden_resolve_session_start "$SESSION_ID"
 
-# === BUDGET TRACKING ===
-# Use actual cumulative output bytes tracked by post-tool-use (~3.5 bytes/token)
-BYTE_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.bytes"
-if [[ -f "$BYTE_FILE" ]]; then
-  _RAW=$(cat "$BYTE_FILE" 2>/dev/null || echo "0")
-  _TOTAL_BYTES="${_RAW%%|*}"
-  [[ "$_TOTAL_BYTES" =~ ^[0-9]+$ ]] || _TOTAL_BYTES=0
-  if (( _TOTAL_BYTES > 0 )); then
-    _warden_budget_update $(( _TOTAL_BYTES * 10 / 35 ))
-  fi
-fi
-
-# === METRICS COLLECTION ===
-START_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.start"
-if [ -f "$START_FILE" ]; then
-  START_TIME=$(_warden_read_numeric "$START_FILE" "$_WARDEN_NOW_S")
-  END_TIME=$(date +%s)
-  DURATION=$((END_TIME - START_TIME))
-  AGENT_TYPE=$(grep 'AGENT_TYPE=' "$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID" 2>/dev/null | head -1 | cut -d= -f2 || echo "unknown")
-
-  # Log to unified agent-stats.csv
-  AGENT_STATS="$HOME/.claude/agent-stats.csv"
-  if [ ! -f "$AGENT_STATS" ]; then
-    echo "timestamp,agent_id,agent_category,agent_type,duration_seconds,session_id,status" > "$AGENT_STATS"
-  fi
-  echo "$(_warden_date_iso),$AGENT_ID,subagent,$AGENT_TYPE,$DURATION,$SESSION_ID,completed" >> "$AGENT_STATS"
-
-  # Emit to collector
-  _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-  _HAS_WORKTREE="false"; [[ -n "${WORKTREE_PATH:-}" ]] && _HAS_WORKTREE="true"
-  _AT_SAFE="$AGENT_TYPE"
-  _warden_json_escape _AT_SAFE
-  _evt=""
-  printf -v _evt '{"timestamp":%d,"event_type":"subagent_stop","tool":"SubagentStop","session_id":"%s","agent_id":"%s","agent_type":"%s","duration_seconds":%d,"has_worktree":%s}' \
-    "$_TS" "$SESSION_ID" "$AGENT_ID" "$_AT_SAFE" "$DURATION" "$_HAS_WORKTREE"
-  _warden_post_to_collector "$_evt"
-fi
-
-# Decrement active subagent count (per-session file)
-if [ -n "$SESSION_ID" ]; then
-  SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count-$SESSION_ID"
-  if [ -f "$SUBAGENT_COUNT_FILE" ]; then
-    _decrement_count() {
-      PREV_COUNT=0
-      IFS='|' read -r PREV_COUNT _PREV_TS < "$SUBAGENT_COUNT_FILE" 2>/dev/null
-      [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
-      [ "$PREV_COUNT" -gt 0 ] && PREV_COUNT=$((PREV_COUNT - 1))
-      printf '%s|%s\n' "$PREV_COUNT" "$(date +%s)" > "$SUBAGENT_COUNT_FILE.tmp.$$" && mv "$SUBAGENT_COUNT_FILE.tmp.$$" "$SUBAGENT_COUNT_FILE"
-    }
-    _warden_with_lock "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock" _decrement_count
-  fi
-fi
-
-# NOTE: NO immediate cleanup - state files retained for debugging
-# Cleanup handled by cron after 24hr
+# Emit subagent_stop to collector — removes deny file and budget row.
+_HAS_WORKTREE="false"; [[ -n "${WORKTREE_PATH:-}" ]] && _HAS_WORKTREE="true"
+_warden_post_to_collector "$(printf '{"event_type":"subagent_stop","session_id":"%s","agent_id":"%s","has_worktree":%s}' \
+  "$SESSION_ID" "$AGENT_ID" "$_HAS_WORKTREE")"
 
 exit 0
