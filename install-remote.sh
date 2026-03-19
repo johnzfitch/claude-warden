@@ -43,6 +43,15 @@ if ! command -v tar &>/dev/null; then
     exit 1
 fi
 
+# === Require Go (collector build) ===
+if ! command -v go &>/dev/null; then
+    error "Go 1.23+ is required to build the warden-collector."
+    error "  Install: https://go.dev/dl/"
+    error "  Arch: sudo pacman -S go"
+    error "  macOS: brew install go"
+    exit 1
+fi
+
 # === Parse arguments ===
 VERSION=""
 PASSTHROUGH_ARGS=()

@@ -1,18 +1,20 @@
 # claude-warden
 
-Token-saving hooks + monitoring infrastructure for Claude Code.
+Token-saving hooks + Go collector backbone for Claude Code observability.
 
 ## Repository structure
 
+- `collector/` -- Go service: SQLite store, OTLP receiver (:4319), hook event API (UDS), subagent budget enforcement
+- `viewer/` -- htmx web UI for viewing collector data (sessions, tokens, events) on port 8477
 - `hooks/` -- Bash hook scripts invoked by Claude Code at tool-use lifecycle events
 - `hooks/lib/common.sh` -- Shared library sourced by all hooks (parsing, event emission, latency tracking, sanitization)
 - `hooks/lib/otel-trace.sh` -- OTLP/HTTP trace span emitter (bash + curl, fire-and-forget)
-- `monitoring/` -- Docker Compose observability stack (Loki, OTEL Collector, Prometheus, Node Exporter, Grafana)
+- `monitoring/` -- Optional Docker Compose observability stack (Loki, OTEL Collector, Prometheus, Node Exporter, Grafana)
 - `monitoring/otel-collector-config.yaml` -- Collector pipelines: logs (otlp + filelog -> Loki), metrics (otlp -> Prometheus), traces (otlp -> debug)
 - `monitoring/loki-config.yaml` -- Loki 3.4.2 config (TSDB schema v13, filesystem storage, 30-day retention)
 - `monitoring/grafana/` -- Provisioned datasources (Prometheus, Loki) and dashboards
 - `tests/` -- Fixture-driven test harness (`bash tests/run.sh`)
-- `install.sh` / `uninstall.sh` -- Manages symlinks into `~/.claude/`
+- `install.sh` / `uninstall.sh` -- Manages symlinks into `~/.claude/`, builds Go collector
 
 ## Key patterns
 

@@ -45,7 +45,7 @@ for arg in "$@"; do
             echo "Options:"
             echo "  --copy            Copy files instead of symlinking (default: symlink)"
             echo "  --dry-run         Show what would be done without making changes"
-            echo "  --monitoring      Start Docker monitoring stack (Grafana, Loki, Prometheus, OTEL)"
+            echo "  --monitoring      Start optional Docker monitoring stack (Grafana, Loki, Prometheus, OTEL)"
             echo "  --no-monitoring   Skip monitoring stack setup"
             echo "  --profile NAME    Use a configuration profile:"
             echo "                      minimal   - Hooks only (no env/permission changes)"
@@ -191,7 +191,8 @@ MONITORING_DIR="$WARDEN_DIR/monitoring"
 if [[ -z "$MONITORING" ]]; then
     if [[ -t 0 ]]; then
         echo ""
-        printf "${BOLD}Start Docker monitoring stack?${RESET}\n"
+        printf "${BOLD}Start optional Docker monitoring stack?${RESET}\n"
+        printf "  (The Go collector is always installed and provides core observability.)\n"
         echo ""
         printf "  Loki, OTEL Collector, Prometheus, Node Exporter, Grafana, Tempo.\n"
         printf "  Ports: Grafana 3000, Prometheus 9090, Loki 3100, OTEL 4317/4318\n"
