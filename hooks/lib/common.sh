@@ -593,11 +593,14 @@ _warden_ensure_collector() {
 # Usage: _warden_post_to_collector JSON_STRING
 _warden_post_to_collector() {
     local _payload="$1"
+    local _sock="${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden/collector.sock"
     # Fire-and-forget: 100ms timeout, background, discard output
+    # Uses UDS for lower latency and security
     command curl -s --max-time 0.1 -X POST \
         -H 'Content-Type: application/json' \
+        --unix-socket "$_sock" \
         --data-raw "$_payload" \
-        "http://127.0.0.1:${WARDEN_COLLECTOR_PORT:-9464}/v1/ingest/hook" \
+        "http://localhost/v1/ingest/hook" \
         &>/dev/null &
 }
 # Emit JSONL event for blocked commands (pre-tool-use)

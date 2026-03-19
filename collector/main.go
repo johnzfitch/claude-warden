@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,14 +21,17 @@ func main() {
 		dbPath   string
 		otlpAddr string
 		apiAddr  string
+		apiTCP   bool
 		debug    bool
 	)
 
 	defaultDB := defaultDBPath()
+	defaultSock := defaultSocketPath()
 
 	flag.StringVar(&dbPath, "db", defaultDB, "SQLite database path")
-	flag.StringVar(&otlpAddr, "otlp-addr", "127.0.0.1:4319", "OTLP HTTP listen address")
-	flag.StringVar(&apiAddr, "api-addr", "127.0.0.1:9464", "API HTTP listen address")
+	flag.StringVar(&otlpAddr, "otlp-addr", "127.0.0.1:4319", "OTLP HTTP listen address (TCP)")
+	flag.StringVar(&apiAddr, "api-addr", defaultSock, "API listen address (UDS path or host:port with -tcp)")
+	flag.BoolVar(&apiTCP, "tcp", false, "Use TCP for API server instead of Unix socket")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	flag.Parse()
 
@@ -102,7 +106,6 @@ func main() {
 	apiMux.HandleFunc("/v1/ingest/hook", apiHandler.HandleHookIngest)
 
 	apiServer := &http.Server{
-		Addr:         apiAddr,
 		Handler:      apiMux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
@@ -118,9 +121,31 @@ func main() {
 		}
 	}()
 
+	// API server: UDS by default, TCP with -tcp flag
 	go func() {
-		slog.Info("API server listening", "addr", apiAddr)
-		if err := apiServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		var ln net.Listener
+		var err error
+
+		if apiTCP {
+			slog.Info("API server listening", "addr", apiAddr, "transport", "tcp")
+			ln, err = net.Listen("tcp", apiAddr)
+		} else {
+			// Remove stale socket file
+			os.Remove(apiAddr)
+			slog.Info("API server listening", "socket", apiAddr, "transport", "unix")
+			ln, err = net.Listen("unix", apiAddr)
+			if err == nil {
+				// Secure socket: owner read/write only
+				os.Chmod(apiAddr, 0o600)
+			}
+		}
+
+		if err != nil {
+			errCh <- err
+			return
+		}
+
+		if err := apiServer.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
@@ -142,14 +167,27 @@ func main() {
 	otlpServer.Shutdown(ctx)
 	apiServer.Shutdown(ctx)
 
+	// Clean up UDS socket file
+	if !apiTCP {
+		os.Remove(apiAddr)
+	}
+
 	slog.Info("collector stopped")
 }
 
 func defaultDBPath() string {
-	stateDir := os.Getenv("XDG_STATE_HOME")
-	if stateDir == "" {
+	return filepath.Join(stateDir(), "collector.db")
+}
+
+func defaultSocketPath() string {
+	return filepath.Join(stateDir(), "collector.sock")
+}
+
+func stateDir() string {
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" {
 		home, _ := os.UserHomeDir()
-		stateDir = filepath.Join(home, ".local", "state")
+		dir = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(stateDir, "claude-warden", "collector.db")
+	return filepath.Join(dir, "claude-warden")
 }

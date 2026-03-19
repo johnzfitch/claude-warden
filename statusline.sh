@@ -336,11 +336,12 @@ USED_PCT_DISPLAY="0"
 # 1. Collector (OTEL-sourced, tracks context growth between API calls)
 # 2. Claude Code's used_percentage (stale between API calls)
 # 3. Computed from current_usage fields (least accurate)
-COLLECTOR_ADDR="${WARDEN_COLLECTOR_ADDR:-127.0.0.1:9464}"
+COLLECTOR_SOCK="${WARDEN_COLLECTOR_SOCK:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden/collector.sock}"
 COLLECTOR_PCT=""
-if [ -n "$SESSION_ID" ]; then
+if [ -n "$SESSION_ID" ] && [ -S "$COLLECTOR_SOCK" ]; then
     COLLECTOR_JSON="$(curl -sf --max-time 0.05 \
-        "http://${COLLECTOR_ADDR}/v1/sessions/${SESSION_ID}/context" 2>/dev/null)" || COLLECTOR_JSON=""
+        --unix-socket "$COLLECTOR_SOCK" \
+        "http://localhost/v1/sessions/${SESSION_ID}/context" 2>/dev/null)" || COLLECTOR_JSON=""
     if [ -n "$COLLECTOR_JSON" ]; then
         COLLECTOR_PCT="$(printf '%s' "$COLLECTOR_JSON" | jq -r '.used_pct // empty' 2>/dev/null)" || COLLECTOR_PCT=""
     fi
