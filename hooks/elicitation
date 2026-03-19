@@ -24,11 +24,12 @@ _warden_json_escape ELICITATION_ID
 _warden_json_escape MESSAGE
 _warden_maybe_scrub MESSAGE
 
-# Emit elicitation event to events.jsonl
+# Emit elicitation event to collector
 _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-printf '{"timestamp":%d,"event_type":"elicitation","tool":"Elicitation","mcp_server":"%s","mode":"%s","elicitation_id":"%s","message":"%s"}\n' \
-    "$_TS" "$MCP_SERVER" "$MODE" "$ELICITATION_ID" "$MESSAGE" \
-    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+_evt=""
+printf -v _evt '{"timestamp":%d,"event_type":"elicitation","tool":"Elicitation","mcp_server":"%s","mode":"%s","elicitation_id":"%s","message":"%s"}' \
+    "$_TS" "$MCP_SERVER" "$MODE" "$ELICITATION_ID" "$MESSAGE"
+_warden_post_to_collector "$_evt"
 
 # Allow elicitation to proceed (exit 0 = show dialog normally)
 exit 0

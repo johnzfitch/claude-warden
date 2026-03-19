@@ -11,7 +11,6 @@
 export WARDEN_STATE_DIR="${WARDEN_STATE_DIR:-$HOME/.claude/.statusline}"
 export WARDEN_SESSION_BUDGET_DIR="${WARDEN_SESSION_BUDGET_DIR:-$HOME/.claude/.session-budgets}"
 export WARDEN_SUBAGENT_STATE_DIR="${WARDEN_SUBAGENT_STATE_DIR:-$HOME/.claude/.subagent-state}"
-export WARDEN_EVENTS_FILE="$WARDEN_STATE_DIR/events.jsonl"
 
 # ==============================================================================
 # CROSS-PLATFORM HELPERS (must be defined before first use)
@@ -285,72 +284,6 @@ _warden_budget_reset() {
     _warden_budget_write 0
 }
 
-# Write Prometheus textfile for node-exporter (budget + subagent metrics).
-# Atomic write (tmp + mv). Skips silently if monitoring dir doesn't exist.
-_warden_write_budget_prom() {
-    local prom_dir="${HOME}/.claude/.monitoring/textfile"
-    [[ -d "$prom_dir" ]] || return 0
-
-    local consumed total remaining util active _sc_raw _sc_count
-    consumed=$(_warden_budget_read)
-    total="$WARDEN_BUDGET_TOTAL"
-    remaining=$(( total > consumed ? total - consumed : 0 ))
-    util=0; (( total > 0 )) && util=$(( consumed * 100 / total ))
-
-    active=0
-    local _sc_file="$WARDEN_STATE_DIR/subagent-count-${WARDEN_SESSION_ID:-}"
-    if [[ -n "${WARDEN_SESSION_ID:-}" && -f "$_sc_file" ]]; then
-        local _sc_count=""
-        IFS='|' read -r _sc_count _ < "$_sc_file" 2>/dev/null
-        [[ "$_sc_count" =~ ^[0-9]+$ ]] && active="$_sc_count"
-    fi
-
-    {   printf '# HELP claude_budget_total_tokens Total token budget limit\n'
-        printf '# TYPE claude_budget_total_tokens gauge\n'
-        printf 'claude_budget_total_tokens %d\n' "$total"
-        printf '# HELP claude_budget_consumed_tokens Tokens consumed in current session\n'
-        printf '# TYPE claude_budget_consumed_tokens gauge\n'
-        printf 'claude_budget_consumed_tokens %d\n' "$consumed"
-        printf '# HELP claude_budget_remaining_tokens Tokens remaining in budget\n'
-        printf '# TYPE claude_budget_remaining_tokens gauge\n'
-        printf 'claude_budget_remaining_tokens %d\n' "$remaining"
-        printf '# HELP claude_budget_utilization_percent Budget utilization percentage\n'
-        printf '# TYPE claude_budget_utilization_percent gauge\n'
-        printf 'claude_budget_utilization_percent %d\n' "$util"
-        printf '# HELP claude_budget_active_subagents Number of active subagents\n'
-        printf '# TYPE claude_budget_active_subagents gauge\n'
-        printf 'claude_budget_active_subagents %d\n' "$active"
-    } > "${prom_dir}/budget.prom.tmp" && mv "${prom_dir}/budget.prom.tmp" "${prom_dir}/budget.prom" || true
-}
-
-# ==============================================================================
-# EXACT TOKEN COUNTING (background, fire-and-forget)
-# ==============================================================================
-# When WARDEN_TOKEN_COUNT=api, spawn _token-count-bg to get exact counts from the
-# Anthropic token counting API. Writes correction events to events.jsonl.
-# Zero added hook latency: runs in background with & disown.
-# Requires: python3 with anthropic package, ANTHROPIC_API_KEY set by Claude Code.
-
-_warden_fire_token_count() {
-    local orig_text="$1" final_text="$2" estimated="$3" rule="$4"
-    [[ "${WARDEN_TOKEN_COUNT:-}" != "api" ]] && return
-    local python="${WARDEN_PYTHON:-python3}"
-    local script="$WARDEN_HOOKS_DIR/_token-count-bg"
-    command -v "$python" &>/dev/null || return
-    [[ -x "$script" ]] || return
-
-    local tmpdir
-    tmpdir=$(mktemp -d "/tmp/warden-tc.XXXXXX") || return
-    printf '%s' "$orig_text" > "$tmpdir/orig"
-    printf '%s' "$final_text" > "$tmpdir/final"
-
-    local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-    "$python" "$script" \
-        "$ts" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_COMMAND:0:200}" "$estimated" "$rule" \
-        "$WARDEN_EVENTS_FILE" "$tmpdir/orig" "$tmpdir/final" &
-    disown
-}
-
 # ==============================================================================
 # SUBAGENT LIMIT LOOKUPS (Bash 3.2 compatible)
 # ==============================================================================
@@ -621,7 +554,6 @@ _warden_emit_block() {
     local _evt
     printf -v _evt '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}' \
         "$ts" "$tool_safe" "$sid_safe" "$cmd_safe" "$rule" "$tokens"
-    echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
     _warden_post_to_collector "$_evt"
 
     # Accumulate tokens saved for statusline
@@ -656,7 +588,6 @@ _warden_emit_event() {
     local _evt
     printf -v _evt '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}' \
         "$ts" "$etype" "$tool_safe" "$sid_safe" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field"
-    echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
     _warden_post_to_collector "$_evt"
 
     # Accumulate tokens saved for statusline
@@ -684,7 +615,6 @@ _warden_emit_output_size() {
     local _evt
     printf -v _evt '{"timestamp":%d,"event_type":"tool_output_size","tool":"%s","session_id":"%s","output_bytes":%d,"output_lines":%d,"estimated_tokens":%d,"original_cmd":"%s"}' \
         "$ts" "$tool_name" "$sid" "$output_bytes" "$output_lines" "$estimated_tokens" "$cmd_safe"
-    echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
     _warden_post_to_collector "$_evt"
 }
 
@@ -850,83 +780,6 @@ _warden_validate_git() {
     fi
 
     return 0
-}
-
-# ==============================================================================
-# TOOL LATENCY TRACKING
-# ==============================================================================
-
-# Record tool start timestamp for latency measurement
-# Usage: _warden_record_tool_start "$TOOL_NAME"
-# Writes nanosecond timestamp to state file keyed by session_id (not PID).
-# Session-scoping prevents concurrent sessions from stealing each other's
-# start markers. Within a session, tool calls are serialized by Claude Code.
-_warden_record_tool_start() {
-    local tool_name="$1"
-    [[ -z "$tool_name" ]] && return
-    mkdir -p "$WARDEN_STATE_DIR"
-    local key="${tool_name}-${WARDEN_SESSION_ID:-$$}"
-    _warden_date_ns > "$WARDEN_STATE_DIR/.tool-start-${key}" 2>/dev/null
-}
-
-# Compute tool latency from recorded start timestamp
-# Usage: _warden_compute_tool_latency "$TOOL_NAME"
-# Sets: WARDEN_TOOL_LATENCY_MS (integer ms), WARDEN_TOOL_START_NS, WARDEN_TOOL_END_NS
-# Returns: 0 if computed, 1 if no start timestamp found
-_warden_compute_tool_latency() {
-    local tool_name="$1"
-    WARDEN_TOOL_LATENCY_MS=""
-    WARDEN_TOOL_START_NS=""
-    WARDEN_TOOL_END_NS=""
-
-    # Session-scoped lookup only (no glob fallback -- wrong match is worse than no match)
-    local start_file=""
-    local sid="${WARDEN_SESSION_ID:-}"
-    if [[ -n "$sid" ]]; then
-        local candidate="$WARDEN_STATE_DIR/.tool-start-${tool_name}-${sid}"
-        [[ -f "$candidate" ]] && start_file="$candidate"
-    fi
-
-    [[ -z "$start_file" || ! -f "$start_file" ]] && return 1
-
-    WARDEN_TOOL_START_NS=$(cat "$start_file" 2>/dev/null)
-    rm -f "$start_file" 2>/dev/null
-
-    [[ ! "$WARDEN_TOOL_START_NS" =~ ^[0-9]+$ ]] && return 1
-
-    WARDEN_TOOL_END_NS=$(_warden_date_ns)
-    local delta_ns=$(( WARDEN_TOOL_END_NS - WARDEN_TOOL_START_NS ))
-    WARDEN_TOOL_LATENCY_MS=$(( delta_ns / 1000000 ))
-
-    # Sanity: reject negative or absurdly large (>10min) values
-    if (( WARDEN_TOOL_LATENCY_MS < 0 || WARDEN_TOOL_LATENCY_MS > 600000 )); then
-        WARDEN_TOOL_LATENCY_MS=""
-        return 1
-    fi
-
-    export WARDEN_TOOL_LATENCY_MS WARDEN_TOOL_START_NS WARDEN_TOOL_END_NS
-    return 0
-}
-
-# Emit tool latency event to events.jsonl
-# Usage: _warden_emit_latency "$TOOL_NAME" "$LATENCY_MS" "$COMMAND"
-_warden_emit_latency() {
-    local tool_name="$1" latency_ms="$2" cmd="${3:-}"
-    local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-
-    local cmd_safe="${cmd:0:200}"
-    local sid="${WARDEN_SESSION_ID:-}"
-
-    _warden_json_escape cmd_safe
-    _warden_json_escape tool_name
-    _warden_json_escape sid
-    _warden_maybe_scrub cmd_safe
-
-    local _evt
-    printf -v _evt '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","session_id":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}' \
-        "$ts" "$tool_name" "$sid" "$latency_ms" "$cmd_safe"
-    echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
-    _warden_post_to_collector "$_evt"
 }
 
 # ==============================================================================

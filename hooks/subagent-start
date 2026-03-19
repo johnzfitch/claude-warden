@@ -60,13 +60,14 @@ if [ ! -f "$AGENT_STATS" ]; then
 fi
 echo "$(_warden_date_iso),$AGENT_ID,subagent,$AGENT_TYPE,0,$SESSION_ID,started" >> "$AGENT_STATS"
 
-# Emit subagent_start event to events.jsonl for Loki/Grafana
+# Emit subagent_start event to collector
 _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
 _AT_SAFE="$AGENT_TYPE"
 _warden_json_escape _AT_SAFE
-printf '{"timestamp":%d,"event_type":"subagent_start","tool":"SubagentStart","session_id":"%s","agent_id":"%s","agent_type":"%s"}\n' \
-  "$_TS" "$SESSION_ID" "$AGENT_ID" "$_AT_SAFE" \
-  >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+_evt=""
+printf -v _evt '{"timestamp":%d,"event_type":"subagent_start","tool":"SubagentStart","session_id":"%s","agent_id":"%s","agent_type":"%s"}' \
+  "$_TS" "$SESSION_ID" "$AGENT_ID" "$_AT_SAFE"
+_warden_post_to_collector "$_evt"
 
 # Track active subagent count (per-session file to prevent cross-session interference)
 if [ -n "$SESSION_ID" ]; then
@@ -81,7 +82,6 @@ if [ -n "$SESSION_ID" ]; then
   }
   _warden_with_lock "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID.lock" _increment_count
 fi
-_warden_write_budget_prom
 
 # Inject type-specific guidance for all agent types
 GUIDANCE=""

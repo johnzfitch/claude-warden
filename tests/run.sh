@@ -21,9 +21,8 @@ trap cleanup EXIT
 
 export HOME="$TMP_HOME"
 # Unset warden environment variables to prevent contamination from host environment
-unset WARDEN_STATE_DIR WARDEN_EVENTS_FILE WARDEN_SESSION_BUDGET_DIR WARDEN_SUBAGENT_STATE_DIR
+unset WARDEN_STATE_DIR WARDEN_SESSION_BUDGET_DIR WARDEN_SUBAGENT_STATE_DIR
 mkdir -p "$HOME/.claude/.statusline"
-touch "$HOME/.claude/.statusline/events.jsonl"
 # Per-session start files for test fixtures that use session IDs
 _TEST_START_TS="$(date +%s).000000000"
 for _sid in demo-session size-test quiet-test demo metric-demo; do
@@ -31,13 +30,8 @@ for _sid in demo-session size-test quiet-test demo metric-demo; do
 done
 
 echo "[checks] bash -n (syntax)"
-find "$ROOT_DIR/hooks" -maxdepth 1 -type f ! -name '_token-count-bg' -print0 | xargs -0 bash -n
+find "$ROOT_DIR/hooks" -maxdepth 1 -type f -print0 | xargs -0 bash -n
 bash -n "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/statusline.sh"
-
-if command -v python3 >/dev/null 2>&1; then
-  echo "[checks] python3 -m py_compile hooks/_token-count-bg"
-  python3 -m py_compile "$ROOT_DIR/hooks/_token-count-bg"
-fi
 
 echo "[checks] jq (json validity)"
 jq . "$ROOT_DIR/settings.hooks.json" >/dev/null
@@ -115,14 +109,6 @@ assert_permission_allow() {
   local out_file="$1" label="$2"
   jq -e '.hookSpecificOutput.decision.behavior == "allow"' < "$out_file" >/dev/null \
     || fail "$label: expected hookSpecificOutput.decision.behavior == allow"
-}
-
-# Assert events.jsonl contains a line matching the given jq filter
-assert_events_has() {
-  local jq_expr="$1" label="$2"
-  local events_file="$HOME/.claude/.statusline/events.jsonl"
-  jq -e "$jq_expr" "$events_file" >/dev/null 2>&1 \
-    || fail "$label: events.jsonl missing expected event: $jq_expr"
 }
 
 assert_jq_modifyOutput_no_system_reminder() {
@@ -427,8 +413,6 @@ jq -n --arg txt "$SMALL_TEXT" '{
 IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$SMALL_FIXTURE")
 assert_exit 0 "$rc" "post-tool-use output-size small"
 assert_stdout_json_has "$out" '.suppressOutput == true' "post-tool-use output-size small"
-assert_events_has 'select(.event_type=="tool_output_size" and .tool=="Bash" and .output_bytes>0 and .output_lines>0 and .estimated_tokens>0)' \
-  "post-tool-use output-size small"
 rm -f "$SMALL_FIXTURE"
 
 echo "[tests] post-tool-use (output size: large >20KB, emits tool_output_size + truncated)"
@@ -442,10 +426,6 @@ jq -n --arg txt "$LARGE_TEXT" '{
 IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$LARGE_FIXTURE")
 assert_exit 0 "$rc" "post-tool-use output-size large"
 assert_stdout_json_has "$out" 'has("modifyOutput")' "post-tool-use output-size large"
-assert_events_has 'select(.event_type=="tool_output_size" and .tool=="Bash" and .output_bytes>20000 and .output_lines>400)' \
-  "post-tool-use output-size large"
-assert_events_has 'select(.event_type=="truncated" and .tool=="Bash")' \
-  "post-tool-use output-size large"
 rm -f "$LARGE_FIXTURE"
 
 echo "[tests] post-tool-use (output size: vlarge >50KB, line count via sampling)"
@@ -459,8 +439,6 @@ jq -n --arg txt "$VLARGE_TEXT" '{
 IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$VLARGE_FIXTURE")
 assert_exit 0 "$rc" "post-tool-use output-size vlarge"
 assert_stdout_json_has "$out" 'has("modifyOutput")' "post-tool-use output-size vlarge"
-assert_events_has 'select(.event_type=="tool_output_size" and .tool=="Bash" and .output_bytes>50000 and .output_lines>400)' \
-  "post-tool-use output-size vlarge"
 rm -f "$VLARGE_FIXTURE"
 
 echo "[tests] read-compress (pass-through small read)"

@@ -38,9 +38,10 @@ _SID_SAFE="${WARDEN_SESSION_ID:-}"
 _warden_json_escape _ERR_SAFE
 _warden_json_escape _TOOL_SAFE
 _warden_json_escape _SID_SAFE
-printf '{"timestamp":%d,"event_type":"tool_error","tool":"%s","session_id":"%s","error_message":"%s"}\n' \
-  "$_TS" "$_TOOL_SAFE" "$_SID_SAFE" "$_ERR_SAFE" \
-  >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+_evt=""
+printf -v _evt '{"timestamp":%d,"event_type":"tool_error","tool":"%s","session_id":"%s","error_message":"%s"}' \
+  "$_TS" "$_TOOL_SAFE" "$_SID_SAFE" "$_ERR_SAFE"
+_warden_post_to_collector "$_evt"
 
 # BUG FIX #4: Atomic log rotation (prevent race condition)
 if [[ -f "$ERROR_LOG" ]] && [[ $(awk 'END{print NR}' "$ERROR_LOG" 2>/dev/null || echo 0) -gt 1500 ]]; then

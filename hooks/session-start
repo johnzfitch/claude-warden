@@ -27,7 +27,6 @@ if [ -n "$SESSION_ID" ]; then
 
   # Snapshot budget at session start
   _warden_budget_export > "$WARDEN_SESSION_BUDGET_DIR/$SESSION_ID.start.json" 2>/dev/null || true
-  _warden_write_budget_prom
 
   # Initialize unified agent stats CSV with header if needed
   if [ ! -f "$AGENT_STATS" ]; then
@@ -46,7 +45,6 @@ if [ -n "$SESSION_ID" ]; then
   _evt=""
   printf -v _evt '{"timestamp":0,"event_type":"session_start","tool":"SessionStart","session_id":"%s","cwd":"%s","session_label":"%s"}' \
     "$SESSION_ID" "$_CWD_SAFE" "$SESSION_LABEL"
-  echo "$_evt" >> "$WARDEN_EVENTS_FILE" 2>/dev/null
   _warden_post_to_collector "$_evt"
 fi
 

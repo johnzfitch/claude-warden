@@ -29,11 +29,12 @@ if printf '%s' "$WARDEN_INPUT" | jq -e '.content | type == "object"' &>/dev/null
     CONTENT_FIELDS=$(printf '%s' "$WARDEN_INPUT" | jq '.content | length' 2>/dev/null || echo 0)
 fi
 
-# Emit elicitation_result event to events.jsonl
+# Emit elicitation_result event to collector
 _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-printf '{"timestamp":%d,"event_type":"elicitation_result","tool":"ElicitationResult","mcp_server":"%s","elicitation_id":"%s","action":"%s","mode":"%s","content_fields":%d}\n' \
-    "$_TS" "$MCP_SERVER" "$ELICITATION_ID" "$ACTION" "$MODE" "$CONTENT_FIELDS" \
-    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+_evt=""
+printf -v _evt '{"timestamp":%d,"event_type":"elicitation_result","tool":"ElicitationResult","mcp_server":"%s","elicitation_id":"%s","action":"%s","mode":"%s","content_fields":%d}' \
+    "$_TS" "$MCP_SERVER" "$ELICITATION_ID" "$ACTION" "$MODE" "$CONTENT_FIELDS"
+_warden_post_to_collector "$_evt"
 
 # Allow result to be sent (exit 0 = send original response)
 exit 0
