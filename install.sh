@@ -841,7 +841,7 @@ if (( ${#SHELL_RC_NEEDED[@]} > 0 )); then
 fi
 
 # === Interactive walkthrough (opt-in) ===
-if [[ -t 0 ]] && ! $DRY_RUN; then
+if [[ -t 0 ]]; then
     echo ""
     printf "  ${CYAN}Want a quick walkthrough of what was installed? [y/N]:${RESET} "
     read -r _TOUR_CHOICE
