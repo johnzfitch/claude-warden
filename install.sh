@@ -25,15 +25,12 @@ WARDEN_VERSION="unknown"
 MODE="symlink"
 DRY_RUN=false
 PROFILE=""
-LOGGING=""
 MONITORING=""
 
 for arg in "$@"; do
     case "$arg" in
         --copy) MODE="copy" ;;
         --dry-run) DRY_RUN=true ;;
-        --logging) LOGGING="yes" ;;
-        --no-logging) LOGGING="no" ;;
         --monitoring) MONITORING="yes" ;;
         --no-monitoring) MONITORING="no" ;;
         --profile=*) PROFILE="${arg#--profile=}" ;;
@@ -43,13 +40,11 @@ for arg in "$@"; do
             continue
             ;;
         --help|-h)
-            echo "Usage: $0 [--copy] [--dry-run] [--profile NAME] [--logging|--no-logging] [--monitoring|--no-monitoring]"
+            echo "Usage: $0 [--copy] [--dry-run] [--profile NAME] [--monitoring|--no-monitoring]"
             echo ""
             echo "Options:"
             echo "  --copy            Copy files instead of symlinking (default: symlink)"
             echo "  --dry-run         Show what would be done without making changes"
-            echo "  --logging         Build and install the Go collector for local event logging"
-            echo "  --no-logging      Skip collector setup (events still go to JSONL file)"
             echo "  --monitoring      Start Docker monitoring stack (Grafana, Loki, Prometheus, OTEL)"
             echo "  --no-monitoring   Skip monitoring stack setup"
             echo "  --profile NAME    Use a configuration profile:"
@@ -58,6 +53,8 @@ for arg in "$@"; do
             echo "                      strict    - Aggressive limits, tight budgets"
             echo ""
             echo "If --profile is not specified, you'll be prompted to choose."
+            echo ""
+            echo "The Go collector is always built (requires Go 1.23+)."
             exit 0
             ;;
         *)
@@ -184,36 +181,9 @@ if [[ ! -f "$PROFILE_FILE" ]]; then
 fi
 info "Profile: $PROFILE"
 
-# === Logging / Collector prompt ===
+# === Collector paths ===
 COLLECTOR_BIN_PATH="$HOME/.local/bin/warden-collector"
 COLLECTOR_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden"
-
-if [[ -z "$LOGGING" ]]; then
-    if [[ -t 0 ]]; then
-        echo ""
-        printf "${BOLD}Enable local logging collector?${RESET}\n"
-        echo ""
-        printf "  Stores hook events in SQLite for API queries and dashboards.\n"
-        printf "  Requires: Go 1.21+ (to build) | ~15MB disk\n"
-        printf "  Events still go to events.jsonl regardless.\n"
-        echo ""
-        printf "  Enable logging? [y/N]: "
-        read -r _LOG_CHOICE
-        case "${_LOG_CHOICE:-n}" in
-            [yY]*) LOGGING="yes" ;;
-            *)     LOGGING="no" ;;
-        esac
-    else
-        # Non-interactive: skip collector by default
-        LOGGING="no"
-    fi
-fi
-
-if [[ "$LOGGING" == "yes" ]]; then
-    info "Logging: enabled (collector will be built and installed)"
-else
-    info "Logging: disabled (events go to JSONL only)"
-fi
 
 # === Monitoring stack prompt ===
 MONITORING_DIR="$WARDEN_DIR/monitoring"
@@ -419,68 +389,68 @@ if ! $DRY_RUN; then
     [[ -f "$STATUSLINE_DST" ]] && chmod +x "$STATUSLINE_DST"
 fi
 
-# === Build and install collector (if logging enabled) ===
+# === Build and install Go collector (required) ===
+info "Building Go collector..."
+
+COLLECTOR_SRC="$WARDEN_DIR/collector"
 COLLECTOR_INSTALLED=false
-if [[ "$LOGGING" == "yes" ]]; then
-    info "Setting up Go collector..."
 
-    COLLECTOR_SRC="$WARDEN_DIR/collector"
-    if [[ ! -f "$COLLECTOR_SRC/main.go" ]]; then
-        error "Collector source not found at $COLLECTOR_SRC/"
-        dim "Clone the full repo or use --no-logging"
-    elif ! command -v go &>/dev/null; then
-        error "Go not found. Install Go 1.21+ to build the collector."
-        dim "  Arch: sudo pacman -S go"
-        dim "  macOS: brew install go"
-        dim "  Or download from https://go.dev/dl/"
-        dim "Skipping collector build."
-    else
-        GO_VERSION=$(go version | sed -n 's/.*go\([0-9]*\.[0-9]*\).*/\1/p')
-        dim "Found Go $GO_VERSION"
+if [[ ! -f "$COLLECTOR_SRC/main.go" ]]; then
+    error "Collector source not found at $COLLECTOR_SRC/"
+    error "Clone the full repo to install claude-warden."
+    exit 1
+fi
 
-        if $DRY_RUN; then
-            dim "(dry-run) Would build collector and install to $COLLECTOR_BIN_PATH"
-            COLLECTOR_INSTALLED=true  # Treat as success for summary
-        else
-            # Build
-            dim "Building warden-collector..."
-            if (cd "$COLLECTOR_SRC" && go build -o warden-collector . 2>&1); then
-                # Install
-                mkdir -p "$(dirname "$COLLECTOR_BIN_PATH")"
+if ! command -v go &>/dev/null; then
+    error "Go not found. Go 1.23+ is required to build the collector."
+    dim "  Arch: sudo pacman -S go"
+    dim "  macOS: brew install go"
+    dim "  Or download from https://go.dev/dl/"
+    exit 1
+fi
 
-                # Handle "text file busy" (binary currently running)
-                if [[ -f "$COLLECTOR_BIN_PATH" ]]; then
-                    RUNNING_PID=""
-                    PIDFILE="$COLLECTOR_STATE_DIR/collector.pid"
-                    if [[ -f "$PIDFILE" ]]; then
-                        RUNNING_PID=$(<"$PIDFILE")
-                        if [[ "$RUNNING_PID" =~ ^[0-9]+$ ]] && kill -0 "$RUNNING_PID" 2>/dev/null; then
-                            dim "Stopping running collector (pid $RUNNING_PID)..."
-                            kill "$RUNNING_PID" 2>/dev/null || true
-                            sleep 0.3
-                        fi
-                    fi
-                    rm -f "$COLLECTOR_BIN_PATH" 2>/dev/null || true
-                fi
+GO_VERSION=$(go version | sed -n 's/.*go\([0-9]*\.[0-9]*\).*/\1/p')
+GO_MAJOR=${GO_VERSION%%.*}
+GO_MINOR=${GO_VERSION#*.}
+if (( GO_MAJOR < 1 || (GO_MAJOR == 1 && GO_MINOR < 23) )); then
+    error "Go $GO_VERSION found, but Go 1.23+ is required."
+    exit 1
+fi
+dim "Found Go $GO_VERSION"
 
-                cp "$COLLECTOR_SRC/warden-collector" "$COLLECTOR_BIN_PATH"
-                chmod +x "$COLLECTOR_BIN_PATH"
-                COLLECTOR_INSTALLED=true
-                dim "Installed $COLLECTOR_BIN_PATH"
-
-                # Ensure state directory exists
-                mkdir -p "$COLLECTOR_STATE_DIR"
-            else
-                error "Collector build failed. Skipping installation."
-            fi
-        fi
-    fi
-
-    # Inject WARDEN_COLLECTOR_ENABLED into merged env
-    WARDEN_ENV_JSON=$(printf '%s' "$WARDEN_ENV_JSON" | jq '. + {"WARDEN_COLLECTOR_ENABLED": "1"}')
+if $DRY_RUN; then
+    dim "(dry-run) Would build collector and install to $COLLECTOR_BIN_PATH"
+    COLLECTOR_INSTALLED=true
 else
-    # Explicitly disable so hooks don't try to start the collector
-    WARDEN_ENV_JSON=$(printf '%s' "$WARDEN_ENV_JSON" | jq '. + {"WARDEN_COLLECTOR_ENABLED": "0"}')
+    dim "Building warden-collector..."
+    if (cd "$COLLECTOR_SRC" && go build -o warden-collector . 2>&1); then
+        mkdir -p "$(dirname "$COLLECTOR_BIN_PATH")"
+
+        # Handle "text file busy" (binary currently running)
+        if [[ -f "$COLLECTOR_BIN_PATH" ]]; then
+            RUNNING_PID=""
+            PIDFILE="$COLLECTOR_STATE_DIR/collector.pid"
+            if [[ -f "$PIDFILE" ]]; then
+                RUNNING_PID=$(<"$PIDFILE")
+                if [[ "$RUNNING_PID" =~ ^[0-9]+$ ]] && kill -0 "$RUNNING_PID" 2>/dev/null; then
+                    dim "Stopping running collector (pid $RUNNING_PID)..."
+                    kill "$RUNNING_PID" 2>/dev/null || true
+                    sleep 0.3
+                fi
+            fi
+            rm -f "$COLLECTOR_BIN_PATH" 2>/dev/null || true
+        fi
+
+        cp "$COLLECTOR_SRC/warden-collector" "$COLLECTOR_BIN_PATH"
+        chmod +x "$COLLECTOR_BIN_PATH"
+        COLLECTOR_INSTALLED=true
+        dim "Installed $COLLECTOR_BIN_PATH"
+
+        mkdir -p "$COLLECTOR_STATE_DIR"
+    else
+        error "Collector build failed."
+        exit 1
+    fi
 fi
 
 # === Start monitoring stack (if selected) ===
@@ -783,14 +753,8 @@ echo "  Hooks:      $HOOKS_DIR/ (${#HOOK_FILES[@]} hooks + lib, $MODE mode)"
 echo "  Config:     $WARDEN_ENV_DIR/warden.env"
 echo "  Statusline: $STATUSLINE_DST"
 echo "  Settings:   $SETTINGS_FILE"
-if $COLLECTOR_INSTALLED; then
-    echo "  Collector:  $COLLECTOR_BIN_PATH"
-    echo "  State:      $COLLECTOR_STATE_DIR/"
-elif [[ "$LOGGING" == "yes" ]]; then
-    echo "  Collector:  NOT INSTALLED (build failed, see errors above)"
-else
-    echo "  Collector:  disabled (use --logging to enable)"
-fi
+echo "  Collector:  $COLLECTOR_BIN_PATH"
+echo "  State:      $COLLECTOR_STATE_DIR/"
 if [[ -n "${BACKUP_DIR:-}" ]]; then
     echo "  Backup:     $BACKUP_DIR/"
 fi
@@ -818,7 +782,6 @@ else
 fi
 echo ""
 echo "  To change profile:    ./install.sh --profile <name>"
-echo "  To change logging:    ./install.sh --logging  OR  --no-logging"
 echo "  To change monitoring: ./install.sh --monitoring  OR  --no-monitoring"
 echo "  To customize:         cp config/user.json.template config/user.json && edit"
 

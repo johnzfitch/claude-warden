@@ -535,8 +535,6 @@ _warden_maybe_scrub() {
 # The collector is a single-writer SQLite process; starting a second
 # instance would fail on bind anyway, so this is safe to race.
 _warden_ensure_collector() {
-    [[ "${WARDEN_COLLECTOR_ENABLED:-1}" == "0" ]] && return 0
-
     local _state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden"
     local _pidfile="${_state_dir}/collector.pid"
     local _logfile="${_state_dir}/collector.log"
@@ -594,7 +592,6 @@ _warden_ensure_collector() {
 # Falls back silently if collector is not running.
 # Usage: _warden_post_to_collector JSON_STRING
 _warden_post_to_collector() {
-    [[ "${WARDEN_COLLECTOR_ENABLED:-1}" == "0" ]] && return 0
     local _payload="$1"
     # Fire-and-forget: 100ms timeout, background, discard output
     command curl -s --max-time 0.1 -X POST \
