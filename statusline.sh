@@ -335,15 +335,28 @@ USED_PCT_DISPLAY="0"
 # Context % priority:
 # 1. Collector (OTEL-sourced, tracks context growth between API calls)
 # 2. Claude Code's used_percentage (stale between API calls)
-# 3. Computed from current_usage fields (least accurate)
 COLLECTOR_SOCK="${WARDEN_COLLECTOR_SOCK:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden/collector.sock}"
+COLLECTOR_JSON=""
 COLLECTOR_PCT=""
+COLLECTOR_TOOL_COUNT=""
+COLLECTOR_SUBAGENT_COUNT=""
+COLLECTOR_LAST_TOOL=""
+COLLECTOR_LAST_TOOL_MS=""
+COLLECTOR_CACHE_HIT=""
 if [ -n "$SESSION_ID" ] && [ -S "$COLLECTOR_SOCK" ]; then
     COLLECTOR_JSON="$(curl -sf --max-time 0.05 \
         --unix-socket "$COLLECTOR_SOCK" \
         "http://localhost/v1/sessions/${SESSION_ID}/context" 2>/dev/null)" || COLLECTOR_JSON=""
     if [ -n "$COLLECTOR_JSON" ]; then
-        COLLECTOR_PCT="$(printf '%s' "$COLLECTOR_JSON" | jq -r '.used_pct // empty' 2>/dev/null)" || COLLECTOR_PCT=""
+        # Extract all useful fields in one jq call
+        eval "$(printf '%s' "$COLLECTOR_JSON" | jq -r '
+            "COLLECTOR_PCT=\(.used_pct // "")",
+            "COLLECTOR_TOOL_COUNT=\(.tool_count // 0)",
+            "COLLECTOR_SUBAGENT_COUNT=\(.subagent_count // 0)",
+            "COLLECTOR_LAST_TOOL=\(.last_tool // "")",
+            "COLLECTOR_LAST_TOOL_MS=\(.last_tool_duration_ms // "")",
+            "COLLECTOR_CACHE_HIT=\(.cache_hit_rate // "")"
+        ' 2>/dev/null)" || true
     fi
 fi
 
@@ -550,54 +563,20 @@ if [ -n "$RESET_LABEL" ]; then
     RESET_LABEL="$(abbreviate_reset_label "$RESET_LABEL")"
 fi
 
+# Tool count: prefer collector (OTEL-sourced), fallback to JSON
 TOOL_COUNT=""
-# Prefer hook-tracked count (session state file) over JSON's tool_count,
-# which Claude Code often sends as 0 or omits entirely.
-if [ -n "$SESSION_ID" ]; then
-    SESSION_STATE_FILE="$STATE_DIR/session-$SESSION_ID"
-    if [ -f "$SESSION_STATE_FILE" ]; then
-        SS_COUNT="" _SS_TS=""
-        IFS='|' read -r SS_COUNT _ _ _SS_TS < "$SESSION_STATE_FILE" 2>/dev/null || true
-        if [[ "${SS_COUNT:-}" =~ ^[0-9]+$ ]] && [ "$SS_COUNT" -gt 0 ]; then
-            TOOL_COUNT="$SS_COUNT"
-        fi
-    fi
-fi
-# Fallback to JSON tool_count if hooks haven't tracked anything yet
-if [ -z "$TOOL_COUNT" ] && [[ "$TOOL_COUNT_RAW" =~ ^[0-9]+$ ]] && [ "$TOOL_COUNT_RAW" -gt 0 ]; then
+if [ "${COLLECTOR_TOOL_COUNT:-0}" -gt 0 ]; then
+    TOOL_COUNT="$COLLECTOR_TOOL_COUNT"
+elif [[ "$TOOL_COUNT_RAW" =~ ^[0-9]+$ ]] && [ "$TOOL_COUNT_RAW" -gt 0 ]; then
     TOOL_COUNT="$TOOL_COUNT_RAW"
 fi
 
-SUB_COUNT=0
-if [ -n "$SESSION_ID" ]; then
-    SUB_COUNT_FILE="$STATE_DIR/subagent-count-$SESSION_ID"
-    if [ -f "$SUB_COUNT_FILE" ]; then
-        SUB_VALUE="" _SUB_TS=""
-        IFS='|' read -r SUB_VALUE _SUB_TS < "$SUB_COUNT_FILE" 2>/dev/null || true
-        SUB_COUNT=$(num_or_zero "${SUB_VALUE:-0}")
-    fi
-fi
-
-# Tokens saved (cumulative, written by hooks)
-TOKENS_SAVED=0
-if [ -n "$SESSION_ID" ]; then
-    SAVED_FILE="$STATE_DIR/saved-$SESSION_ID"
-    if [ -f "$SAVED_FILE" ]; then
-        read -r TOKENS_SAVED < "$SAVED_FILE" 2>/dev/null || true
-        [[ "${TOKENS_SAVED:-}" =~ ^[0-9]+$ ]] || TOKENS_SAVED=0
-    fi
-fi
-
-# Last tool latency (written by post-tool-use)
-LAST_LATENCY_MS=""
-LAST_LATENCY_TOOL=""
-if [ -n "$SESSION_ID" ]; then
-    LATENCY_FILE="$STATE_DIR/latency-$SESSION_ID"
-    if [ -f "$LATENCY_FILE" ]; then
-        IFS='|' read -r LAST_LATENCY_MS LAST_LATENCY_TOOL < "$LATENCY_FILE" 2>/dev/null || true
-        [[ "${LAST_LATENCY_MS:-}" =~ ^[0-9]+$ ]] || LAST_LATENCY_MS=""
-    fi
-fi
+# Subagent count and last tool latency from collector (OTEL-sourced)
+SUB_COUNT=$(num_or_zero "${COLLECTOR_SUBAGENT_COUNT:-0}")
+LAST_LATENCY_MS="${COLLECTOR_LAST_TOOL_MS:-}"
+LAST_LATENCY_TOOL="${COLLECTOR_LAST_TOOL:-}"
+# Strip span name prefix if present (e.g., "claude_code.tool.Read" -> "Read")
+LAST_LATENCY_TOOL="${LAST_LATENCY_TOOL##*.}"
 
 CTX_TOTAL_FMT="$(format_tokens "$CONTEXT_SIZE")"
 STATUSLINE_MAX_BYTES="${WARDEN_STATUSLINE_MAX_BYTES:-72}"

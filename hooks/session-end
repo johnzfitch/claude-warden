@@ -93,8 +93,6 @@ if [[ -d "$WARDEN_STATE_DIR" ]]; then
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'state-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'saved-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'latency-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.tool-start-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.quiet-override-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'clears-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
@@ -133,8 +131,6 @@ rm -f "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID" 2>/dev/null
 # Remove tool-start and quiet-override markers for this session
 rm -f "$WARDEN_STATE_DIR"/.tool-start-*-"$SESSION_ID" 2>/dev/null
 rm -f "$WARDEN_STATE_DIR"/.quiet-override-*-"$SESSION_ID" 2>/dev/null
-rm -f "$WARDEN_STATE_DIR/latency-$SESSION_ID" 2>/dev/null
-rm -f "$WARDEN_STATE_DIR/saved-$SESSION_ID" 2>/dev/null
 rm -f "$WARDEN_STATE_DIR/session-$SESSION_ID" 2>/dev/null
 # Remove per-session lock files + legacy lock dirs
 rm -f "$WARDEN_STATE_DIR/session-$SESSION_ID.lock" 2>/dev/null

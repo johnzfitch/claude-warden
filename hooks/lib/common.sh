@@ -240,21 +240,6 @@ _warden_budget_check() {
     (( consumed < WARDEN_BUDGET_TOTAL ))
 }
 
-# Accumulate tokens saved under lock (prevents concurrent read-modify-write loss)
-_warden_accumulate_saved() {
-    local tokens="$1"
-    local sid="${WARDEN_SESSION_ID:-}"
-    [[ -z "$sid" ]] && return
-    (( tokens <= 0 )) 2>/dev/null && return
-    local sf="$WARDEN_STATE_DIR/saved-$sid"
-    _accum() {
-        local prev=0
-        [[ -f "$sf" ]] && prev=$(<"$sf" 2>/dev/null) && [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
-        printf '%d\n' "$((prev + tokens))" > "$sf"
-    }
-    _warden_with_lock "$sf.lock" _accum
-}
-
 # Read a numeric value from a file with fallback (prevents arithmetic errors on corrupt/empty files)
 _warden_read_numeric() {
     local file="$1" fallback="${2:-0}"
@@ -555,9 +540,6 @@ _warden_emit_block() {
     printf -v _evt '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}' \
         "$ts" "$tool_safe" "$sid_safe" "$cmd_safe" "$rule" "$tokens"
     _warden_post_to_collector "$_evt"
-
-    # Accumulate tokens saved for statusline
-    _warden_accumulate_saved "$tokens"
 }
 
 # Emit JSONL event for post-tool-use accounting
@@ -589,9 +571,6 @@ _warden_emit_event() {
     printf -v _evt '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}' \
         "$ts" "$etype" "$tool_safe" "$sid_safe" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field"
     _warden_post_to_collector "$_evt"
-
-    # Accumulate tokens saved for statusline
-    _warden_accumulate_saved "$saved"
 
     # Track final output size for subagent byte correction (read by EXIT trap in post-tool-use)
     _WARDEN_FINAL_SIZE="$final_bytes"

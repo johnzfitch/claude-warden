@@ -56,6 +56,15 @@ type SessionContext struct {
 	ToolCount           int     `json:"tool_count"`
 	UsedPct             float64 `json:"used_pct"`
 	UpdatedAt           int64   `json:"updated_at_ns"`
+
+	// Extended fields for statusline (Phase 5)
+	CompactThresholdPct int     `json:"compact_threshold_pct"` // default 85
+	EffectiveWindow     int     `json:"effective_window"`      // context_window - 20000
+	CompactThreshold    int     `json:"compact_threshold"`     // calculated threshold
+	LastTool            string  `json:"last_tool"`             // most recent tool name
+	LastToolDurationMS  int64   `json:"last_tool_duration_ms"` // most recent tool duration
+	SubagentCount       int     `json:"subagent_count"`        // active subagents
+	CacheHitRate        float64 `json:"cache_hit_rate"`        // cache_read / (cache_read + input)
 }
 
 // GetSessionContext returns the latest context data for a session.
@@ -77,6 +86,7 @@ func (s *Store) GetSessionContext(ctx context.Context, sessionID string) (*Sessi
 	if err != nil {
 		return nil, err
 	}
+
 	// Estimated context = last known input + tool results accumulated since
 	sc.EstimatedContext = sc.InputTokens + sc.PendingOutputTokens
 	if sc.ContextWindow > 0 {
@@ -85,7 +95,69 @@ func (s *Store) GetSessionContext(ctx context.Context, sessionID string) (*Sessi
 			sc.UsedPct = 100
 		}
 	}
+
+	// Extended fields for statusline
+	sc.CompactThresholdPct = 85 // default, could be made configurable
+	sc.EffectiveWindow = sc.ContextWindow - 20000
+	if sc.EffectiveWindow < 0 {
+		sc.EffectiveWindow = sc.ContextWindow
+	}
+	// compact_threshold = min(floor(effective_window * pct/100), effective_window - 13000)
+	threshold := sc.EffectiveWindow * sc.CompactThresholdPct / 100
+	maxThreshold := sc.EffectiveWindow - 13000
+	if maxThreshold < 0 {
+		maxThreshold = 0
+	}
+	if threshold > maxThreshold {
+		threshold = maxThreshold
+	}
+	sc.CompactThreshold = threshold
+
+	// Cache hit rate
+	totalInput := sc.CacheReadTokens + sc.InputTokens
+	if totalInput > 0 {
+		sc.CacheHitRate = float64(sc.CacheReadTokens) / float64(totalInput) * 100
+	}
+
+	// Last tool and subagent count from recent spans/events
+	s.enrichWithLastTool(ctx, sessionID, sc)
+	s.enrichWithSubagentCount(ctx, sessionID, sc)
+
 	return sc, nil
+}
+
+// enrichWithLastTool adds the most recent tool name and duration.
+func (s *Store) enrichWithLastTool(ctx context.Context, sessionID string, sc *SessionContext) {
+	// Get most recent tool span for this session
+	var name string
+	var durationMS int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT name, duration_ms FROM spans
+		WHERE session_id = ? AND name LIKE 'claude_code.tool%'
+		ORDER BY end_ns DESC LIMIT 1`, sessionID,
+	).Scan(&name, &durationMS)
+	if err == nil {
+		sc.LastTool = name
+		sc.LastToolDurationMS = durationMS
+	}
+}
+
+// enrichWithSubagentCount counts active subagents from hook events.
+func (s *Store) enrichWithSubagentCount(ctx context.Context, sessionID string, sc *SessionContext) {
+	// Count subagent_start - subagent_stop for this session
+	var starts, stops int
+	s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM hook_events
+		WHERE session_id = ? AND event_type = 'subagent_start'`, sessionID,
+	).Scan(&starts)
+	s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM hook_events
+		WHERE session_id = ? AND event_type = 'subagent_stop'`, sessionID,
+	).Scan(&stops)
+	sc.SubagentCount = starts - stops
+	if sc.SubagentCount < 0 {
+		sc.SubagentCount = 0
+	}
 }
 
 // SessionSummary is a lightweight session listing.

@@ -13,15 +13,20 @@ SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
 [[ -z "$SESSION_ID" ]] && exit 0
 _warden_resolve_session_start "$SESSION_ID"
 
-# === GATHER SESSION STATE ===
-STATE_FILE="$WARDEN_STATE_DIR/session-$SESSION_ID"
+# === GATHER SESSION STATE FROM COLLECTOR ===
 SESSION_START_FILE="$HOME/.claude/.session-times/$SESSION_ID.start"
+COLLECTOR_SOCK="${WARDEN_COLLECTOR_SOCK:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden/collector.sock}"
 
-# Tool call count
 TOOL_COUNT=0
-if [[ -f "$STATE_FILE" ]]; then
-    IFS='|' read -r TOOL_COUNT _REST < "$STATE_FILE" 2>/dev/null
-    [[ "$TOOL_COUNT" =~ ^[0-9]+$ ]] || TOOL_COUNT=0
+SUBAGENT_COUNT=0
+if [[ -S "$COLLECTOR_SOCK" ]]; then
+    COLLECTOR_JSON=$(curl -sf --max-time 0.1 \
+        --unix-socket "$COLLECTOR_SOCK" \
+        "http://localhost/v1/sessions/${SESSION_ID}/context" 2>/dev/null) || COLLECTOR_JSON=""
+    if [[ -n "$COLLECTOR_JSON" ]]; then
+        TOOL_COUNT=$(printf '%s' "$COLLECTOR_JSON" | jq -r '.tool_count // 0')
+        SUBAGENT_COUNT=$(printf '%s' "$COLLECTOR_JSON" | jq -r '.subagent_count // 0')
+    fi
 fi
 
 # Session duration
@@ -31,14 +36,6 @@ if [[ -f "$SESSION_START_FILE" ]]; then
     NOW=$(date +%s)
     DURATION_SEC=$((NOW - START_TIME))
     DURATION_MIN=$((DURATION_SEC / 60))
-fi
-
-# Active subagent count (per-session file since Phase 3)
-SUBAGENT_COUNT=0
-SUBAGENT_COUNT_FILE="$WARDEN_STATE_DIR/subagent-count-$SESSION_ID"
-if [[ -f "$SUBAGENT_COUNT_FILE" ]]; then
-    IFS='|' read -r COUNT _REST < "$SUBAGENT_COUNT_FILE" 2>/dev/null
-    [[ "$COUNT" =~ ^[0-9]+$ ]] && SUBAGENT_COUNT="$COUNT"
 fi
 
 # Budget state
