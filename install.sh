@@ -752,38 +752,82 @@ echo "  Version:    $WARDEN_VERSION"
 echo "  Profile:    $PROFILE"
 echo "  Hooks:      $HOOKS_DIR/ (${#HOOK_FILES[@]} hooks + lib, $MODE mode)"
 echo "  Config:     $WARDEN_ENV_DIR/warden.env"
-echo "  Statusline: $STATUSLINE_DST"
 echo "  Settings:   $SETTINGS_FILE"
-echo "  Collector:  $COLLECTOR_BIN_PATH"
-echo "  State:      $COLLECTOR_STATE_DIR/"
 if [[ -n "${BACKUP_DIR:-}" ]]; then
     echo "  Backup:     $BACKUP_DIR/"
 fi
 if [[ -n "${SETTINGS_BACKUP:-}" ]]; then
     echo "  Backup:     $SETTINGS_BACKUP"
 fi
+
+# === Architecture diagram ===
 echo ""
-echo "  Start a new Claude Code session to activate hooks."
-if [[ "$MODE" == "symlink" ]]; then
-    echo "  Edits to $WARDEN_DIR/ take effect immediately."
-    echo "  Run 'git pull' in the repo to update hooks."
-fi
-if $COLLECTOR_INSTALLED; then
-    echo "  Collector starts automatically on session-start."
-    echo "  API: http://127.0.0.1:9464/v1/sessions"
-fi
+printf "${BOLD}  Core Layer (always installed, no Docker required)${RESET}\n"
+echo ""
+echo "  Claude Code"
+echo "      |"
+echo "      |--OTLP (HTTP/JSON)-----------------------------------."
+echo "      |                                                      |"
+echo "      |  SessionStart -----> session-start hook              |"
+echo "      |       |                   |                          |"
+echo "      |       v                   v                          v"
+echo "      |  PreToolUse          warden-collector          :4319 OTLP"
+echo "      |       |               (Go binary)              receiver"
+echo "      |       v                   |                          |"
+echo "      |  [tool runs]              v                          |"
+echo "      |       |           collector.sock (UDS)               |"
+echo "      |       v                   |                          |"
+echo "      |  PostToolUse              v                          |"
+echo "      |       |          .---collector.db (SQLite)-----.     |"
+echo "      |       v          |                             |     |"
+echo "      |  SessionEnd      |  sessions      hook_events  |<---'"
+echo "      |                  |  spans          subagent_budgets"
+echo "      |                  |  token counts   budget-deny files"
+echo "      |                  '-------|---------------------'"
+echo "      |                          |"
+echo "      |                    .-----+------."
+echo "      |                    |            |"
+echo "      v                    v            v"
+echo "  statusline.sh       viewer UI    API queries"
+echo "  (context %)         (:8477)      /v1/sessions"
+echo ""
+printf "  ${DIM}SQLite: $COLLECTOR_STATE_DIR/collector.db${RESET}\n"
+printf "  ${DIM}Binary: $COLLECTOR_BIN_PATH${RESET}\n"
+printf "  ${DIM}Starts automatically on session-start. Stops when idle.${RESET}\n"
+
 if $MONITORING_STARTED; then
+    echo ""
+    printf "${BOLD}  Optional Docker Layer${RESET}\n"
+    echo "  ================================================================"
+    printf "  ${YELLOW}Requires: Docker + Docker Compose${RESET}\n"
+    echo "  ================================================================"
+    echo ""
+    echo "  events.jsonl --filelog--> OTEL Collector ---> Loki (logs)"
+    echo "                                |-----------> Prometheus (metrics)"
+    echo "                                '-----------> Tempo (traces)"
+    echo "                                                   |"
+    echo "                                                   v"
+    echo "                                               Grafana (:3000)"
+    echo ""
     echo "  Grafana:    http://localhost:3000 (admin/admin)"
     echo "  Prometheus: http://localhost:9090"
     echo "  Loki:       http://localhost:3100"
 elif [[ "$MONITORING" == "yes" ]]; then
-    echo "  Monitoring: NOT STARTED (see errors above)"
+    echo ""
+    printf "  ${RED}Monitoring: NOT STARTED (see errors above)${RESET}\n"
 else
-    echo "  Monitoring: not started (use --monitoring to enable)"
+    echo ""
+    printf "  ${DIM}Optional: ./install.sh --monitoring  (Docker + Compose required)${RESET}\n"
+    printf "  ${DIM}Adds Grafana dashboards, Loki log aggregation, Tempo traces.${RESET}\n"
+fi
+
+echo ""
+echo "  Start a new Claude Code session to activate hooks."
+if [[ "$MODE" == "symlink" ]]; then
+    echo "  Edits to $WARDEN_DIR/ take effect immediately."
 fi
 echo ""
 echo "  To change profile:    ./install.sh --profile <name>"
-echo "  To change monitoring: ./install.sh --monitoring  OR  --no-monitoring"
 echo "  To customize:         cp config/user.json.template config/user.json && edit"
 
 if (( ${#SHELL_RC_NEEDED[@]} > 0 )); then
