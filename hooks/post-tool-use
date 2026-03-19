@@ -150,7 +150,6 @@ if (( OUTPUT_SIZE > 50 )); then
             _STRIPPED=$(( ${#_RAW} - _CLEANED_SIZE ))
             if (( _STRIPPED > 0 )); then
                 _warden_emit_event "truncated" "$OUTPUT_SIZE" "$_CLEANED_SIZE" "system_reminder"
-                _warden_fire_token_count "$_RAW" "$_CLEANED" "$(( _STRIPPED * 10 / 35 ))" "system_reminder"
                 case "$TOOL_NAME" in
                     Bash|Grep|Glob|Task)
                         # Pre-clean for downstream truncation logic
@@ -365,7 +364,6 @@ if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
         STRUCT_SIZE=${#STRUCTURED}
         if (( STRUCT_SIZE > 200 && STRUCT_SIZE < OUTPUT_SIZE )); then
             _warden_emit_event "truncated" "$OUTPUT_SIZE" "$STRUCT_SIZE" "task_structured"
-            _warden_fire_token_count "$OUTPUT" "$STRUCTURED" "$(( (OUTPUT_SIZE - STRUCT_SIZE) * 10 / 35 ))" "task_structured"
             jq -n --arg text "${STRUCTURED}
 
 [Agent output compressed: $((OUTPUT_SIZE/1024))KB -> $((STRUCT_SIZE/1024))KB structured lines]" \
@@ -399,7 +397,6 @@ fi
 # od + grep is POSIX-compliant and works on macOS/Linux/BSD
 if printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | od -An -tx1 | grep -q ' 00'; then
     _warden_emit_event "truncated" "$OUTPUT_SIZE" 50 "binary_output"
-    _warden_fire_token_count "$OUTPUT" "" "$(( (OUTPUT_SIZE - 50) * 10 / 35 ))" "binary_output"
     jq -n --arg text "[Binary output: $((OUTPUT_SIZE/1024))KB. Use 'file' or redirect.]" '{"modifyOutput":$text}'
     exit 0
 fi
@@ -407,7 +404,6 @@ fi
 # >500KB: suppress entirely
 if (( OUTPUT_SIZE > WARDEN_SUPPRESS_BYTES )); then
     _warden_emit_event "truncated" "$OUTPUT_SIZE" 60 "output_suppressed"
-    _warden_fire_token_count "$OUTPUT" "" "$(( (OUTPUT_SIZE - 60) * 10 / 35 ))" "output_suppressed"
     jq -n --arg text "[Output too large: $((OUTPUT_SIZE/1048576))MB. Use | head or redirect.]" '{"modifyOutput":$text}'
     exit 0
 fi
@@ -433,5 +429,4 @@ ${TAIL}"
     TAIL_NOTE="output_truncated"
 fi
 _warden_emit_event "truncated" "$OUTPUT_SIZE" "$FINAL_SIZE" "$TAIL_NOTE"
-_warden_fire_token_count "$OUTPUT" "$FINAL" "$(( (OUTPUT_SIZE - FINAL_SIZE) * 10 / 35 ))" "$TAIL_NOTE"
 jq -n --arg text "$FINAL" '{"modifyOutput":$text}'

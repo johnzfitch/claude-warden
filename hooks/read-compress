@@ -125,8 +125,6 @@ if [[ -n "$SUMMARY" ]]; then
 [Use Read with offset/limit for full content]"
     WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
     _warden_emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_config"
-    WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
-    _warden_fire_token_count "$ORIGINAL_CONTENT" "$_FINAL" "$(( (ORIGINAL_SIZE - ${#_FINAL}) * 10 / 35 ))" "read_compress_config"
     jq -n --arg text "$_FINAL" '{"modifyOutput":$text}'
     exit 0
 fi
@@ -190,6 +188,4 @@ _FINAL="$SUMMARY
 [Use Read with offset/limit for implementation details]"
 WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
 _warden_emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_code"
-WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
-_warden_fire_token_count "$ORIGINAL_CONTENT" "$_FINAL" "$(( (ORIGINAL_SIZE - ${#_FINAL}) * 10 / 35 ))" "read_compress_code"
 jq -n --arg text "$_FINAL" '{"modifyOutput":$text}'

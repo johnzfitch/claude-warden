@@ -484,11 +484,8 @@ It runs shell syntax checks, validates JSON fixtures, and executes fixture-drive
 
 ```bash
 # Shell syntax
-find hooks -maxdepth 1 -type f ! -name '_token-count-bg' -print0 | xargs -0 bash -n
+find hooks -maxdepth 1 -type f -print0 | xargs -0 bash -n
 bash -n install.sh uninstall.sh statusline.sh
-
-# Optional: validate the Python helper used only for API token counting mode
-command -v python3 >/dev/null 2>&1 && python3 -m py_compile hooks/_token-count-bg
 
 # JSON validity
 jq . settings.hooks.json config/defaults.json config/profiles/*.json >/dev/null
