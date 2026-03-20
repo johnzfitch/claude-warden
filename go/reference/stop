@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# stop: Handle stop events with duration tracking
+set -euo pipefail
+
+# Source shared library
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+LOG_FILE="$HOME/.claude/session-log.txt"
+_warden_read_input || exit 0
+
+# CRITICAL: Check if stop hook is already active to prevent infinite loops
+STOP_HOOK_ACTIVE=$(printf '%s' "$WARDEN_INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null)
+[[ "$STOP_HOOK_ACTIVE" == "true" ]] && exit 0
+
+IFS=$'\t' read -r REASON TOOL_NAME SESSION_ID < <(
+    printf '%s' "$WARDEN_INPUT" | jq -r '[.reason // "unknown", .tool_name // "", .session_id // ""] | @tsv' 2>/dev/null
+) || exit 0
+
+SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
+_warden_resolve_session_start "$SESSION_ID"
+
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+# Calculate session duration
+DURATION="unknown"
+SESSION_TIME_FILE="$HOME/.claude/.session-times/$SESSION_ID.start"
+if [ -n "$SESSION_ID" ] && [ -f "$SESSION_TIME_FILE" ]; then
+  START_TIME=$(_warden_read_numeric "$SESSION_TIME_FILE" "$_WARDEN_NOW_S")
+  END_TIME=$(date +%s)
+  DURATION_SECS=$((END_TIME - START_TIME))
+  DURATION="${DURATION_SECS}s"
+fi
+
+# Log stop event with duration
+if [[ -n "$TOOL_NAME" ]]; then
+  echo "[$TIMESTAMP] Stop: $REASON (tool: $TOOL_NAME, duration: $DURATION)" >> "$LOG_FILE"
+else
+  echo "[$TIMESTAMP] Stop: $REASON (duration: $DURATION)" >> "$LOG_FILE"
+fi
+
+# Emit to collector
+_TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+_REASON_SAFE="$REASON"
+_warden_json_escape _REASON_SAFE
+_evt=""
+printf -v _evt '{"timestamp":%d,"event_type":"session_stop","tool":"Stop","session_id":"%s","reason":"%s","duration_seconds":%d}' \
+  "$_TS" "$SESSION_ID" "$_REASON_SAFE" "${DURATION_SECS:-0}"
+_warden_post_to_collector "$_evt"
+
+# Build stop_hook_summary (shown in Claude UI on session completion)
+jq -n \
+  --arg s "Session: ${DURATION_SECS:-0}s | reason: $REASON" \
+  '{"stop_hook_summary": $s}'
