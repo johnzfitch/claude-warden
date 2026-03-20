@@ -369,6 +369,21 @@ if [[ -d "$LIB_SRC" ]]; then
     fi
 fi
 
+# === Install bin directory (aurl, etc.) ===
+BIN_SRC="$WARDEN_DIR/hooks/bin"
+BIN_DST="$HOOKS_DIR/bin"
+if [[ -d "$BIN_SRC" ]]; then
+    info "Installing hooks/bin ($MODE mode)..."
+    [[ -e "$BIN_DST" || -L "$BIN_DST" ]] && run rm -rf "$BIN_DST"
+    if [[ "$MODE" == "symlink" ]]; then
+        run ln -s "$BIN_SRC" "$BIN_DST"
+        dim "bin/ -> $BIN_SRC"
+    else
+        run cp -a "$BIN_SRC" "$BIN_DST"
+        dim "bin/ (copied)"
+    fi
+fi
+
 # === Install statusline ===
 STATUSLINE_SRC="$WARDEN_DIR/statusline.sh"
 STATUSLINE_DST="$CLAUDE_DIR/statusline.sh"
@@ -392,6 +407,7 @@ fi
 if ! $DRY_RUN; then
     chmod +x "$HOOKS_DIR"/* 2>/dev/null || true
     [[ -d "$HOOKS_DIR/lib" ]] && chmod +x "$HOOKS_DIR/lib"/*.sh 2>/dev/null || true
+    [[ -d "$HOOKS_DIR/bin" ]] && chmod +x "$HOOKS_DIR/bin"/* 2>/dev/null || true
     [[ -f "$STATUSLINE_DST" ]] && chmod +x "$STATUSLINE_DST"
 fi
 
@@ -726,6 +742,23 @@ if ! $DRY_RUN; then
                 dim "$(basename "$lib_script"): syntax OK"
             else
                 error "$(basename "$lib_script"): syntax error!"
+                ERRORS=$((ERRORS + 1))
+            fi
+        done
+    fi
+
+    # Validate bin scripts (aurl, etc.)
+    if [[ -d "$HOOKS_DIR/bin" ]]; then
+        for bin_script in "$HOOKS_DIR/bin"/*; do
+            [[ -f "$bin_script" ]] || continue
+            BIN_TARGET="$bin_script"
+            if [[ -L "$bin_script" ]]; then
+                BIN_TARGET=$(readlink -f "$bin_script" 2>/dev/null || readlink "$bin_script")
+            fi
+            if bash -n "$BIN_TARGET" 2>/dev/null; then
+                dim "$(basename "$bin_script"): syntax OK"
+            else
+                error "$(basename "$bin_script"): syntax error!"
                 ERRORS=$((ERRORS + 1))
             fi
         done

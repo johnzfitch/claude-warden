@@ -26,7 +26,6 @@ IFS=$'\t' read -r FILE_PATH < <(_warden_parse_tool_input file_path)
 # Detect subagent via transcript_path patterns
 IS_SUBAGENT=false
 [[ "$TRANSCRIPT_PATH" == *"/subagents/"* ]] && IS_SUBAGENT=true
-[[ "$TRANSCRIPT_PATH" == *"/tmp/"* ]] && IS_SUBAGENT=true
 
 # Get file content
 CONTENT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
