@@ -19,12 +19,11 @@ var validSessionID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 // APIHandler serves query endpoints for the collector.
 type APIHandler struct {
 	store     *Store
-	stateDir  string // for deny-file writes
 	startTime time.Time
 }
 
-func NewAPIHandler(store *Store, stateDir string) *APIHandler {
-	return &APIHandler{store: store, stateDir: stateDir, startTime: time.Now()}
+func NewAPIHandler(store *Store) *APIHandler {
+	return &APIHandler{store: store, startTime: time.Now()}
 }
 
 func (a *APIHandler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -188,17 +187,25 @@ func (a *APIHandler) handleSubagentBudget(r *http.Request, eventType, agentID, s
 }
 
 // writeDenyFile creates a budget-deny file that pre-tool-use can stat.
+// The directory always mirrors the XDG state path used by the hooks so that
+// deny files are visible regardless of where the collector's -db flag points.
 func (a *APIHandler) writeDenyFile(agentID, reason string) {
-	path := filepath.Join(a.stateDir, "budget-deny-"+agentID)
+	dir := stateDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		slog.Warn("ensure deny file dir failed", "err", err, "agent_id", agentID)
+		return
+	}
+	path := filepath.Join(dir, "budget-deny-"+agentID)
 	if err := os.WriteFile(path, []byte(reason), 0o600); err != nil {
 		slog.Warn("write deny file failed", "err", err, "agent_id", agentID)
+	} else {
+		slog.Info("budget exceeded, deny file written", "agent_id", agentID, "reason", reason)
 	}
-	slog.Info("budget exceeded, deny file written", "agent_id", agentID, "reason", reason)
 }
 
 // removeDenyFile removes a budget-deny file on subagent stop.
 func (a *APIHandler) removeDenyFile(agentID string) {
-	path := filepath.Join(a.stateDir, "budget-deny-"+agentID)
+	path := filepath.Join(stateDir(), "budget-deny-"+agentID)
 	os.Remove(path)
 }
 

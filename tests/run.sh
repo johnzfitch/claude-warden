@@ -129,7 +129,6 @@ assert_quiet_override() {
 
 echo "[tests] pre-tool-use (blocking)"
 for f in \
-  pre-tool-use-curl.json \
   pre-tool-use-grep-recursive.json
 do
   fixture="$ROOT_DIR/demo/mock-inputs/$f"
@@ -142,6 +141,7 @@ done
 echo "[tests] pre-tool-use (quiet overrides)"
 for f in \
   pre-tool-use-cargo.json \
+  pre-tool-use-curl.json \
   pre-tool-use-docker.json \
   pre-tool-use-ffmpeg.json \
   pre-tool-use-npm.json

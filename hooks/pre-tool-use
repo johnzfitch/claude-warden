@@ -33,7 +33,7 @@ if [[ "$TOOL_NAME" == mcp__* ]]; then
     ESC_TOOL="$TOOL_NAME"; _warden_json_escape ESC_TOOL
     ESC_SERVER="$MCP_SERVER"; _warden_json_escape ESC_SERVER
     ESC_MCTOOL="$MCP_TOOL"; _warden_json_escape ESC_MCTOOL
-    local _evt
+    _evt=""
     printf -v _evt '{"timestamp":%d,"event_type":"mcp_tool_start","tool":"%s","mcp_server":"%s","mcp_tool":"%s"}' \
         "$_TS" "$ESC_TOOL" "$ESC_SERVER" "$ESC_MCTOOL"
     _warden_post_to_collector "$_evt"
@@ -205,13 +205,44 @@ if [[ "$COMMAND" =~ /proc/(self|[0-9]+)/environ ]]; then
     _warden_deny "Environment safety: '${COMMAND:0:80}' reads raw process environment containing all secrets. Query specific variables instead: echo \$VAR_NAME"
 fi
 
-# === CURL SAFETY REWRITE ===
-# Rewrite curl -> aurl (safe wrapper). aurl allows localhost (GET+POST),
-# blocks cloud metadata, blocks data uploads to remote servers, auto-adds -s.
+# === CURL SAFETY ===
+# Check order: dangerous patterns blocked first, then rewrite safe commands through aurl.
 if [[ "$COMMAND" =~ (^|[;&|[:space:]])curl[[:space:]] ]]; then
+    _CURL_PREFIX="${BASH_REMATCH[1]}"
+    _CMD_LOWER=$(printf '%s' "$COMMAND" | tr '[:upper:]' '[:lower:]')
+    # Regex: curl command followed by a non-localhost URL (used in data-upload and method checks)
+    _CURL_REMOTE_RE='curl[[:space:]]+[^|]*https?://'
+    _CURL_LOCAL_RE="${_CURL_REMOTE_RE}(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\])"
+    # Cloud metadata endpoints (always block — credential theft risk)
+    if [[ "$_CMD_LOWER" =~ 169\.254\.169\.254 ]] || \
+       [[ "$_CMD_LOWER" =~ metadata\.google\.internal ]] || \
+       [[ "$_CMD_LOWER" =~ 169\.254\.169\.250 ]] || \
+       [[ "$_CMD_LOWER" =~ 100\.100\.100\.200 ]]; then
+        _warden_emit_block "ssrf_metadata_bash" 0
+        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a cloud metadata endpoint. These addresses expose instance credentials and are never safe to query from model context."
+    fi
+    # Private RFC1918 ranges (block SSRF to internal networks)
+    if [[ "$_CMD_LOWER" =~ ${_CURL_REMOTE_RE}(10\.[0-9]|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+        _warden_emit_block "ssrf_private_bash" 0
+        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a private network address. Internal network access via curl is not allowed. Ask the user to provide the data or check specific files."
+    fi
+    # Data upload to non-localhost (exfiltration risk)
+    if [[ "$COMMAND" =~ (-d|--data|--data-binary|--data-raw|--data-urlencode|-F|--form|--upload-file|-T) ]] \
+       && [[ ! "$_CMD_LOWER" =~ ${_CURL_LOCAL_RE} ]]; then
+        _warden_emit_block "data_exfil_curl" 0 "curl with data upload to remote"
+        _warden_deny "Data upload blocked: '${COMMAND:0:120}' sends data to a remote server. POST/form/upload data only allowed to localhost. Ask the user to run this manually if needed."
+    fi
+    # Explicit write methods to non-localhost
+    if [[ "$COMMAND" =~ (-X[[:space:]]|--request[[:space:]]|--request=)(POST|PUT|PATCH|DELETE) ]] \
+       && [[ ! "$_CMD_LOWER" =~ ${_CURL_LOCAL_RE} ]]; then
+        _CURL_WRITE_METHOD="${BASH_REMATCH[2]}"
+        _warden_emit_block "curl_write_method" 0
+        _warden_deny "Write method blocked: '${COMMAND:0:120}' uses ${_CURL_WRITE_METHOD} to a remote server. Explicit write methods (POST/PUT/PATCH/DELETE) to remote servers are not allowed. Ask the user to run this manually."
+    fi
+    # Rewrite remaining curl commands through aurl (safe wrapper: auto-adds -s, enforces timeout)
     _AURL_BIN="$(cd "${BASH_SOURCE[0]%/*}/bin" 2>/dev/null && pwd)/aurl"
     if [[ -x "$_AURL_BIN" ]]; then
-        _QUIET_CMD=$(printf '%s' "$COMMAND" | sed "s|curl |${_AURL_BIN} |")
+        _QUIET_CMD="${COMMAND/"${_CURL_PREFIX}curl "/"${_CURL_PREFIX}${_AURL_BIN} "}"
         _warden_quiet_override "curl_to_aurl" "$_QUIET_CMD"
     fi
 fi
@@ -220,8 +251,8 @@ if [[ "$COMMAND" =~ (^|[;&|[:space:]])wget[[:space:]] ]] && [[ "$COMMAND" =~ --p
     _warden_deny "Data upload blocked: '${COMMAND:0:120}' sends data to a remote server. wget with --post-data/--post-file is restricted. Ask the user to run this manually if needed."
 fi
 
-# === SSRF VIA BASH (curl/wget to internal networks) ===
-if [[ "$COMMAND" =~ (curl|wget)[[:space:]] ]]; then
+# === SSRF VIA BASH (wget to internal networks) ===
+if [[ "$COMMAND" =~ wget[[:space:]] ]]; then
     _CMD_LOWER=$(printf '%s' "$COMMAND" | tr '[:upper:]' '[:lower:]')
     if [[ "$_CMD_LOWER" =~ 169\.254\.169\.254 ]] || \
        [[ "$_CMD_LOWER" =~ metadata\.google\.internal ]] || \
@@ -230,14 +261,14 @@ if [[ "$COMMAND" =~ (curl|wget)[[:space:]] ]]; then
         _warden_emit_block "ssrf_metadata_bash" 0
         _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a cloud metadata endpoint. These addresses expose instance credentials and are never safe to query from model context."
     fi
-    if [[ "$_CMD_LOWER" =~ (curl|wget)[[:space:]]+[^|]*https?://(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\]) ]]; then
+    if [[ "$_CMD_LOWER" =~ wget[[:space:]]+[^|]*https?://(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\]) ]]; then
         _warden_emit_block "ssrf_localhost_bash" 0
         _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets localhost/loopback. If you need local service data, ask the user to provide it or check specific log files."
     fi
     # Private RFC1918 ranges (10.x, 172.16-31.x, 192.168.x)
-    if [[ "$_CMD_LOWER" =~ (curl|wget)[[:space:]]+[^|]*https?://(10\.[0-9]|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+    if [[ "$_CMD_LOWER" =~ wget[[:space:]]+[^|]*https?://(10\.[0-9]|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
         _warden_emit_block "ssrf_private_bash" 0
-        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a private network address. Internal network access via curl/wget is not allowed. Ask the user to provide the data or check specific files."
+        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a private network address. Internal network access via wget is not allowed. Ask the user to provide the data or check specific files."
     fi
 fi
 

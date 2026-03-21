@@ -12,11 +12,18 @@ set -o pipefail
 _URL=""
 _HAS_DATA=false
 _URL_NEXT=false
+_METHOD=""
+_METHOD_NEXT=false
 
 for arg in "$@"; do
     if $_URL_NEXT; then
         [[ -z "$_URL" ]] && _URL="$arg"
         _URL_NEXT=false
+        continue
+    fi
+    if $_METHOD_NEXT; then
+        _METHOD=$(printf '%s' "$arg" | tr '[:lower:]' '[:upper:]')
+        _METHOD_NEXT=false
         continue
     fi
     case "$arg" in
@@ -31,6 +38,18 @@ for arg in "$@"; do
             _HAS_DATA=true ;;
         -d*|--data=*|--data-binary=*|--data-raw=*|--data-urlencode=*|-F*|--form=*|--upload-file=*|-T*)
             _HAS_DATA=true ;;
+
+        # Explicit HTTP method
+        -X|--request)
+            _METHOD_NEXT=true ;;
+        -X*)
+            _METHOD="${arg#-X}"
+            _METHOD=$(printf '%s' "$_METHOD" | tr '[:lower:]' '[:upper:]')
+            ;;
+        --request=*)
+            _METHOD="${arg#--request=}"
+            _METHOD=$(printf '%s' "$_METHOD" | tr '[:lower:]' '[:upper:]')
+            ;;
     esac
 done
 
@@ -64,6 +83,13 @@ fi
 if [[ "$_HAS_DATA" == true ]] && [[ "$_IS_LOCALHOST" == false ]]; then
     echo "aurl: blocked data upload to remote server: $_URL" >&2
     echo "aurl: POST/form/upload only allowed to localhost services" >&2
+    exit 1
+fi
+
+# Explicit write methods to remote - block
+if [[ "$_IS_LOCALHOST" == false ]] && [[ "$_METHOD" =~ ^(POST|PUT|PATCH|DELETE)$ ]]; then
+    echo "aurl: blocked remote ${_METHOD} request to: $_URL" >&2
+    echo "aurl: only GET/HEAD requests are allowed to remote servers" >&2
     exit 1
 fi
 

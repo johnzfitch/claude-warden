@@ -62,7 +62,7 @@ func main() {
 	defer os.Remove(pidFile)
 
 	otlpHandler := NewOTLPHandler(store)
-	apiHandler := NewAPIHandler(store, filepath.Dir(dbPath))
+	apiHandler := NewAPIHandler(store)
 
 	// OTLP server (receives traces from Claude Code)
 	otlpMux := http.NewServeMux()
