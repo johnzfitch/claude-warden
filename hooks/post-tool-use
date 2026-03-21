@@ -210,12 +210,17 @@ fi
 if [[ "$TOOL_NAME" == "Bash" ]]; then
     # Note: tool_input.command in PostToolUse reflects the updatedInput from pre-tool-use,
     # so the quiet flags are already present. We detect the override by checking for the
-    # state file written by pre-tool-use (keyed by tool+session_id for concurrency safety).
-    # Session-scoped lookup only (no glob fallback -- wrong match is worse than no reminder)
+    # command-specific marker written by pre-tool-use.
     _QUIET_STATE=""
     if [[ -n "${WARDEN_SESSION_ID:-}" ]]; then
-        _candidate="$WARDEN_STATE_DIR/.quiet-override-${TOOL_NAME}-${WARDEN_SESSION_ID}"
+        _CMD_HASH=$(printf '%s' "$COMMAND" | _warden_md5 2>/dev/null)
+        _prefix="$WARDEN_STATE_DIR/.quiet-override-${TOOL_NAME}-${WARDEN_SESSION_ID}-${_CMD_HASH}"
+        _candidate=$(printf '%s\n' "${_prefix}"-* 2>/dev/null | LC_ALL=C sort | head -n1)
         [[ -f "$_candidate" ]] && _QUIET_STATE="$_candidate"
+        if [[ -z "$_QUIET_STATE" ]]; then
+            _legacy="$WARDEN_STATE_DIR/.quiet-override-${TOOL_NAME}-${WARDEN_SESSION_ID}"
+            [[ -f "$_legacy" ]] && _QUIET_STATE="$_legacy"
+        fi
     fi
     _QUIET_REMINDER=""
     if [[ -n "$_QUIET_STATE" && -f "$_QUIET_STATE" ]]; then
@@ -250,7 +255,7 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
             ffmpeg_quiet_override)
                 _QUIET_REMINDER="[warden: ran with -nostats -loglevel error — next time include these flags yourself]" ;;
             curl_to_aurl)
-                _QUIET_REMINDER="[warden: curl routed through aurl (safe wrapper) — localhost allowed, remote POST blocked]" ;;
+                _QUIET_REMINDER="[warden: curl routed through aurl (safe wrapper) — localhost allowed, remote POST/PUT/PATCH/DELETE blocked]" ;;
         esac
     fi
     if [[ -n "$_QUIET_REMINDER" ]]; then

@@ -9,6 +9,7 @@
 
 # State directories
 export WARDEN_STATE_DIR="${WARDEN_STATE_DIR:-$HOME/.claude/.statusline}"
+export WARDEN_EVENTS_FILE="${WARDEN_EVENTS_FILE:-$WARDEN_STATE_DIR/events.jsonl}"
 export WARDEN_SESSION_BUDGET_DIR="${WARDEN_SESSION_BUDGET_DIR:-$HOME/.claude/.session-budgets}"
 export WARDEN_SUBAGENT_STATE_DIR="${WARDEN_SUBAGENT_STATE_DIR:-$HOME/.claude/.subagent-state}"
 
@@ -509,9 +510,17 @@ _warden_ensure_collector() {
 # Post event to local Go collector (async, non-blocking)
 # Falls back silently if collector is not running.
 # Usage: _warden_post_to_collector JSON_STRING
+_warden_append_event_jsonl() {
+    local _payload="$1"
+    [[ -z "$_payload" ]] && return 0
+    mkdir -p "$(dirname "$WARDEN_EVENTS_FILE")" 2>/dev/null || return 0
+    printf '%s\n' "$_payload" >> "$WARDEN_EVENTS_FILE" 2>/dev/null || true
+}
+
 _warden_post_to_collector() {
     local _payload="$1"
     local _sock="${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden/collector.sock"
+    _warden_append_event_jsonl "$_payload"
     # Fire-and-forget: 100ms timeout, background, discard output
     # Uses UDS for lower latency and security
     command curl -s --max-time 0.1 -X POST \
@@ -689,14 +698,17 @@ _warden_deny() {
 
 # Quiet override: modify command via updatedInput and signal post-tool-use (PreToolUse)
 # Usage: _warden_quiet_override RULE MODIFIED_COMMAND
-# Writes per-invocation state file for post-tool-use reminder (keyed by tool+session_id
-# to prevent races when multiple sessions overlap), emits event, outputs updatedInput JSON.
+# Writes a command-scoped marker file for post-tool-use reminders so overlapping
+# quiet overrides in the same session do not stomp each other.
 _warden_quiet_override() {
     local rule="$1" cmd="$2"
     local tool="${WARDEN_TOOL_NAME:-Bash}"
     local sid="${WARDEN_SESSION_ID:-$$}"
+    local cmd_hash
+    cmd_hash=$(printf '%s' "$cmd" | _warden_md5 2>/dev/null)
+    [[ -z "$cmd_hash" ]] && cmd_hash="unknown"
     mkdir -p "$WARDEN_STATE_DIR"
-    printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override-${tool}-${sid}"
+    printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override-${tool}-${sid}-${cmd_hash}-$(_warden_date_ns)-$$"
     _warden_emit_event "allowed" 0 0 "$rule"
     jq -n --arg cmd "$cmd" \
         '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":$cmd}}}'

@@ -62,23 +62,13 @@ func main() {
 	defer os.Remove(pidFile)
 
 	otlpHandler := NewOTLPHandler(store)
-	apiHandler := NewAPIHandler(store, filepath.Dir(dbPath))
+	apiHandler := NewAPIHandler(store)
 
 	// OTLP server (receives traces from Claude Code)
 	otlpMux := http.NewServeMux()
 	otlpMux.HandleFunc("/v1/traces", otlpHandler.HandleTraces)
-	// Accept metrics and logs — ACK to avoid sender errors, log for visibility.
-	// Phase 2: persist these signals or forward to the existing OTEL collector.
-	otlpMux.HandleFunc("/v1/metrics", func(w http.ResponseWriter, r *http.Request) {
-		slog.Debug("metrics received (not yet persisted)")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "{}")
-	})
-	otlpMux.HandleFunc("/v1/logs", func(w http.ResponseWriter, r *http.Request) {
-		slog.Debug("logs received (not yet persisted)")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "{}")
-	})
+	otlpMux.HandleFunc("/v1/metrics", otlpHandler.HandleMetrics)
+	otlpMux.HandleFunc("/v1/logs", otlpHandler.HandleLogs)
 
 	otlpServer := &http.Server{
 		Addr:         otlpAddr,

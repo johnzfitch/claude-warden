@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -136,18 +137,30 @@ func (s *Store) GetSessionContext(ctx context.Context, sessionID string) (*Sessi
 
 // enrichWithLastTool adds the most recent tool name and duration.
 func (s *Store) enrichWithLastTool(ctx context.Context, sessionID string, sc *SessionContext) {
-	// Get most recent tool span for this session
-	var name string
+	var name, attrsJSON string
 	var durationMS int64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT name, duration_ms FROM spans
-		WHERE session_id = ? AND name LIKE 'claude_code.tool%'
+		SELECT name, duration_ms, attrs_json FROM spans
+		WHERE session_id = ? AND name = 'claude_code.tool'
 		ORDER BY end_ns DESC LIMIT 1`, sessionID,
-	).Scan(&name, &durationMS)
+	).Scan(&name, &durationMS, &attrsJSON)
 	if err == nil {
 		sc.LastTool = name
+		if attrs, err := decodeAttrMap(attrsJSON); err == nil {
+			if kv, ok := attrs["tool_name"]; ok && kv.StringVal() != "" {
+				sc.LastTool = kv.StringVal()
+			}
+		}
 		sc.LastToolDurationMS = durationMS
 	}
+}
+
+func decodeAttrMap(attrsJSON string) (map[string]KeyValue, error) {
+	var attrs []KeyValue
+	if err := json.Unmarshal([]byte(attrsJSON), &attrs); err != nil {
+		return nil, err
+	}
+	return attrMap(attrs), nil
 }
 
 // enrichWithSubagentCount counts active subagents from hook events.
@@ -277,6 +290,19 @@ func (s *Store) EnsureSession(ctx context.Context, sessionID string) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO sessions (session_id, started_at_ns, updated_at_ns)
 		VALUES (?, ?, ?)`, sessionID, now, now)
+	return err
+}
+
+func (s *Store) UpsertSessionCost(ctx context.Context, sessionID, model string, costUSD float64) error {
+	now := time.Now().UnixNano()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO sessions (session_id, model, cost_usd, started_at_ns, updated_at_ns)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			model = CASE WHEN excluded.model != '' THEN excluded.model ELSE sessions.model END,
+			cost_usd = excluded.cost_usd,
+			updated_at_ns = excluded.updated_at_ns`,
+		sessionID, model, costUSD, now, now)
 	return err
 }
 

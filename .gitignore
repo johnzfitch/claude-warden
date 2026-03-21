@@ -43,6 +43,7 @@ demo/claude-warden-demo.mp4
 demo/mock-inputs/pre-tool-use-write-large.json
 
 # Go build artifacts
+collector/collector
 collector/warden-collector
 
 # Scratch directories

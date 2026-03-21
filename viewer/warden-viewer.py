@@ -736,13 +736,11 @@ def render_tools_view(db, session_id=None):
     '''
 
     for name, dur, attrs in slow_tools:
-        try:
-            a = json.loads(attrs)
-            result_tokens = a.get('result_tokens', '')
-        except:
-            result_tokens = ''
-
-        tool_name = name.replace('claude_code.tool.', '')
+        a = decode_otlp_attrs(attrs)
+        result_tokens = a.get('result_tokens', '')
+        tool_name = a.get('tool_name') or name.replace('claude_code.tool.', '')
+        if tool_name == 'claude_code.tool':
+            tool_name = 'tool'
         html += f'''
         <tr>
           <td>{h(tool_name)}</td>
@@ -778,14 +776,12 @@ def render_trend_view(db, session_id=None):
     # Extract input_tokens from each span
     data_points = []
     for start, attrs in llm_spans:
-        try:
-            a = json.loads(attrs)
-            inp = a.get('input_tokens', 0)
-            cache_r = a.get('cache_read_tokens', 0)
-            total = inp + cache_r
+        a = decode_otlp_attrs(attrs)
+        inp = attr_int(a, 'input_tokens', 0)
+        cache_r = attr_int(a, 'cache_read_tokens', 0)
+        total = inp + cache_r
+        if total > 0:
             data_points.append(total)
-        except:
-            pass
 
     if not data_points:
         return '<div class="empty-state">No token data available</div>'
@@ -818,6 +814,48 @@ def render_trend_view(db, session_id=None):
 
 
 # ── Utility Functions ────────────────────────────────────────────────
+
+def decode_otlp_attrs(attrs_json):
+    """Decode OTLP key/value attributes into a plain dict."""
+    try:
+        raw = json.loads(attrs_json)
+    except Exception:
+        return {}
+
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, list):
+        return {}
+
+    decoded = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("key")
+        value = item.get("value", {})
+        if not key or not isinstance(value, dict):
+            continue
+        if "stringValue" in value:
+            decoded[key] = value["stringValue"]
+        elif "intValue" in value:
+            try:
+                decoded[key] = int(value["intValue"])
+            except Exception:
+                decoded[key] = value["intValue"]
+        elif "doubleValue" in value:
+            decoded[key] = value["doubleValue"]
+        elif "boolValue" in value:
+            decoded[key] = value["boolValue"]
+    return decoded
+
+
+def attr_int(attrs, key, default=0):
+    """Read an OTLP attribute as an int when possible."""
+    value = attrs.get(key, default)
+    try:
+        return int(value)
+    except Exception:
+        return default
 
 def format_duration_ms(ms):
     """Format milliseconds as human-readable."""

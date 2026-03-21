@@ -6,8 +6,8 @@ abstract: >
   network security boundaries, prevents data exfiltration, applies quiet
   command overrides, compresses large MCP outputs, and ships an OpenTelemetry
   observability stack with Grafana dashboards.
-version: "0.4.0"
-date-released: "2026-03-08"
+version: "0.6.1"
+date-released: "2026-03-21"
 license: MIT
 repository-code: https://github.com/johnzfitch/claude-warden
 authors:

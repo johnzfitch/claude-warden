@@ -9,8 +9,9 @@ trap cleanup EXIT
 
 OTLP_PORT=14318
 API_PORT=19464
+SESSION_ID="11111111-1111-4111-8111-111111111111"
 
-"$BINARY" -db "$DB" -debug -otlp-addr "127.0.0.1:$OTLP_PORT" -api-addr "127.0.0.1:$API_PORT" &
+"$BINARY" -db "$DB" -debug -otlp-addr "127.0.0.1:$OTLP_PORT" -api-addr "127.0.0.1:$API_PORT" -tcp &
 PID=$!
 sleep 1
 
@@ -27,7 +28,7 @@ curl -sf -X POST http://127.0.0.1:$OTLP_PORT/v1/traces \
     "resourceSpans": [{
       "resource": {
         "attributes": [
-          {"key": "session.id", "value": {"stringValue": "test-001"}},
+          {"key": "session.id", "value": {"stringValue": "'"$SESSION_ID"'"}},
           {"key": "service.name", "value": {"stringValue": "claude-code"}}
         ]
       },
@@ -69,8 +70,8 @@ curl -sf -X POST http://127.0.0.1:$OTLP_PORT/v1/traces \
     }]
   }' && echo " OK"
 
-echo "=== session context (should show 175500 input + 3500 pending) ==="
-curl -sf http://127.0.0.1:$API_PORT/v1/sessions/test-001/context | jq .
+echo "=== session context (should show 175500 input + 3500 pending and last_tool=Read) ==="
+curl -sf http://127.0.0.1:$API_PORT/v1/sessions/$SESSION_ID/context | jq .
 
 echo "=== send 2nd tool span (8000 more tokens) ==="
 curl -sf -X POST http://127.0.0.1:$OTLP_PORT/v1/traces \
@@ -79,7 +80,7 @@ curl -sf -X POST http://127.0.0.1:$OTLP_PORT/v1/traces \
     "resourceSpans": [{
       "resource": {
         "attributes": [
-          {"key": "session.id", "value": {"stringValue": "test-001"}}
+          {"key": "session.id", "value": {"stringValue": "'"$SESSION_ID"'"}}
         ]
       },
       "scopeSpans": [{
@@ -101,8 +102,39 @@ curl -sf -X POST http://127.0.0.1:$OTLP_PORT/v1/traces \
     }]
   }' && echo " OK"
 
-echo "=== after 2nd tool (pending should be 11500, estimated ~187000) ==="
-curl -sf http://127.0.0.1:$API_PORT/v1/sessions/test-001/context | jq .
+echo "=== after 2nd tool (pending should be 11500, estimated ~187000, last_tool=Bash) ==="
+curl -sf http://127.0.0.1:$API_PORT/v1/sessions/$SESSION_ID/context | jq .
+
+echo "=== send cost metric ==="
+curl -sf -X POST http://127.0.0.1:$OTLP_PORT/v1/metrics \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "resourceMetrics": [{
+      "resource": {
+        "attributes": [
+          {"key": "session.id", "value": {"stringValue": "'"$SESSION_ID"'"}}
+        ]
+      },
+      "scopeMetrics": [{
+        "scope": {"name": "com.anthropic.claude_code"},
+        "metrics": [{
+          "name": "claude_code_cost_usage_USD_total",
+          "sum": {
+            "dataPoints": [{
+              "attributes": [
+                {"key": "session.id", "value": {"stringValue": "'"$SESSION_ID"'"}},
+                {"key": "model", "value": {"stringValue": "claude-opus-4-6"}}
+              ],
+              "asDouble": 1.25
+            }]
+          }
+        }]
+      }]
+    }]
+  }' && echo " OK"
+
+echo "=== after cost metric (cost_usd should be 1.25) ==="
+curl -sf http://127.0.0.1:$API_PORT/v1/sessions/$SESSION_ID/context | jq .
 
 echo "=== sessions list ==="
 curl -sf http://127.0.0.1:$API_PORT/v1/sessions | jq .

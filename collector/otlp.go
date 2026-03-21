@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // OTLP JSON types -- minimal subset for trace ingestion.
@@ -66,6 +68,44 @@ type AttributeValue struct {
 	DoubleValue float64 `json:"doubleValue,omitempty"`
 }
 
+type ExportMetricsRequest struct {
+	ResourceMetrics []ResourceMetrics `json:"resourceMetrics"`
+}
+
+type ResourceMetrics struct {
+	Resource     Resource       `json:"resource"`
+	ScopeMetrics []ScopeMetrics `json:"scopeMetrics"`
+}
+
+type ScopeMetrics struct {
+	Scope   Scope    `json:"scope"`
+	Metrics []Metric `json:"metrics"`
+}
+
+type Metric struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Unit        string      `json:"unit"`
+	Sum         *MetricSum  `json:"sum,omitempty"`
+	Gauge       *MetricData `json:"gauge,omitempty"`
+}
+
+type MetricSum struct {
+	DataPoints []NumberDataPoint `json:"dataPoints"`
+}
+
+type MetricData struct {
+	DataPoints []NumberDataPoint `json:"dataPoints"`
+}
+
+type NumberDataPoint struct {
+	Attributes      []KeyValue `json:"attributes"`
+	StartTimeUnixNS string     `json:"startTimeUnixNano,omitempty"`
+	TimeUnixNS      string     `json:"timeUnixNano,omitempty"`
+	AsInt           string     `json:"asInt,omitempty"`
+	AsDouble        float64    `json:"asDouble,omitempty"`
+}
+
 func (kv KeyValue) StringVal() string {
 	return kv.Value.StringValue
 }
@@ -80,6 +120,14 @@ func (kv KeyValue) IntVal() int {
 
 func (kv KeyValue) BoolVal() bool {
 	return kv.Value.BoolValue
+}
+
+func (dp NumberDataPoint) FloatVal() float64 {
+	if dp.AsInt != "" {
+		v, _ := strconv.ParseFloat(dp.AsInt, 64)
+		return v
+	}
+	return dp.AsDouble
 }
 
 // contextWindowForModel returns the context window size.
@@ -155,6 +203,166 @@ func (h *OTLPHandler) HandleTraces(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "{}")
+}
+
+func (h *OTLPHandler) HandleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "protobuf") {
+		http.Error(w, "protobuf not supported; set OTEL_EXPORTER_OTLP_PROTOCOL=http/json", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20))
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var req ExportMetricsRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "parse json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	points, err := h.processMetrics(r.Context(), &req)
+	if err != nil {
+		slog.Warn("metrics processing failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := forwardOTLP(r.Context(), "/v1/metrics", ct, body); err != nil {
+		slog.Debug("metrics forward skipped", "err", err)
+	}
+
+	slog.Debug("metrics received", "datapoints", points)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "{}")
+}
+
+func (h *OTLPHandler) HandleLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "protobuf") {
+		http.Error(w, "protobuf not supported; set OTEL_EXPORTER_OTLP_PROTOCOL=http/json", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20))
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if len(body) > 0 {
+		if err := forwardOTLP(r.Context(), "/v1/logs", ct, body); err != nil {
+			slog.Debug("logs forward skipped", "err", err)
+		}
+	}
+
+	slog.Debug("logs received", "bytes", len(body))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "{}")
+}
+
+func metricDataPoints(metric Metric) []NumberDataPoint {
+	if metric.Sum != nil {
+		return metric.Sum.DataPoints
+	}
+	if metric.Gauge != nil {
+		return metric.Gauge.DataPoints
+	}
+	return nil
+}
+
+func (h *OTLPHandler) processMetrics(ctx context.Context, req *ExportMetricsRequest) (int, error) {
+	points := 0
+
+	for _, rm := range req.ResourceMetrics {
+		resAttrs := attrMap(rm.Resource.Attributes)
+		resourceSessionID := ""
+		if kv, ok := resAttrs["session.id"]; ok {
+			resourceSessionID = kv.StringVal()
+		}
+
+		for _, sm := range rm.ScopeMetrics {
+			for _, metric := range sm.Metrics {
+				dataPoints := metricDataPoints(metric)
+				points += len(dataPoints)
+
+				if metric.Name != "claude_code_cost_usage_USD_total" {
+					continue
+				}
+
+				for _, dp := range dataPoints {
+					dpAttrs := attrMap(dp.Attributes)
+					sessionID := resourceSessionID
+					if kv, ok := dpAttrs["session.id"]; ok && kv.StringVal() != "" {
+						sessionID = kv.StringVal()
+					}
+					if sessionID == "" {
+						continue
+					}
+
+					model := ""
+					if kv, ok := dpAttrs["model"]; ok {
+						model = kv.StringVal()
+					}
+					if err := h.store.UpsertSessionCost(ctx, sessionID, model, dp.FloatVal()); err != nil {
+						return points, err
+					}
+				}
+			}
+		}
+	}
+
+	return points, nil
+}
+
+func forwardOTLPEndpoint() string {
+	if endpoint := strings.TrimRight(os.Getenv("WARDEN_OTLP_FORWARD_ENDPOINT"), "/"); endpoint != "" {
+		return endpoint
+	}
+	return "http://127.0.0.1:4318"
+}
+
+func forwardOTLP(ctx context.Context, path, contentType string, body []byte) error {
+	endpoint := forwardOTLPEndpoint()
+	if endpoint == "" {
+		return nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	} else {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := (&http.Client{Timeout: 1500 * time.Millisecond}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("forward %s returned %s", path, resp.Status)
+	}
+	return nil
 }
 
 func (h *OTLPHandler) processSpans(ctx context.Context, req *ExportTraceRequest) (total, llmRequests int) {

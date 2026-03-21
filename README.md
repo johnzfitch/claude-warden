@@ -21,7 +21,7 @@
 [icon-network]: .github/assets/icons/building-network-16x16.png
 [icon-flow]: .github/assets/icons/application-network-16x16.png
 [icon-metrics]: .github/assets/icons/chart-arrow-16x16.png
-[badge-version]: https://img.shields.io/badge/version-v0.4.0-blue
+[badge-version]: https://img.shields.io/badge/version-v0.6.1-blue
 [badge-license]: https://img.shields.io/badge/license-MIT-green
 [badge-platform]: https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey
 [releases]: https://github.com/johnzfitch/claude-warden/releases
@@ -118,7 +118,7 @@ The remote installer downloads a release tarball, verifies its <abbr title="Secu
 To pin a version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash -s -- v0.4.0
+curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash -s -- v0.6.1
 ```
 
 ### Install from source (development)

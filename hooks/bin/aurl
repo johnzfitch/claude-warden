@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # aurl - safe curl wrapper for Claude Code
 # Rewrites curl with safety guards: allows localhost, blocks cloud metadata,
-# blocks data uploads to remote servers, auto-adds -s and --max-time.
+# blocks data uploads to remote servers, auto-adds -sS and --max-time.
 #
 # Invoked automatically by pre-tool-use hook (curl -> aurl rewrite).
 # Models should not call aurl directly.
@@ -12,11 +12,18 @@ set -o pipefail
 _URL=""
 _HAS_DATA=false
 _URL_NEXT=false
+_METHOD=""
+_METHOD_NEXT=false
 
 for arg in "$@"; do
     if $_URL_NEXT; then
         [[ -z "$_URL" ]] && _URL="$arg"
         _URL_NEXT=false
+        continue
+    fi
+    if $_METHOD_NEXT; then
+        _METHOD=$(printf '%s' "$arg" | tr '[:lower:]' '[:upper:]')
+        _METHOD_NEXT=false
         continue
     fi
     case "$arg" in
@@ -31,6 +38,14 @@ for arg in "$@"; do
             _HAS_DATA=true ;;
         -d*|--data=*|--data-binary=*|--data-raw=*|--data-urlencode=*|-F*|--form=*|--upload-file=*|-T*)
             _HAS_DATA=true ;;
+
+        # Explicit HTTP method
+        -X|--request)
+            _METHOD_NEXT=true ;;
+        -X*)
+            _METHOD=$(printf '%s' "${arg#-X}" | tr '[:lower:]' '[:upper:]') ;;
+        --request=*)
+            _METHOD=$(printf '%s' "${arg#--request=}" | tr '[:lower:]' '[:upper:]') ;;
     esac
 done
 
@@ -67,15 +82,21 @@ if [[ "$_HAS_DATA" == true ]] && [[ "$_IS_LOCALHOST" == false ]]; then
     exit 1
 fi
 
+if [[ "$_IS_LOCALHOST" == false ]] && [[ "$_METHOD" =~ ^(POST|PUT|PATCH|DELETE)$ ]]; then
+    echo "aurl: blocked remote ${_METHOD} request to: $_URL" >&2
+    echo "aurl: only GET/HEAD requests are allowed to remote servers" >&2
+    exit 1
+fi
+
 # --- Build safe curl invocation ---
 _EXTRA=()
 
-# Auto-add -s (silent) if not present
+# Auto-add -sS so success stays quiet but curl diagnostics still surface
 _HAS_S=false
 for arg in "$@"; do
     case "$arg" in -s|--silent|-s*) _HAS_S=true; break ;; esac
 done
-[[ "$_HAS_S" == false ]] && _EXTRA+=("-s")
+[[ "$_HAS_S" == false ]] && _EXTRA+=("-sS")
 
 # Auto-add --max-time if no timeout set
 _HAS_T=false
