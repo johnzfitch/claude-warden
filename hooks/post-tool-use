@@ -24,6 +24,9 @@ export WARDEN_TOOL_NAME="$TOOL_NAME"
 export WARDEN_COMMAND="$COMMAND"
 export WARDEN_SESSION_ID="$(_warden_sanitize_id "$SESSION_ID")"
 
+# Resolve per-session start timestamp (fixes cross-session relative time skew)
+_warden_resolve_session_start "$WARDEN_SESSION_ID"
+
 [[ "$OUTPUT_SIZE" =~ ^[0-9]+$ ]] || OUTPUT_SIZE=0
 
 # === TOOL OUTPUT SIZE TRACKING (Phase 1 observability) ===
@@ -45,55 +48,8 @@ if (( OUTPUT_SIZE > 0 )); then
     _warden_emit_output_size "$TOOL_NAME" "$OUTPUT_SIZE" "$OUTPUT_LINES" "$COMMAND"
 fi
 
-# === Session state: single file, single read+write ===
-if [[ -n "$WARDEN_SESSION_ID" ]]; then
-    STATE_FILE="$WARDEN_STATE_DIR/session-$WARDEN_SESSION_ID"
-    mkdir -p "$WARDEN_STATE_DIR"
-
-    # Read previous state (count|top_bytes|top_label|timestamp)
-    PREV_COUNT=0; PREV_BYTES=0; PREV_LABEL=""; PREV_TS=0
-    if [[ -f "$STATE_FILE" ]]; then
-        IFS='|' read -r PREV_COUNT PREV_BYTES PREV_LABEL PREV_TS < "$STATE_FILE" 2>/dev/null
-    fi
-    [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
-    [[ "$PREV_BYTES" =~ ^[0-9]+$ ]] || PREV_BYTES=0
-
-    NEW_COUNT=$((PREV_COUNT + 1))
-
-    # Build tool label for top-output tracking
-    TOP_LABEL="$PREV_LABEL"
-    TOP_BYTES="$PREV_BYTES"
-    if (( OUTPUT_SIZE > PREV_BYTES )); then
-        TOP_BYTES="$OUTPUT_SIZE"
-        if [[ "$TOOL_NAME" == "Bash" && -n "$COMMAND" ]]; then
-            CMD="${COMMAND#"${COMMAND%%[![:space:]]*}"}"
-            TOP_LABEL="Bash:${CMD%%[[:space:]]*}"
-        else
-            TOP_LABEL="$TOOL_NAME"
-        fi
-    fi
-    # Sanitize TOP_LABEL for pipe delimiter (prevents state file corruption)
-    TOP_LABEL="${TOP_LABEL//|/_}"
-
-    # Single write: count|top_bytes|top_label|timestamp
-    printf '%s|%s|%s|%s\n' "$NEW_COUNT" "$TOP_BYTES" "$TOP_LABEL" "$(date +%s)" > "$STATE_FILE"
-
-    # Budget check every 50 calls (infrequent, fine to be slow)
-    if (( NEW_COUNT % 50 == 0 )); then
-        ALERT_FILE="$WARDEN_STATE_DIR/budget-alert"
-        UTIL=$(_warden_budget_export 2>/dev/null | jq -r '.utilization // 0' | cut -d. -f1)
-        if [[ "$UTIL" =~ ^[0-9]+$ ]] && (( UTIL >= 90 )); then
-            echo "CRITICAL|$UTIL|$(date +%s)" > "$ALERT_FILE"
-            _warden_notify critical "Claude Budget" "${UTIL}%!"
-        elif [[ "$UTIL" =~ ^[0-9]+$ ]] && (( UTIL >= 75 )); then
-            PREV_LEVEL=$(cut -d'|' -f1 < "$ALERT_FILE" 2>/dev/null || echo "")
-            [[ "$PREV_LEVEL" != "WARNING" && "$PREV_LEVEL" != "CRITICAL" ]] && {
-                echo "WARNING|$UTIL|$(date +%s)" > "$ALERT_FILE"
-                _warden_notify normal "Claude Budget" "${UTIL}%"
-            }
-        fi
-    fi
-fi
+# Session state is owned by the collector (via OTEL spans).
+# No local state files needed.
 
 # === SUBAGENT DETECTION + CUMULATIVE BYTE TRACKING ===
 TRANSCRIPT_PATH=$(_warden_parse_transcript_path)
@@ -105,47 +61,14 @@ if _warden_is_subagent "$TRANSCRIPT_PATH"; then
     AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
 fi
 
-_SUBAGENT_PREV_BYTES=0
+# POST output bytes to collector for budget tracking (async, fire-and-forget).
+# The collector writes deny files when budget is exceeded.
+_WARDEN_FINAL_SIZE="$OUTPUT_SIZE"
 if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
-    BYTE_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.bytes"
-    if [[ -f "$BYTE_FILE" ]]; then
-        RAW=$(cat "$BYTE_FILE" 2>/dev/null || echo "0")
-        if [[ "$RAW" == *"|"* ]]; then
-            _SUBAGENT_PREV_BYTES=$(echo "$RAW" | cut -d'|' -f1)
-        fi
-        [[ ! "$_SUBAGENT_PREV_BYTES" =~ ^[0-9]+$ ]] && _SUBAGENT_PREV_BYTES=0
-    fi
-    # Write preliminary value (corrected on exit if truncation occurs)
-    printf '%s|%s|%s\n' "$((_SUBAGENT_PREV_BYTES + OUTPUT_SIZE))" "$TOOL_NAME" "$(date +%s)" > "$BYTE_FILE"
-
-    # EXIT trap: if modifyOutput reduced the size, correct the byte file.
-    # _WARDEN_FINAL_SIZE is set by truncation paths; defaults to OUTPUT_SIZE.
-    _WARDEN_FINAL_SIZE="$OUTPUT_SIZE"
     trap '
-        if [[ "${_WARDEN_FINAL_SIZE:-}" != "$OUTPUT_SIZE" && -n "${BYTE_FILE:-}" ]]; then
-            printf "%s|%s|%s\n" "$((_SUBAGENT_PREV_BYTES + _WARDEN_FINAL_SIZE))" "$TOOL_NAME" "$(date +%s)" > "$BYTE_FILE"
-        fi
+        _warden_post_to_collector "$(printf "{\"event_type\":\"subagent_bytes\",\"agent_id\":\"%s\",\"session_id\":\"%s\",\"bytes\":%d}" \
+            "'"$AGENT_ID"'" "'"$WARDEN_SESSION_ID"'" "${_WARDEN_FINAL_SIZE:-$OUTPUT_SIZE}")"
     ' EXIT
-fi
-
-# === TOOL LATENCY + TRACE SPAN ===
-if _warden_compute_tool_latency "$TOOL_NAME"; then
-    _warden_emit_latency "$TOOL_NAME" "$WARDEN_TOOL_LATENCY_MS" "$COMMAND"
-    # Write last latency for statusline
-    [[ -n "$WARDEN_SESSION_ID" ]] && printf '%s|%s\n' "$WARDEN_TOOL_LATENCY_MS" "$TOOL_NAME" > "$WARDEN_STATE_DIR/latency-$WARDEN_SESSION_ID"
-
-    # Emit OTLP trace span (fire-and-forget)
-    if [[ -f "${BASH_SOURCE[0]%/*}/lib/otel-trace.sh" ]]; then
-        source "${BASH_SOURCE[0]%/*}/lib/otel-trace.sh"
-        _warden_emit_trace_span \
-            "$TOOL_NAME" \
-            "$WARDEN_TOOL_START_NS" \
-            "$WARDEN_TOOL_END_NS" \
-            "$SESSION_ID" \
-            "$COMMAND" \
-            "$OUTPUT_SIZE" &
-        disown
-    fi
 fi
 
 # === SYSTEM REMINDER STRIP (all tools) ===
@@ -163,7 +86,6 @@ if (( OUTPUT_SIZE > 50 )); then
             _STRIPPED=$(( ${#_RAW} - _CLEANED_SIZE ))
             if (( _STRIPPED > 0 )); then
                 _warden_emit_event "truncated" "$OUTPUT_SIZE" "$_CLEANED_SIZE" "system_reminder"
-                _warden_fire_token_count "$_RAW" "$_CLEANED" "$(( _STRIPPED * 10 / 35 ))" "system_reminder"
                 case "$TOOL_NAME" in
                     Bash|Grep|Glob|Task)
                         # Pre-clean for downstream truncation logic
@@ -288,20 +210,18 @@ fi
 if [[ "$TOOL_NAME" == "Bash" ]]; then
     # Note: tool_input.command in PostToolUse reflects the updatedInput from pre-tool-use,
     # so the quiet flags are already present. We detect the override by checking for the
-    # injected flag pattern that wouldn't appear naturally (e.g. "git clone -q" right after subcommand).
-    # Use a state file written by pre-tool-use to reliably detect overrides.
-    # Find per-invocation quiet-override state file (keyed by tool+PID in pre-tool-use).
-    # Consume the most recent one for this tool, matching the latency tracking pattern.
+    # command-specific marker written by pre-tool-use.
     _QUIET_STATE=""
-    _QUIET_NEWEST_MTIME=0
-    for _qf in "$WARDEN_STATE_DIR"/.quiet-override-"${TOOL_NAME}"-*; do
-        [[ -f "$_qf" ]] || continue
-        _qf_mtime=$(_warden_stat_mtime "$_qf")
-        if (( _qf_mtime > _QUIET_NEWEST_MTIME )); then
-            _QUIET_NEWEST_MTIME=$_qf_mtime
-            _QUIET_STATE="$_qf"
+    if [[ -n "${WARDEN_SESSION_ID:-}" ]]; then
+        _CMD_HASH=$(printf '%s' "$COMMAND" | _warden_md5 2>/dev/null)
+        _prefix="$WARDEN_STATE_DIR/.quiet-override-${TOOL_NAME}-${WARDEN_SESSION_ID}-${_CMD_HASH}"
+        _candidate=$(printf '%s\n' "${_prefix}"-* 2>/dev/null | LC_ALL=C sort | head -n1)
+        [[ -f "$_candidate" ]] && _QUIET_STATE="$_candidate"
+        if [[ -z "$_QUIET_STATE" ]]; then
+            _legacy="$WARDEN_STATE_DIR/.quiet-override-${TOOL_NAME}-${WARDEN_SESSION_ID}"
+            [[ -f "$_legacy" ]] && _QUIET_STATE="$_legacy"
         fi
-    done
+    fi
     _QUIET_REMINDER=""
     if [[ -n "$_QUIET_STATE" && -f "$_QUIET_STATE" ]]; then
         _QUIET_RULE=$(<"$_QUIET_STATE")
@@ -334,6 +254,8 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
                 _QUIET_REMINDER="[warden: ran with -q — next time use docker ${BASH_REMATCH[1]} -q]" ;;
             ffmpeg_quiet_override)
                 _QUIET_REMINDER="[warden: ran with -nostats -loglevel error — next time include these flags yourself]" ;;
+            curl_to_aurl)
+                _QUIET_REMINDER="[warden: curl routed through aurl (safe wrapper) — localhost allowed, remote POST/PUT/PATCH/DELETE blocked]" ;;
         esac
     fi
     if [[ -n "$_QUIET_REMINDER" ]]; then
@@ -385,7 +307,6 @@ if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
         STRUCT_SIZE=${#STRUCTURED}
         if (( STRUCT_SIZE > 200 && STRUCT_SIZE < OUTPUT_SIZE )); then
             _warden_emit_event "truncated" "$OUTPUT_SIZE" "$STRUCT_SIZE" "task_structured"
-            _warden_fire_token_count "$OUTPUT" "$STRUCTURED" "$(( (OUTPUT_SIZE - STRUCT_SIZE) * 10 / 35 ))" "task_structured"
             jq -n --arg text "${STRUCTURED}
 
 [Agent output compressed: $((OUTPUT_SIZE/1024))KB -> $((STRUCT_SIZE/1024))KB structured lines]" \
@@ -419,7 +340,6 @@ fi
 # od + grep is POSIX-compliant and works on macOS/Linux/BSD
 if printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | od -An -tx1 | grep -q ' 00'; then
     _warden_emit_event "truncated" "$OUTPUT_SIZE" 50 "binary_output"
-    _warden_fire_token_count "$OUTPUT" "" "$(( (OUTPUT_SIZE - 50) * 10 / 35 ))" "binary_output"
     jq -n --arg text "[Binary output: $((OUTPUT_SIZE/1024))KB. Use 'file' or redirect.]" '{"modifyOutput":$text}'
     exit 0
 fi
@@ -427,7 +347,6 @@ fi
 # >500KB: suppress entirely
 if (( OUTPUT_SIZE > WARDEN_SUPPRESS_BYTES )); then
     _warden_emit_event "truncated" "$OUTPUT_SIZE" 60 "output_suppressed"
-    _warden_fire_token_count "$OUTPUT" "" "$(( (OUTPUT_SIZE - 60) * 10 / 35 ))" "output_suppressed"
     jq -n --arg text "[Output too large: $((OUTPUT_SIZE/1048576))MB. Use | head or redirect.]" '{"modifyOutput":$text}'
     exit 0
 fi
@@ -453,5 +372,4 @@ ${TAIL}"
     TAIL_NOTE="output_truncated"
 fi
 _warden_emit_event "truncated" "$OUTPUT_SIZE" "$FINAL_SIZE" "$TAIL_NOTE"
-_warden_fire_token_count "$OUTPUT" "$FINAL" "$(( (OUTPUT_SIZE - FINAL_SIZE) * 10 / 35 ))" "$TAIL_NOTE"
 jq -n --arg text "$FINAL" '{"modifyOutput":$text}'

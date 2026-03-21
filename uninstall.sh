@@ -63,6 +63,8 @@ HOOK_FILES=(
     subagent-stop
     tool-error
     pre-compact
+    # Deprecated hooks (still cleaned up for older installs)
+    session-lifecycle
 )
 
 # === Remove hooks ===

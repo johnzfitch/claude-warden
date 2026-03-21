@@ -15,6 +15,7 @@ _warden_read_input || exit 0
 TOOL_NAME=$(_warden_parse_tool_name)
 SESSION_ID=$(_warden_parse_session_id)
 export WARDEN_SESSION_ID="$(_warden_sanitize_id "$SESSION_ID")"
+_warden_resolve_session_start "$WARDEN_SESSION_ID"
 ERROR_MSG=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_error // .error // "unknown error"' 2>/dev/null)
 
 # === ERROR LOGGING (to file) ===
@@ -37,14 +38,29 @@ _SID_SAFE="${WARDEN_SESSION_ID:-}"
 _warden_json_escape _ERR_SAFE
 _warden_json_escape _TOOL_SAFE
 _warden_json_escape _SID_SAFE
-printf '{"timestamp":%d,"event_type":"tool_error","tool":"%s","session_id":"%s","error_message":"%s"}\n' \
-  "$_TS" "$_TOOL_SAFE" "$_SID_SAFE" "$_ERR_SAFE" \
-  >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+_evt=""
+printf -v _evt '{"timestamp":%d,"event_type":"tool_error","tool":"%s","session_id":"%s","error_message":"%s"}' \
+  "$_TS" "$_TOOL_SAFE" "$_SID_SAFE" "$_ERR_SAFE"
+_warden_post_to_collector "$_evt"
 
 # BUG FIX #4: Atomic log rotation (prevent race condition)
 if [[ -f "$ERROR_LOG" ]] && [[ $(awk 'END{print NR}' "$ERROR_LOG" 2>/dev/null || echo 0) -gt 1500 ]]; then
   ERROR_LOG_TMP=$(mktemp "$ERROR_LOG.XXXXXX")
   tail -1000 "$ERROR_LOG" > "$ERROR_LOG_TMP" 2>/dev/null && mv "$ERROR_LOG_TMP" "$ERROR_LOG" 2>/dev/null || rm -f "$ERROR_LOG_TMP"
+fi
+
+# === PLAN FILE WRITE INTERCEPT ===
+# Write tool rejects paths outside project root (path.relative() produces ../).
+# Do the write ourselves, tell the model via additionalContext.
+if [[ "$TOOL_NAME" == "Write" ]] && echo "$ERROR_MSG" | grep -q 'path should be a .path.relative'; then
+    _PLAN_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+    if [[ "$_PLAN_PATH" == "$HOME/.claude/plans/"* ]]; then
+        mkdir -p "$(dirname "$_PLAN_PATH")"
+        printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.content // empty' > "$_PLAN_PATH"
+        jq -n --arg ctx "Plan file written successfully by hook to: $_PLAN_PATH" \
+            '{"hookSpecificOutput":{"hookEventName":"PostToolUseFailure","additionalContext":$ctx}}'
+        exit 0
+    fi
 fi
 
 # === HINTS TO STDERR (if we want Claude to see them) ===

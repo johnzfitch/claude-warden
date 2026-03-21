@@ -25,7 +25,7 @@ services:
       - "4318:4318"
       - "8889:8889"
     volumes:
-      - ./macos/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./macos/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
 
   prometheus:
     network_mode: ""

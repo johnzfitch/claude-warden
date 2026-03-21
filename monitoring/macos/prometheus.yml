@@ -8,7 +8,7 @@ scrape_configs:
     static_configs:
       - targets: ['otel-collector:8889']
 
-  # Budget-cli metrics via node-exporter textfile
+  # claude-warden inline budget/session metrics via node-exporter textfile
   - job_name: 'claude-budget'
     static_configs:
       - targets: ['node-exporter:9101']

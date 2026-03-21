@@ -20,8 +20,9 @@ docs/ANALYSIS-*.md
 __pycache__/
 *.py[cod]
 
-# Claude Code local settings (keep the repo clean by default)
+# Claude Code local state (keep the repo clean by default)
 .claude/settings.local.json
+.claude/worktrees/
 
 # User config overrides (created from config/user.json.template)
 config/user.json
@@ -40,3 +41,14 @@ tests/verbosity/results.txt
 # Demo artifacts
 demo/claude-warden-demo.mp4
 demo/mock-inputs/pre-tool-use-write-large.json
+
+# Go build artifacts
+collector/collector
+collector/warden-collector
+
+# Scratch directories
+playground/
+target/
+
+# Claude Code project config (auto-generated)
+.claude/

@@ -123,6 +123,57 @@ format_percent_from_tenths() {
     fi
 }
 
+escape_prom_label() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\n'/ }"
+    value="${value//$'\r'/ }"
+    printf '%s' "$value"
+}
+
+write_session_metrics_prom() {
+    local session_id="$1"
+    local model="$2"
+    local total_input="$3"
+    local total_output="$4"
+    local duration_ms="$5"
+    local cost_usd="$6"
+
+    [ -n "$session_id" ] || return 0
+
+    local prom_dir="${HOME}/.claude/.monitoring/textfile"
+    local prom_file="${prom_dir}/claude-code-session-${session_id}.prom"
+    local model_label active_seconds tmp_file
+
+    mkdir -p "$prom_dir" 2>/dev/null || return 0
+    model_label="$(escape_prom_label "$model")"
+    active_seconds="$(LC_NUMERIC=C awk -v ms="$duration_ms" 'BEGIN { printf "%.3f", ms / 1000 }' 2>/dev/null)"
+    if [[ ! "$active_seconds" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        active_seconds="0"
+    fi
+    if [[ ! "$cost_usd" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+        cost_usd="0"
+    fi
+
+    tmp_file="${prom_file}.tmp.$$"
+    {
+        printf '# HELP claude_warden_cost_usage_USD_total Current session cost exported by claude-warden statusline\n'
+        printf '# TYPE claude_warden_cost_usage_USD_total gauge\n'
+        printf 'claude_warden_cost_usage_USD_total{session_id="%s",model="%s"} %s\n' "$session_id" "$model_label" "$cost_usd"
+        printf '# HELP claude_warden_token_usage_tokens_total Current session token totals exported by claude-warden statusline\n'
+        printf '# TYPE claude_warden_token_usage_tokens_total gauge\n'
+        printf 'claude_warden_token_usage_tokens_total{session_id="%s",model="%s",type="input"} %s\n' "$session_id" "$model_label" "$total_input"
+        printf 'claude_warden_token_usage_tokens_total{session_id="%s",model="%s",type="output"} %s\n' "$session_id" "$model_label" "$total_output"
+        printf '# HELP claude_warden_active_time_seconds_total Current session active time exported by claude-warden statusline\n'
+        printf '# TYPE claude_warden_active_time_seconds_total gauge\n'
+        printf 'claude_warden_active_time_seconds_total{session_id="%s",model="%s"} %s\n' "$session_id" "$model_label" "$active_seconds"
+        printf '# HELP claude_warden_session_count_total Active sessions exported by claude-warden statusline\n'
+        printf '# TYPE claude_warden_session_count_total gauge\n'
+        printf 'claude_warden_session_count_total{session_id="%s",model="%s"} 1\n' "$session_id" "$model_label"
+    } > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$prom_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null
+}
+
 abbreviate_model() {
     local model="$1"
 
@@ -281,11 +332,40 @@ CTX_USED=0
 PCT_TENTHS=0
 USED_PCT_DISPLAY="0"
 
-# Percentage: prefer used_percentage from Claude Code (includes system prompt,
-# tool defs, CLAUDE.md — everything in the context window). current_usage only
-# counts API-reported tokens and consistently under-reports by ~10%.
-# Fall back to computing from current_usage when used_percentage is absent.
-if [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
+# Context % priority:
+# 1. Collector (OTEL-sourced, tracks context growth between API calls)
+# 2. Claude Code's used_percentage (stale between API calls)
+COLLECTOR_SOCK="${WARDEN_COLLECTOR_SOCK:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden/collector.sock}"
+COLLECTOR_JSON=""
+COLLECTOR_PCT=""
+COLLECTOR_TOOL_COUNT=""
+COLLECTOR_SUBAGENT_COUNT=""
+COLLECTOR_LAST_TOOL=""
+COLLECTOR_LAST_TOOL_MS=""
+COLLECTOR_CACHE_HIT=""
+if [ -n "$SESSION_ID" ] && [ -S "$COLLECTOR_SOCK" ]; then
+    COLLECTOR_JSON="$(curl -sf --max-time 0.05 \
+        --unix-socket "$COLLECTOR_SOCK" \
+        "http://localhost/v1/sessions/${SESSION_ID}/context" 2>/dev/null)" || COLLECTOR_JSON=""
+    if [ -n "$COLLECTOR_JSON" ]; then
+        # Extract all useful fields in one jq call
+        eval "$(printf '%s' "$COLLECTOR_JSON" | jq -r '
+            "COLLECTOR_PCT=\(.used_pct // "")",
+            "COLLECTOR_TOOL_COUNT=\(.tool_count // 0)",
+            "COLLECTOR_SUBAGENT_COUNT=\(.subagent_count // 0)",
+            "COLLECTOR_LAST_TOOL=\(.last_tool // "")",
+            "COLLECTOR_LAST_TOOL_MS=\(.last_tool_duration_ms // "")",
+            "COLLECTOR_CACHE_HIT=\(.cache_hit_rate // "")",
+            "COLLECTOR_COMPACT_PCT=\(.compact_threshold_pct // 85)"
+        ' 2>/dev/null)" || true
+    fi
+fi
+
+if [ -n "$COLLECTOR_PCT" ] && [[ "$COLLECTOR_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    # Collector has OTEL data with pending tool tokens — most accurate
+    PCT_TENTHS=$(printf '%s' "$COLLECTOR_PCT" | LC_NUMERIC=C awk '{printf "%d", $1 * 10}')
+    USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
+elif [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
     whole="${BASH_REMATCH[1]}"
     dec="${BASH_REMATCH[3]}"
     dec="${dec:0:1}"
@@ -295,7 +375,7 @@ if [[ "$USED_PCT_RAW" =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
     PCT_TENTHS=$((whole * 10 + dec))
     USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
 elif [ "$HAS_CURR" = "1" ] && [ "$CONTEXT_SIZE" -gt 0 ]; then
-    CTX_USED=$((CURR_IN + CURR_OUT + CACHE_CREATE + CACHE_READ))
+    CTX_USED=$((CURR_IN + CACHE_CREATE + CACHE_READ))
     PCT_TENTHS=$((CTX_USED * 1000 / CONTEXT_SIZE))
     USED_PCT_DISPLAY="$(format_percent_from_tenths "$PCT_TENTHS")"
 fi
@@ -303,7 +383,7 @@ fi
 # CTX_USED: compute from current_usage when available (for delta/clear detection),
 # otherwise derive from percentage.
 if [ "$HAS_CURR" = "1" ]; then
-    CTX_USED=$((CURR_IN + CURR_OUT + CACHE_CREATE + CACHE_READ))
+    CTX_USED=$((CURR_IN + CACHE_CREATE + CACHE_READ))
 elif [ "$CONTEXT_SIZE" -gt 0 ] && [ "$PCT_TENTHS" -gt 0 ]; then
     CTX_USED=$((CONTEXT_SIZE * PCT_TENTHS / 1000))
 fi
@@ -320,12 +400,16 @@ if [ -z "$PERCENT_INT" ] || ! [[ "$PERCENT_INT" =~ ^[0-9]+$ ]]; then
     PERCENT_INT=0
 fi
 
-if [ "$PERCENT_INT" -lt 50 ]; then
-    COLOR=$'\033[32m'  # Green
-elif [ "$PERCENT_INT" -lt 80 ]; then
-    COLOR=$'\033[33m'  # Yellow
+# Color thresholds derived from compact threshold (default 85%)
+# Yellow at 75% of compact threshold, red at compact threshold
+COMPACT_PCT="${COLLECTOR_COMPACT_PCT:-85}"
+YELLOW_AT=$((COMPACT_PCT * 75 / 100))
+if [ "$PERCENT_INT" -lt "$YELLOW_AT" ]; then
+    COLOR=$'\033[32m'  # Green: well below compact
+elif [ "$PERCENT_INT" -lt "$COMPACT_PCT" ]; then
+    COLOR=$'\033[33m'  # Yellow: approaching compact
 else
-    COLOR=$'\033[31m'  # Red
+    COLOR=$'\033[31m'  # Red: at or past compact threshold
 fi
 RESET=$'\033[0m'
 DIM=$'\033[2m'
@@ -339,11 +423,19 @@ STATE_FILE="$STATE_DIR/state${SESSION_ID:+-$SESSION_ID}"
 REASON_FILE="$STATE_DIR/reset-reason"
 mkdir -p "$STATE_DIR"
 
+if [ "${WARDEN_DEBUG:-}" = "1" ]; then
+    printf '%s sid=%s model="%s" pct_raw="%s" ctx=%s curr_in=%s curr_out=%s cc=%s cr=%s has_curr=%s\n' \
+        "$(date +%H:%M:%S)" "$SESSION_ID" "$MODEL" "$USED_PCT_RAW" \
+        "$CONTEXT_SIZE" "$CURR_IN" "$CURR_OUT" "$CACHE_CREATE" "$CACHE_READ" "$HAS_CURR" \
+        >> "$STATE_DIR/statusline-debug.log" 2>/dev/null
+fi
+
 PREV_SESSION=""
 PREV_TOTAL_IN=0
 PREV_TOTAL_OUT=0
 PREV_CTX=0
 PREV_COST_USD="0"
+PREV_MODEL=""
 RESET_TS=0
 RESET_REASON=""
 
@@ -361,6 +453,7 @@ if [ -f "$STATE_FILE" ]; then
         PREV_TOTAL_OUT=$(num_or_zero "$PREV_F3")
         PREV_CTX=$(num_or_zero "$PREV_F4")
         PREV_COST_USD="${_P6:-0}"
+        PREV_MODEL="${_P13:-}"
         RESET_TS=$(num_or_zero "$PREV_F14")
         RESET_REASON="${PREV_F15:-}"
     else
@@ -386,6 +479,13 @@ PREV_COST_USD="$(normalize_cost_usd "${PREV_COST_USD:-0}" "$PREV_TOTAL")"
 SAME_SESSION=0
 if [ -n "$SESSION_ID" ] && [ "$PREV_SESSION" = "$SESSION_ID" ]; then
     SAME_SESSION=1
+fi
+
+# Model bleed fix: Claude Code sends the current global model setting to all
+# sessions, so switching models in one terminal changes ALL statuslines.
+# Use cached per-session model unless tokens changed (actual API call happened).
+if [ "$SAME_SESSION" -eq 1 ] && [ -n "$PREV_MODEL" ] && [ "$TOTAL" -eq "$PREV_TOTAL" ]; then
+    MODEL="$PREV_MODEL"
 fi
 
 # Token reset and context clear only valid within the same session.
@@ -468,54 +568,20 @@ if [ -n "$RESET_LABEL" ]; then
     RESET_LABEL="$(abbreviate_reset_label "$RESET_LABEL")"
 fi
 
+# Tool count: prefer collector (OTEL-sourced), fallback to JSON
 TOOL_COUNT=""
-# Prefer hook-tracked count (session state file) over JSON's tool_count,
-# which Claude Code often sends as 0 or omits entirely.
-if [ -n "$SESSION_ID" ]; then
-    SESSION_STATE_FILE="$STATE_DIR/session-$SESSION_ID"
-    if [ -f "$SESSION_STATE_FILE" ]; then
-        SS_COUNT="" _SS_TS=""
-        IFS='|' read -r SS_COUNT _ _ _SS_TS < "$SESSION_STATE_FILE" 2>/dev/null || true
-        if [[ "${SS_COUNT:-}" =~ ^[0-9]+$ ]] && [ "$SS_COUNT" -gt 0 ]; then
-            TOOL_COUNT="$SS_COUNT"
-        fi
-    fi
-fi
-# Fallback to JSON tool_count if hooks haven't tracked anything yet
-if [ -z "$TOOL_COUNT" ] && [[ "$TOOL_COUNT_RAW" =~ ^[0-9]+$ ]] && [ "$TOOL_COUNT_RAW" -gt 0 ]; then
+if [ "${COLLECTOR_TOOL_COUNT:-0}" -gt 0 ]; then
+    TOOL_COUNT="$COLLECTOR_TOOL_COUNT"
+elif [[ "$TOOL_COUNT_RAW" =~ ^[0-9]+$ ]] && [ "$TOOL_COUNT_RAW" -gt 0 ]; then
     TOOL_COUNT="$TOOL_COUNT_RAW"
 fi
 
-SUB_COUNT=0
-SUB_COUNT_FILE="$STATE_DIR/subagent-count"
-if [ -f "$SUB_COUNT_FILE" ]; then
-    SUB_SESSION="" SUB_VALUE="" _SUB_TS=""
-    IFS='|' read -r SUB_SESSION SUB_VALUE _SUB_TS < "$SUB_COUNT_FILE" 2>/dev/null || true
-    if [ "${SUB_SESSION:-}" = "$SESSION_ID" ]; then
-        SUB_COUNT=$(num_or_zero "${SUB_VALUE:-0}")
-    fi
-fi
-
-# Tokens saved (cumulative, written by hooks)
-TOKENS_SAVED=0
-if [ -n "$SESSION_ID" ]; then
-    SAVED_FILE="$STATE_DIR/saved-$SESSION_ID"
-    if [ -f "$SAVED_FILE" ]; then
-        read -r TOKENS_SAVED < "$SAVED_FILE" 2>/dev/null || true
-        [[ "${TOKENS_SAVED:-}" =~ ^[0-9]+$ ]] || TOKENS_SAVED=0
-    fi
-fi
-
-# Last tool latency (written by post-tool-use)
-LAST_LATENCY_MS=""
-LAST_LATENCY_TOOL=""
-if [ -n "$SESSION_ID" ]; then
-    LATENCY_FILE="$STATE_DIR/latency-$SESSION_ID"
-    if [ -f "$LATENCY_FILE" ]; then
-        IFS='|' read -r LAST_LATENCY_MS LAST_LATENCY_TOOL < "$LATENCY_FILE" 2>/dev/null || true
-        [[ "${LAST_LATENCY_MS:-}" =~ ^[0-9]+$ ]] || LAST_LATENCY_MS=""
-    fi
-fi
+# Subagent count and last tool latency from collector (OTEL-sourced)
+SUB_COUNT=$(num_or_zero "${COLLECTOR_SUBAGENT_COUNT:-0}")
+LAST_LATENCY_MS="${COLLECTOR_LAST_TOOL_MS:-}"
+LAST_LATENCY_TOOL="${COLLECTOR_LAST_TOOL:-}"
+# Strip span name prefix if present (e.g., "claude_code.tool.Read" -> "Read")
+LAST_LATENCY_TOOL="${LAST_LATENCY_TOOL##*.}"
 
 CTX_TOTAL_FMT="$(format_tokens "$CONTEXT_SIZE")"
 STATUSLINE_MAX_BYTES="${WARDEN_STATUSLINE_MAX_BYTES:-72}"
@@ -587,6 +653,21 @@ LINES_REMOVED=$(num_or_zero "$LINES_REMOVED")
 
 DURATION_MS=$(num_or_zero "$DURATION_MS")
 API_DURATION_MS=$(num_or_zero "$API_DURATION_MS")
+write_session_metrics_prom "$SESSION_ID" "$MODEL" "$TOTAL_INPUT" "$TOTAL_OUTPUT" "$DURATION_MS" "$COST_USD"
+
+# Reap tombstoned prom files (session-end delays deletion for one scrape interval)
+_PROM_DIR="${HOME}/.claude/.monitoring/textfile"
+if [ -d "$_PROM_DIR" ]; then
+    for _ts_file in "$_PROM_DIR"/*.tombstone; do
+        [ -f "$_ts_file" ] || continue
+        _ts_val=""
+        read -r _ts_val < "$_ts_file" 2>/dev/null || continue
+        [[ "$_ts_val" =~ ^[0-9]+$ ]] || continue
+        if [ $((NOW_TS - _ts_val)) -ge 60 ]; then
+            rm -f "${_ts_file%.tombstone}" "$_ts_file" 2>/dev/null
+        fi
+    done
+fi
 
 # Budget (parse known-format JSON without jq to avoid process spawn)
 BUDGET_PCT=""

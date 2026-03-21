@@ -9,9 +9,9 @@
 
 # State directories
 export WARDEN_STATE_DIR="${WARDEN_STATE_DIR:-$HOME/.claude/.statusline}"
+export WARDEN_EVENTS_FILE="${WARDEN_EVENTS_FILE:-$WARDEN_STATE_DIR/events.jsonl}"
 export WARDEN_SESSION_BUDGET_DIR="${WARDEN_SESSION_BUDGET_DIR:-$HOME/.claude/.session-budgets}"
 export WARDEN_SUBAGENT_STATE_DIR="${WARDEN_SUBAGENT_STATE_DIR:-$HOME/.claude/.subagent-state}"
-export WARDEN_EVENTS_FILE="$WARDEN_STATE_DIR/events.jsonl"
 
 # ==============================================================================
 # CROSS-PLATFORM HELPERS (must be defined before first use)
@@ -90,42 +90,83 @@ _warden_json_escape() {
 }
 
 # ==============================================================================
-# CROSS-PROCESS LOCKING (mkdir-based, portable)
+# CROSS-PROCESS LOCKING (flock on Linux/WSL, mkdir fallback on macOS)
 # ==============================================================================
 
-# Execute a function while holding a directory-based lock.
-# Usage: _warden_with_lock LOCKDIR FUNC
-# Uses mkdir atomicity (POSIX). Stale locks broken after 5s.
+# Execute a function while holding an advisory lock.
+# Usage: _warden_with_lock LOCKFILE FUNC [ARGS...]
+# Linux/WSL: fd-based flock (kernel-level, race-free, auto-releases on exit).
+# macOS: mkdir fallback with explicit acquisition tracking (never runs unlocked).
 _warden_with_lock() {
-    local lockdir="$1" func="$2"
-    local max_attempts=50 attempt=0
-    while ! mkdir "$lockdir" 2>/dev/null; do
-        sleep 0.1
-        attempt=$((attempt + 1))
-        if (( attempt >= max_attempts )); then
-            # Stale lock — break it
-            rm -rf "$lockdir" 2>/dev/null
-            mkdir "$lockdir" 2>/dev/null || true
-            break
+    local lockfile="$1"; shift
+    mkdir -p "$(dirname "$lockfile")" 2>/dev/null || true
+    if command -v flock &>/dev/null; then
+        local _lock_fd
+        exec {_lock_fd}>"$lockfile"
+        flock -w 5 "$_lock_fd" || { exec {_lock_fd}>&-; return 1; }
+        "$@"
+        local rc=$?
+        flock -u "$_lock_fd"
+        exec {_lock_fd}>&-
+        return $rc
+    else
+        # macOS fallback: mkdir-based with correct acquisition tracking
+        local max_attempts=50 attempt=0 acquired=false
+        while (( attempt < max_attempts )); do
+            if mkdir "$lockfile.d" 2>/dev/null; then
+                # Write our PID so others can detect staleness
+                printf '%d' $$ > "$lockfile.d/pid" 2>/dev/null
+                acquired=true
+                break
+            fi
+            # Check for stale lock: if holder PID is dead, break the lock
+            if (( attempt == 25 )); then
+                local _holder_pid=""
+                [[ -f "$lockfile.d/pid" ]] && _holder_pid=$(<"$lockfile.d/pid")
+                if [[ -n "$_holder_pid" && "$_holder_pid" =~ ^[0-9]+$ ]]; then
+                    if ! kill -0 "$_holder_pid" 2>/dev/null; then
+                        # Holder is dead — break the stale lock
+                        rm -rf "$lockfile.d" 2>/dev/null
+                    fi
+                fi
+            fi
+            sleep 0.1
+            attempt=$((attempt + 1))
+        done
+        if [[ "$acquired" == true ]]; then
+            "$@"
+            local rc=$?
+            rm -rf "$lockfile.d" 2>/dev/null || true
+            return $rc
         fi
-    done
-    "$func"
-    rmdir "$lockdir" 2>/dev/null || true
+        # Not acquired after 5s -- skip silently.
+        # Better to miss one budget increment than corrupt state.
+        return 1
+    fi
 }
 
-# Session start timestamp (cached for this invocation)
-if [[ -f "$WARDEN_STATE_DIR/.session_start" ]]; then
-    _WARDEN_SESSION_START_NS=$(cat "$WARDEN_STATE_DIR/.session_start" 2>/dev/null)
-    # Handle both formats: seconds-only and seconds.nanoseconds
-    if [[ "$_WARDEN_SESSION_START_NS" == *.* ]]; then
-        _WARDEN_SESSION_START_S=$(cut -d. -f1 <<< "$_WARDEN_SESSION_START_NS")
-    else
-        _WARDEN_SESSION_START_S="$_WARDEN_SESSION_START_NS"
-    fi
-else
-    _WARDEN_SESSION_START_S=$(date +%s)
-fi
+# Session start timestamp (initial value, refined by _warden_resolve_session_start).
+# No global file -- each session writes .session_start-$sid only.
+# This initial value is a safe fallback until the hook parses session_id.
+_WARDEN_SESSION_START_S=$(date +%s)
 export _WARDEN_SESSION_START_S
+
+# Refine session start to a per-session file (call after parsing session_id).
+# Fixes: concurrent sessions sharing a single global .session_start would skew
+# all relative timestamps for the non-latest session.
+_warden_resolve_session_start() {
+    local sid="$1"
+    [[ -z "$sid" ]] && return
+    local per_session="$WARDEN_STATE_DIR/.session_start-$sid"
+    if [[ -f "$per_session" ]]; then
+        _WARDEN_SESSION_START_NS=$(cat "$per_session" 2>/dev/null)
+        if [[ "$_WARDEN_SESSION_START_NS" == *.* ]]; then
+            _WARDEN_SESSION_START_S=$(cut -d. -f1 <<< "$_WARDEN_SESSION_START_NS")
+        else
+            _WARDEN_SESSION_START_S="$_WARDEN_SESSION_START_NS"
+        fi
+    fi
+}
 
 # Current timestamp (captured once)
 export _WARDEN_NOW_S=$(date +%s)
@@ -159,6 +200,8 @@ export WARDEN_BUDGET_TOTAL=${WARDEN_BUDGET_TOTAL:-280000}
 # ==============================================================================
 # Tracks estimated token consumption per session (~3.5 bytes/token).
 # State: single file with consumed count. Total from WARDEN_BUDGET_TOTAL.
+# Legacy budget-cli state is intentionally ignored; claude-warden owns this
+# budget path inline under ~/.claude/.warden/.
 
 WARDEN_BUDGET_STATE="${HOME}/.claude/.warden/budget.state"
 WARDEN_BUDGET_CACHE="$WARDEN_STATE_DIR/budget-export"
@@ -188,7 +231,7 @@ _warden_budget_update() {
         consumed=$((consumed + tokens))
         _warden_budget_write "$consumed"
     }
-    _warden_with_lock "${WARDEN_BUDGET_STATE}.lock.d" _budget_add
+    _warden_with_lock "${WARDEN_BUDGET_STATE}.lock" _budget_add
 }
 
 # Check if budget is available (exit 0 = ok, exit 1 = exhausted)
@@ -196,6 +239,14 @@ _warden_budget_check() {
     local consumed
     consumed=$(_warden_budget_read)
     (( consumed < WARDEN_BUDGET_TOTAL ))
+}
+
+# Read a numeric value from a file with fallback (prevents arithmetic errors on corrupt/empty files)
+_warden_read_numeric() {
+    local file="$1" fallback="${2:-0}"
+    local val=""
+    [[ -f "$file" ]] && val=$(<"$file" 2>/dev/null)
+    [[ "$val" =~ ^[0-9]+$ ]] && printf '%s' "$val" || printf '%s' "$fallback"
 }
 
 # Export budget state as JSON to stdout AND write cache for statusline
@@ -217,71 +268,6 @@ _warden_budget_export() {
 # Reset budget counter (called at session start)
 _warden_budget_reset() {
     _warden_budget_write 0
-}
-
-# Write Prometheus textfile for node-exporter (budget + subagent metrics).
-# Atomic write (tmp + mv). Skips silently if monitoring dir doesn't exist.
-_warden_write_budget_prom() {
-    local prom_dir="${HOME}/.claude/.monitoring/textfile"
-    [[ -d "$prom_dir" ]] || return 0
-
-    local consumed total remaining util active _sc_raw _sc_count
-    consumed=$(_warden_budget_read)
-    total="$WARDEN_BUDGET_TOTAL"
-    remaining=$(( total > consumed ? total - consumed : 0 ))
-    util=0; (( total > 0 )) && util=$(( consumed * 100 / total ))
-
-    active=0
-    if [[ -f "$WARDEN_STATE_DIR/subagent-count" ]]; then
-        _sc_raw=$(<"$WARDEN_STATE_DIR/subagent-count")
-        IFS='|' read -r _ _sc_count _ <<< "$_sc_raw"
-        [[ "$_sc_count" =~ ^[0-9]+$ ]] && active="$_sc_count"
-    fi
-
-    {   printf '# HELP claude_budget_total_tokens Total token budget limit\n'
-        printf '# TYPE claude_budget_total_tokens gauge\n'
-        printf 'claude_budget_total_tokens %d\n' "$total"
-        printf '# HELP claude_budget_consumed_tokens Tokens consumed in current session\n'
-        printf '# TYPE claude_budget_consumed_tokens gauge\n'
-        printf 'claude_budget_consumed_tokens %d\n' "$consumed"
-        printf '# HELP claude_budget_remaining_tokens Tokens remaining in budget\n'
-        printf '# TYPE claude_budget_remaining_tokens gauge\n'
-        printf 'claude_budget_remaining_tokens %d\n' "$remaining"
-        printf '# HELP claude_budget_utilization_percent Budget utilization percentage\n'
-        printf '# TYPE claude_budget_utilization_percent gauge\n'
-        printf 'claude_budget_utilization_percent %d\n' "$util"
-        printf '# HELP claude_budget_active_subagents Number of active subagents\n'
-        printf '# TYPE claude_budget_active_subagents gauge\n'
-        printf 'claude_budget_active_subagents %d\n' "$active"
-    } > "${prom_dir}/budget.prom.tmp" && mv "${prom_dir}/budget.prom.tmp" "${prom_dir}/budget.prom" || true
-}
-
-# ==============================================================================
-# EXACT TOKEN COUNTING (background, fire-and-forget)
-# ==============================================================================
-# When WARDEN_TOKEN_COUNT=api, spawn _token-count-bg to get exact counts from the
-# Anthropic token counting API. Writes correction events to events.jsonl.
-# Zero added hook latency: runs in background with & disown.
-# Requires: python3 with anthropic package, ANTHROPIC_API_KEY set by Claude Code.
-
-_warden_fire_token_count() {
-    local orig_text="$1" final_text="$2" estimated="$3" rule="$4"
-    [[ "${WARDEN_TOKEN_COUNT:-}" != "api" ]] && return
-    local python="${WARDEN_PYTHON:-python3}"
-    local script="$WARDEN_HOOKS_DIR/_token-count-bg"
-    command -v "$python" &>/dev/null || return
-    [[ -x "$script" ]] || return
-
-    local tmpdir
-    tmpdir=$(mktemp -d "/tmp/warden-tc.XXXXXX") || return
-    printf '%s' "$orig_text" > "$tmpdir/orig"
-    printf '%s' "$final_text" > "$tmpdir/final"
-
-    local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-    "$python" "$script" \
-        "$ts" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_COMMAND:0:200}" "$estimated" "$rule" \
-        "$WARDEN_EVENTS_FILE" "$tmpdir/orig" "$tmpdir/final" &
-    disown
 }
 
 # ==============================================================================
@@ -330,8 +316,14 @@ _warden_parse_toplevel() {
     local value=""
 
     # Extract using bash parameter expansion: "field":"value"
-    if [[ "$WARDEN_INPUT" =~ \"$field\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+    if [[ "$WARDEN_INPUT" =~ \"$field\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
         value="${BASH_REMATCH[1]}"
+    fi
+
+    # Fallback to jq if the match contains backslashes (possible escaped quotes)
+    # or if the regex missed entirely (empty value for a field that exists)
+    if [[ "$value" == *\\* ]] || { [[ -z "$value" ]] && [[ "$WARDEN_INPUT" == *"\"$field\""* ]]; }; then
+        value=$(printf '%s' "$WARDEN_INPUT" | jq -r ".$field // \"\"" 2>/dev/null) || value=""
     fi
 
     printf '%s' "$value"
@@ -388,7 +380,7 @@ _warden_sanitize_id() {
 # Returns: 0 if subagent, 1 if main agent
 _warden_is_subagent() {
     local transcript_path="$1"
-    [[ "$transcript_path" == *"/subagents/"* || "$transcript_path" == *"/tmp/"* ]]
+    [[ "$transcript_path" == *"/subagents/"* ]]
 }
 
 # Extract agent ID from transcript path
@@ -450,6 +442,94 @@ _warden_maybe_scrub() {
     eval "$_prev_nocasematch" 2>/dev/null || true
 }
 
+
+# ==============================================================================
+# COLLECTOR INTEGRATION
+# ==============================================================================
+
+
+# Start the Go collector if enabled and not already running.
+# Called once per session from session-start — NOT from per-tool hooks.
+# Uses /healthz probe (50ms timeout) to detect a running instance.
+# The collector is a single-writer SQLite process; starting a second
+# instance would fail on bind anyway, so this is safe to race.
+_warden_ensure_collector() {
+    local _state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden"
+    local _pidfile="${_state_dir}/collector.pid"
+    local _logfile="${_state_dir}/collector.log"
+
+    # Fast path: pidfile check (stat + read + kill syscall, ~0ms)
+    if [[ -f "$_pidfile" ]]; then
+        local _pid
+        _pid=$(<"$_pidfile")
+        # Validate numeric and process alive
+        if [[ "$_pid" =~ ^[0-9]+$ ]] && kill -0 "$_pid" 2>/dev/null; then
+            # Guard against PID reuse: verify it is actually the collector
+            # /proc check is Linux-only; skip on macOS (PID reuse is rare enough)
+            if [[ -r "/proc/$_pid/comm" ]]; then
+                [[ "$(<"/proc/$_pid/comm")" == warden-collecto* ]] && return 0
+            else
+                return 0  # non-Linux: trust kill -0
+            fi
+        fi
+        # Stale pidfile — remove it
+        rm -f "$_pidfile" 2>/dev/null
+    fi
+
+    # Find the binary: env override -> installed -> dev tree
+    local _bin="" _lib_dir
+    _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for _candidate in \
+        "${WARDEN_COLLECTOR_BIN:-}" \
+        "$HOME/.local/bin/warden-collector" \
+        "${_lib_dir}/../../collector/warden-collector"; do
+        [[ -n "$_candidate" && -x "$_candidate" ]] && { _bin="$_candidate"; break; }
+    done
+    [[ -z "$_bin" ]] && return 0  # no binary found, skip silently
+
+    # Ensure state dir exists (first-ever run)
+    [[ -d "$_state_dir" ]] || mkdir -p "$_state_dir" 2>/dev/null
+
+    # Rotate log if > 1MB
+    if [[ -f "$_logfile" ]]; then
+        local _logsz
+        _logsz=$(stat -c%s "$_logfile" 2>/dev/null || stat -f%z "$_logfile" 2>/dev/null || echo 0)
+        (( _logsz > 1048576 )) && mv -f "$_logfile" "${_logfile}.1" 2>/dev/null
+    fi
+
+    # Start in background, detached from hook process tree
+    nohup "$_bin" >> "$_logfile" 2>&1 &
+    disown
+
+    # Brief wait for bind, then verify via pidfile (not network)
+    sleep 0.15
+    [[ -f "$_pidfile" ]] && return 0
+    return 1
+}
+
+# Post event to local Go collector (async, non-blocking)
+# Falls back silently if collector is not running.
+# Usage: _warden_post_to_collector JSON_STRING
+_warden_append_event_jsonl() {
+    local _payload="$1"
+    [[ -z "$_payload" ]] && return 0
+    mkdir -p "$(dirname "$WARDEN_EVENTS_FILE")" 2>/dev/null || return 0
+    printf '%s\n' "$_payload" >> "$WARDEN_EVENTS_FILE" 2>/dev/null || true
+}
+
+_warden_post_to_collector() {
+    local _payload="$1"
+    local _sock="${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden/collector.sock"
+    _warden_append_event_jsonl "$_payload"
+    # Fire-and-forget: 100ms timeout, background, discard output
+    # Uses UDS for lower latency and security
+    command curl -s --max-time 0.1 -X POST \
+        -H 'Content-Type: application/json' \
+        --unix-socket "$_sock" \
+        --data-raw "$_payload" \
+        "http://localhost/v1/ingest/hook" \
+        &>/dev/null &
+}
 # Emit JSONL event for blocked commands (pre-tool-use)
 # Usage: _warden_emit_block RULE TOKENS_SAVED [CMD_OVERRIDE]
 _warden_emit_block() {
@@ -465,17 +545,10 @@ _warden_emit_block() {
     _warden_json_escape rule
     _warden_maybe_scrub cmd_safe
 
-    printf '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
-        "$ts" "$tool_safe" "$sid_safe" "$cmd_safe" "$rule" "$tokens" \
-        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
-
-    # Accumulate tokens saved for statusline
-    if (( tokens > 0 )) && [[ -n "${WARDEN_SESSION_ID:-}" ]]; then
-        local sf="$WARDEN_STATE_DIR/saved-$WARDEN_SESSION_ID"
-        local prev=0
-        [[ -f "$sf" ]] && prev=$(<"$sf" 2>/dev/null) && [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
-        printf '%d\n' "$((prev + tokens))" > "$sf"
-    fi
+    local _evt
+    printf -v _evt '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}' \
+        "$ts" "$tool_safe" "$sid_safe" "$cmd_safe" "$rule" "$tokens"
+    _warden_post_to_collector "$_evt"
 }
 
 # Emit JSONL event for post-tool-use accounting
@@ -503,18 +576,10 @@ _warden_emit_event() {
     _warden_json_escape sid_safe
     _warden_json_escape etype
     _warden_maybe_scrub cmd_safe
-
-    printf '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
-        "$ts" "$etype" "$tool_safe" "$sid_safe" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
-        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
-
-    # Accumulate tokens saved for statusline
-    if (( saved > 0 )) && [[ -n "${WARDEN_SESSION_ID:-}" ]]; then
-        local sf="$WARDEN_STATE_DIR/saved-$WARDEN_SESSION_ID"
-        local prev=0
-        [[ -f "$sf" ]] && prev=$(<"$sf" 2>/dev/null) && [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
-        printf '%d\n' "$((prev + saved))" > "$sf"
-    fi
+    local _evt
+    printf -v _evt '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}' \
+        "$ts" "$etype" "$tool_safe" "$sid_safe" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field"
+    _warden_post_to_collector "$_evt"
 
     # Track final output size for subagent byte correction (read by EXIT trap in post-tool-use)
     _WARDEN_FINAL_SIZE="$final_bytes"
@@ -535,10 +600,10 @@ _warden_emit_output_size() {
     _warden_json_escape tool_name
     _warden_json_escape sid
     _warden_maybe_scrub cmd_safe
-
-    printf '{"timestamp":%d,"event_type":"tool_output_size","tool":"%s","session_id":"%s","output_bytes":%d,"output_lines":%d,"estimated_tokens":%d,"original_cmd":"%s"}\n' \
-        "$ts" "$tool_name" "$sid" "$output_bytes" "$output_lines" "$estimated_tokens" "$cmd_safe" \
-        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    local _evt
+    printf -v _evt '{"timestamp":%d,"event_type":"tool_output_size","tool":"%s","session_id":"%s","output_bytes":%d,"output_lines":%d,"estimated_tokens":%d,"original_cmd":"%s"}' \
+        "$ts" "$tool_name" "$sid" "$output_bytes" "$output_lines" "$estimated_tokens" "$cmd_safe"
+    _warden_post_to_collector "$_evt"
 }
 
 # ==============================================================================
@@ -633,13 +698,17 @@ _warden_deny() {
 
 # Quiet override: modify command via updatedInput and signal post-tool-use (PreToolUse)
 # Usage: _warden_quiet_override RULE MODIFIED_COMMAND
-# Writes per-invocation state file for post-tool-use reminder (keyed by tool+PID
-# to prevent races when multiple tool calls overlap), emits event, outputs updatedInput JSON.
+# Writes a command-scoped marker file for post-tool-use reminders so overlapping
+# quiet overrides in the same session do not stomp each other.
 _warden_quiet_override() {
     local rule="$1" cmd="$2"
     local tool="${WARDEN_TOOL_NAME:-Bash}"
+    local sid="${WARDEN_SESSION_ID:-$$}"
+    local cmd_hash
+    cmd_hash=$(printf '%s' "$cmd" | _warden_md5 2>/dev/null)
+    [[ -z "$cmd_hash" ]] && cmd_hash="unknown"
     mkdir -p "$WARDEN_STATE_DIR"
-    printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override-${tool}-$$"
+    printf '%s' "$rule" > "$WARDEN_STATE_DIR/.quiet-override-${tool}-${sid}-${cmd_hash}-$(_warden_date_ns)-$$"
     _warden_emit_event "allowed" 0 0 "$rule"
     jq -n --arg cmd "$cmd" \
         '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":$cmd}}}'
@@ -702,85 +771,6 @@ _warden_validate_git() {
     fi
 
     return 0
-}
-
-# ==============================================================================
-# TOOL LATENCY TRACKING
-# ==============================================================================
-
-# Record tool start timestamp for latency measurement
-# Usage: _warden_record_tool_start "$TOOL_NAME"
-# Writes nanosecond timestamp to state file
-_warden_record_tool_start() {
-    local tool_name="$1"
-    [[ -z "$tool_name" ]] && return
-    mkdir -p "$WARDEN_STATE_DIR"
-    _warden_date_ns > "$WARDEN_STATE_DIR/.tool-start-${tool_name}-$$" 2>/dev/null
-}
-
-# Compute tool latency from recorded start timestamp
-# Usage: _warden_compute_tool_latency "$TOOL_NAME"
-# Sets: WARDEN_TOOL_LATENCY_MS (integer ms), WARDEN_TOOL_START_NS, WARDEN_TOOL_END_NS
-# Returns: 0 if computed, 1 if no start timestamp found
-_warden_compute_tool_latency() {
-    local tool_name="$1"
-    WARDEN_TOOL_LATENCY_MS=""
-    WARDEN_TOOL_START_NS=""
-    WARDEN_TOOL_END_NS=""
-
-    # Find the most recent start file for this tool (any PID)
-    local start_file=""
-    local newest_file=""
-    local newest_mtime=0
-    for f in "$WARDEN_STATE_DIR"/.tool-start-"${tool_name}"-*; do
-        [[ -f "$f" ]] || continue
-        local mtime
-        mtime=$(_warden_stat_mtime "$f")
-        if (( mtime > newest_mtime )); then
-            newest_mtime=$mtime
-            newest_file="$f"
-        fi
-    done
-    start_file="$newest_file"
-
-    [[ -z "$start_file" || ! -f "$start_file" ]] && return 1
-
-    WARDEN_TOOL_START_NS=$(cat "$start_file" 2>/dev/null)
-    rm -f "$start_file" 2>/dev/null
-
-    [[ ! "$WARDEN_TOOL_START_NS" =~ ^[0-9]+$ ]] && return 1
-
-    WARDEN_TOOL_END_NS=$(_warden_date_ns)
-    local delta_ns=$(( WARDEN_TOOL_END_NS - WARDEN_TOOL_START_NS ))
-    WARDEN_TOOL_LATENCY_MS=$(( delta_ns / 1000000 ))
-
-    # Sanity: reject negative or absurdly large (>10min) values
-    if (( WARDEN_TOOL_LATENCY_MS < 0 || WARDEN_TOOL_LATENCY_MS > 600000 )); then
-        WARDEN_TOOL_LATENCY_MS=""
-        return 1
-    fi
-
-    export WARDEN_TOOL_LATENCY_MS WARDEN_TOOL_START_NS WARDEN_TOOL_END_NS
-    return 0
-}
-
-# Emit tool latency event to events.jsonl
-# Usage: _warden_emit_latency "$TOOL_NAME" "$LATENCY_MS" "$COMMAND"
-_warden_emit_latency() {
-    local tool_name="$1" latency_ms="$2" cmd="${3:-}"
-    local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
-
-    local cmd_safe="${cmd:0:200}"
-    local sid="${WARDEN_SESSION_ID:-}"
-
-    _warden_json_escape cmd_safe
-    _warden_json_escape tool_name
-    _warden_json_escape sid
-    _warden_maybe_scrub cmd_safe
-
-    printf '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","session_id":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}\n' \
-        "$ts" "$tool_name" "$sid" "$latency_ms" "$cmd_safe" \
-        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 
 # ==============================================================================

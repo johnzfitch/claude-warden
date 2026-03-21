@@ -21,7 +21,7 @@
 [icon-network]: .github/assets/icons/building-network-16x16.png
 [icon-flow]: .github/assets/icons/application-network-16x16.png
 [icon-metrics]: .github/assets/icons/chart-arrow-16x16.png
-[badge-version]: https://img.shields.io/badge/version-v0.4.0-blue
+[badge-version]: https://img.shields.io/badge/version-v0.6.1-blue
 [badge-license]: https://img.shields.io/badge/license-MIT-green
 [badge-platform]: https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey
 [releases]: https://github.com/johnzfitch/claude-warden/releases
@@ -97,10 +97,11 @@ ConfigChange ──> config-change (blocks disableAllHooks / hook tampering)
 <dl>
   <dt><strong>Required</strong></dt>
   <dd><code>jq</code> &mdash; JSON processing</dd>
+  <dd><code>Go 1.23+</code> &mdash; builds the warden-collector binary</dd>
   <dt><strong>Recommended</strong></dt>
   <dd><code>rg</code> (ripgrep), <code>fd</code> (fd-find)</dd>
   <dt><strong>Optional</strong></dt>
-  <dd><code>python3</code> with <code>anthropic</code> package &mdash; exact token counting via API (see <a href="#chart-token-savings-accounting">Token savings accounting</a>)</dd>
+  <dd><code>python3</code> &mdash; warden-viewer web UI</dd>
   <dd><code>mitmdump</code> &mdash; only for the <a href="#flow-api-capture">API capture</a> tool</dd>
 </dl>
 
@@ -117,7 +118,7 @@ The remote installer downloads a release tarball, verifies its <abbr title="Secu
 To pin a version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash -s -- v0.4.0
+curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash -s -- v0.6.1
 ```
 
 ### Install from source (development)
@@ -172,6 +173,8 @@ Merge order: `config/defaults.json` &larr; profile &larr; `config/user.json` &la
   <dd>Prompts for a profile (or uses <code>--profile</code>). Deep-merges <code>defaults.json</code> + profile + <code>user.json</code>.</dd>
   <dt><strong>Install hooks</strong></dt>
   <dd>Symlinks (or copies) hook scripts + <code>lib/</code> + <code>statusline.sh</code> into <code>~/.claude/</code>. Sets executable permissions.</dd>
+  <dt><strong>Build collector</strong></dt>
+  <dd>Compiles the Go collector (<code>warden-collector</code>) and installs it to <code>~/.local/bin/</code>. The collector starts automatically on <code>session-start</code> and provides SQLite-backed session tracking, subagent budget enforcement, and an <abbr title="OpenTelemetry Protocol">OTLP</abbr> span receiver.</dd>
   <dt><strong>Apply configuration</strong></dt>
   <dd>Generates <code>~/.claude/.warden/warden.env</code> (hook thresholds). Merges env vars and permissions into <code>settings.json</code> (union for permissions, preserves plugins/model/etc). Generates <code>warden.env.sh</code> for shell sourcing.</dd>
   <dt><strong>Validate</strong></dt>
@@ -297,9 +300,50 @@ Re-run `./install.sh` to merge. User permissions are unioned with the profile pe
 
 </details>
 
-## ![monitor][icon-monitor] Monitoring stack
+## ![stack][icon-stack] Go Collector
 
-Warden includes an optional observability stack in `monitoring/` that persists hook events, measures per-tool latency, and emits <abbr title="OpenTelemetry Protocol">OTLP</abbr> trace spans.
+The **warden-collector** is a lightweight Go service that acts as the central backbone for all observation and state. It starts automatically when a Claude Code session begins (via the `session-start` hook) and stops when idle.
+
+### What it does
+
+<dl>
+  <dt><strong>Session tracking</strong></dt>
+  <dd>Stores per-session token counts, model info, context window size, and estimated context utilization in SQLite (WAL mode).</dd>
+  <dt><strong><abbr title="OpenTelemetry Protocol">OTLP</abbr> span receiver</strong></dt>
+  <dd>Listens on <code>:4319</code> for HTTP/JSON traces from Claude Code. Extracts <code>llm_request</code> spans to populate session token data (input, output, cache read/create).</dd>
+  <dt><strong>Subagent budget enforcement</strong></dt>
+  <dd>Tracks per-agent call counts and byte totals. When a budget is exceeded, writes a deny file (<code>budget-deny-{agent_id}</code>) that <code>pre-tool-use</code> checks via sub-millisecond <code>stat</code>.</dd>
+  <dt><strong>Hook event ingestion</strong></dt>
+  <dd>Accepts hook events via <code>POST /v1/ingest/hook</code> over a Unix domain socket (<code>collector.sock</code>). All hooks post events here instead of managing local state files.</dd>
+  <dt><strong>Query <abbr title="Application Programming Interface">API</abbr></strong></dt>
+  <dd><code>GET /v1/sessions</code> lists sessions. <code>GET /v1/sessions/{id}/context</code> returns token counts, context percentage, and compact threshold. The statusline queries this endpoint.</dd>
+</dl>
+
+### Data storage
+
+State lives in `${XDG_STATE_HOME:-~/.local/state}/claude-warden/`:
+
+| File | Purpose |
+|---|---|
+| `collector.db` | SQLite database (sessions, hook events, subagent budgets, OTLP spans) |
+| `collector.sock` | Unix domain socket for hook &rarr; collector communication |
+| `collector.pid` | PID file for lifecycle management |
+| `budget-deny-*` | Deny files written when subagent budgets are exceeded |
+
+### Viewer
+
+The **warden-viewer** (`viewer/warden-viewer.py`) is an optional htmx-based web UI that reads directly from `collector.db`. It serves on port 8477 and provides six views: context gauge, request waterfall, event log, cost tracking, tool breakdown, and token trend.
+
+```bash
+python3 viewer/warden-viewer.py
+```
+
+## ![monitor][icon-monitor] Monitoring stack (optional)
+
+Warden includes an optional Docker-based observability stack in `monitoring/` for persistent log aggregation, metrics, and distributed tracing. This supplements the Go collector with long-term storage and Grafana dashboards.
+
+> [!NOTE]
+> The Go collector is the primary observability backbone and is always installed. The Docker monitoring stack is optional and provides additional visualization via Grafana, long-term log storage via Loki, and distributed tracing via Tempo.
 
 ### Components
 
@@ -307,8 +351,8 @@ Warden includes an optional observability stack in `monitoring/` that persists h
 |---|---|---|---|
 | Loki | `grafana/loki:3.4.2` | 3100 | Log aggregation (30-day retention, <abbr title="Time Series Database">TSDB</abbr> filesystem storage) |
 | <abbr title="OpenTelemetry">OTEL</abbr> Collector | `otel/opentelemetry-collector-contrib` | 4317/4318 | Receives <abbr title="OpenTelemetry Protocol">OTLP</abbr> logs + traces, tails `events.jsonl`, exports to Loki + Tempo |
-| Prometheus | `prom/prometheus` | 9090 | Metrics (Claude Code <abbr title="OpenTelemetry Protocol">OTLP</abbr> metrics + node-exporter textfiles) |
-| Node Exporter | `prom/node-exporter` | 9101 | Textfile collector for warden budget metrics |
+| Prometheus | `prom/prometheus` | 9090 | Metrics (Claude Code <abbr title="OpenTelemetry Protocol">OTLP</abbr> metrics plus claude-warden textfile fallbacks) |
+| Node Exporter | `prom/node-exporter` | 9101 | Textfile collector for claude-warden budget and session metrics |
 | Tempo | `grafana/tempo:2.7.2` | 3200/3205 | Distributed trace storage and visualization |
 | Grafana | `grafana/grafana` | 3000 | Dashboards (<samp>admin</samp>/<samp>admin</samp>) |
 
@@ -332,47 +376,34 @@ cd monitoring && docker compose -f docker-compose.yml -f docker-compose.macos.ym
 ### ![flow][icon-flow] Data flow
 
 ```
-Claude Code ──OTLP──> OTEL Collector ──> Loki (logs)
-                           │              Prometheus (metrics)
-                           │              Tempo (traces)
-                           │
-hooks/events.jsonl ──filelog──> OTEL Collector ──> Loki
+Claude Code ──OTLP (HTTP/JSON)──> warden-collector (:4319)
+                                       │
+                                       ├──> SQLite (sessions, tokens, spans)
+                                       └──> budget-deny files (subagent enforcement)
 
-hooks/pre-tool-use  ──records start timestamp──>  state file
-hooks/post-tool-use ──computes latency──> events.jsonl (tool_latency)
-                    ──curl OTLP/HTTP──> OTEL Collector (trace span)
+hooks ──POST (UDS)──> warden-collector (collector.sock)
+                           │
+                           └──> SQLite (hook_events, subagent_budgets)
+
+statusline.sh ──GET (UDS)──> warden-collector ──> context %, tokens, model
+
+[Optional Docker stack]
+hooks/events.jsonl ──filelog──> OTEL Collector ──> Loki (logs)
+Claude Code ──OTLP──> OTEL Collector ──> Prometheus (metrics)
+                                    ──> Tempo (traces)
 ```
 
 ### ![clock][icon-clock] Per-tool latency tracking
 
-Every tool call gets wall-clock timing measured by the hooks:
+Claude Code emits native <abbr title="OpenTelemetry Protocol">OTLP</abbr> spans for every tool call (`claude_code.tool`) with `duration_ms` and `result_tokens` attributes. The warden-collector receives these spans on `:4319` and stores them in SQLite for querying.
 
-1. `pre-tool-use` writes a nanosecond timestamp to <samp>$STATE_DIR/.tool-start-$TOOL-$$</samp>
-2. `post-tool-use` reads it, computes <var>duration_ms</var>, emits a `tool_latency` event to `events.jsonl`
-3. A trace span is fired to the <abbr title="OpenTelemetry">OTEL</abbr> collector via `hooks/lib/otel-trace.sh` (fire-and-forget curl)
-
-Latency events flow through the collector into Loki and are queryable via LogQL:
+Hooks still emit `tool_latency` events to `events.jsonl` for backward compatibility with the Docker monitoring stack:
 
 ```
 {service_name="claude-code"} | json | event_type="tool_latency" | duration_ms > 2000
 ```
 
-### Trace spans
-
-`hooks/lib/otel-trace.sh` emits one <abbr title="OpenTelemetry Protocol">OTLP</abbr> span per tool call to `localhost:4318/v1/traces`:
-
-<dl>
-  <dt><code>trace_id</code></dt>
-  <dd>Deterministic from session ID (md5, 32 hex chars)</dd>
-  <dt><code>span_id</code></dt>
-  <dd>Random 16 hex chars per call</dd>
-  <dt><code>parent_span_id</code></dt>
-  <dd>Deterministic root span from session ID</dd>
-  <dt>Attributes</dt>
-  <dd><code>tool.name</code>, <code>tool.command</code> (first 200 chars), <code>tool.output_bytes</code>, <code>tool.duration_ms</code></dd>
-</dl>
-
-Traces are stored in Tempo and can be explored in Grafana via the Tempo datasource. Loki log entries link to traces via the `trace_id` derived field.
+When the Docker stack is running, traces are stored in Tempo and can be explored in Grafana via the Tempo datasource.
 
 ### ![chart][icon-chart] Dashboards
 
@@ -443,13 +474,15 @@ Logs land in <samp>~/claude-captures/YYYY-MM-DD/capture-HHMMSS.jsonl</samp>. Eac
 | `config/defaults.json` | Baseline warden config: <abbr title="OpenTelemetry">OTEL</abbr>, thresholds, subagent budgets |
 | `config/profiles/` | Named configuration profiles (`minimal`, `standard`, `strict`) |
 | `config/user.json.template` | Template for user overrides (copy to `config/user.json`) |
+| `collector/` | Go collector: SQLite store, OTLP receiver, hook event API, budget enforcement |
+| `viewer/` | htmx web UI for viewing collector data (sessions, tokens, events) |
 | `capture/` | <abbr title="man-in-the-middle">MITM</abbr> proxy wrapper + mitmproxy addon for API traffic capture |
 | `statusline.sh` | Claude Code statusline script (bash) |
 | `settings.hooks.json` | Hook + statusline config template merged into `~/.claude/settings.json` |
 | `install.sh` | Installs hooks, merges config profile into `settings.json`, generates `warden.env` |
 | `install-remote.sh` | Downloads a release tarball, verifies checksum, runs `install.sh --copy` |
 | `uninstall.sh` | Removes hooks/statusline/config and restores the most recent settings backup |
-| `monitoring/` | Docker Compose observability stack (Loki, <abbr title="OpenTelemetry">OTEL</abbr> Collector, Prometheus, Tempo, Grafana) |
+| `monitoring/` | Optional Docker Compose observability stack (Loki, <abbr title="OpenTelemetry">OTEL</abbr> Collector, Prometheus, Tempo, Grafana) |
 | `monitoring/docker-compose.macos.yml` | Bridge networking override for Docker Desktop (macOS/Windows) |
 | `monitoring/grafana/` | Grafana provisioning (datasources, dashboards) |
 | `tests/` | Fixture-driven test harness (`bash tests/run.sh`) |
@@ -484,11 +517,8 @@ It runs shell syntax checks, validates JSON fixtures, and executes fixture-drive
 
 ```bash
 # Shell syntax
-find hooks -maxdepth 1 -type f ! -name '_token-count-bg' -print0 | xargs -0 bash -n
+find hooks -maxdepth 1 -type f -print0 | xargs -0 bash -n
 bash -n install.sh uninstall.sh statusline.sh
-
-# Optional: validate the Python helper used only for API token counting mode
-command -v python3 >/dev/null 2>&1 && python3 -m py_compile hooks/_token-count-bg
 
 # JSON validity
 jq . settings.hooks.json config/defaults.json config/profiles/*.json >/dev/null

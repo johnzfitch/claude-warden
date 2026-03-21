@@ -728,6 +728,22 @@ else
     log_fail "tool-error: emits tool_error event (got: $EVENT)"
 fi
 
+# Test subagent detection: pre-tool-use should create .calls file for subagent tools
+export WARDEN_SUBAGENT_STATE_DIR="$TEST_GLOBAL_STATE_DIR/subagent-state"
+mkdir -p "$WARDEN_SUBAGENT_STATE_DIR"
+# Create the agent metadata file that _warden_get_agent_type reads
+printf 'AGENT_TYPE=Explore\nSESSION_ID=test-subagent-001\n' > "$WARDEN_SUBAGENT_STATE_DIR/a1234567890abcdef"
+INPUT=$(cat "$SCRIPT_DIR/mock-inputs/subagent-bash.json")
+run_hook "pre-tool-use" "$INPUT" >/dev/null 2>&1
+CALLS_FILE="$WARDEN_SUBAGENT_STATE_DIR/a1234567890abcdef.calls"
+if [[ -f "$CALLS_FILE" ]]; then
+    log_pass "subagent detection: .calls file created for subagent tool call"
+else
+    log_fail "subagent detection: .calls file NOT created (transcript_path detection may be broken)"
+fi
+# Cleanup
+rm -f "$CALLS_FILE" "$WARDEN_SUBAGENT_STATE_DIR/a1234567890abcdef" 2>/dev/null
+
 echo ""
 
 # ============================================================================

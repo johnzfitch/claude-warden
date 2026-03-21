@@ -44,11 +44,8 @@ Run these before submitting changes:
 bash tests/run.sh
 
 # Shell syntax checks
-find hooks -maxdepth 1 -type f ! -name '_token-count-bg' -print0 | xargs -0 bash -n
+find hooks -maxdepth 1 -type f -print0 | xargs -0 bash -n
 bash -n install.sh uninstall.sh statusline.sh
-
-# Optional: validate the Python helper used only for API token counting mode
-command -v python3 >/dev/null 2>&1 && python3 -m py_compile hooks/_token-count-bg
 
 # JSON validity
 jq . settings.hooks.json >/dev/null
@@ -57,7 +54,7 @@ jq . settings.hooks.json >/dev/null
 If you have <kbd>shellcheck</kbd> installed:
 
 ```bash
-find hooks -maxdepth 1 -type f ! -name '_token-count-bg' -print0 | xargs -0 shellcheck
+find hooks -maxdepth 1 -type f -print0 | xargs -0 shellcheck
 shellcheck install.sh uninstall.sh statusline.sh
 ```
 
@@ -100,7 +97,7 @@ Guidelines:
 
 ### Cross-process state
 
-- **Locking**: use `_warden_with_lock LOCKDIR FUNC` for read-modify-write operations on shared state files. It uses atomic `mkdir` (POSIX-portable) with 5-second stale lock detection.
+- **Locking**: use `_warden_with_lock LOCKFILE FUNC [ARGS...]` for read-modify-write operations on shared state files. Uses fd-based `flock` on Linux/WSL (kernel-level, race-free) with `mkdir` fallback on macOS. Lock files use `.lock` extension.
 - **Per-invocation state**: when pre-tool-use writes state for post-tool-use to consume, use per-invocation filenames (e.g., `.quiet-override-${TOOL}-$$`) to prevent races when multiple tool calls overlap. Post-tool-use finds the most recent file by mtime.
 
 ## Pull Requests

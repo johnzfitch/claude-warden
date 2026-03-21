@@ -30,17 +30,7 @@ If you work in environments with strict confidentiality requirements, treat thes
 
 By default, claude-warden does **not** send telemetry to third-party services.
 
-Exception: **Optional API token counting**.
-
-If you set:
-
-```bash
-export WARDEN_TOKEN_COUNT=api
-```
-
-then `hooks/post-tool-use` and `hooks/read-compress` may spawn a background process (`hooks/_token-count-bg`) that calls the Anthropic **token counting API** to compute exact token deltas. This transmits the relevant tool output text to Anthropic’s API.
-
-Do not enable `WARDEN_TOKEN_COUNT=api` if tool outputs may contain secrets or sensitive data.
+The collector receives OTEL spans from Claude Code on localhost (127.0.0.1:4319) and hook events via Unix domain socket. No data leaves your machine unless you explicitly configure an external OTEL exporter.
 
 ## Reporting a Vulnerability
 

@@ -20,8 +20,8 @@ export WARDEN_TOOL_NAME="$TOOL_NAME"
 export WARDEN_COMMAND="$COMMAND"
 export WARDEN_SESSION_ID="$SESSION_ID"
 
-# Record tool start for latency tracking (read by post-tool-use)
-_warden_record_tool_start "$TOOL_NAME"
+# Resolve per-session start timestamp (fixes cross-session relative time skew)
+_warden_resolve_session_start "$SESSION_ID"
 
 # === MCP TOOL TRACKING ===
 # Log MCP tool calls for separate monitoring (server name from mcp__server__tool pattern)
@@ -33,9 +33,10 @@ if [[ "$TOOL_NAME" == mcp__* ]]; then
     ESC_TOOL="$TOOL_NAME"; _warden_json_escape ESC_TOOL
     ESC_SERVER="$MCP_SERVER"; _warden_json_escape ESC_SERVER
     ESC_MCTOOL="$MCP_TOOL"; _warden_json_escape ESC_MCTOOL
-    printf '{"timestamp":%d,"event_type":"mcp_tool_start","tool":"%s","mcp_server":"%s","mcp_tool":"%s"}\n' \
-        "$_TS" "$ESC_TOOL" "$ESC_SERVER" "$ESC_MCTOOL" \
-        >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+    _evt=""
+    printf -v _evt '{"timestamp":%d,"event_type":"mcp_tool_start","tool":"%s","mcp_server":"%s","mcp_tool":"%s"}' \
+        "$_TS" "$ESC_TOOL" "$ESC_SERVER" "$ESC_MCTOOL"
+    _warden_post_to_collector "$_evt"
 fi
 
 # === SUBAGENT DETECTION (applies to ALL tools) ===
@@ -52,59 +53,18 @@ if _warden_is_subagent "$TRANSCRIPT_PATH"; then
 fi
 
 # === SUBAGENT BUDGET ENFORCEMENT (applies to ALL tools) ===
+# Deny-file pattern: collector writes budget-deny-{agent_id} when exceeded.
+# Pre-tool-use just does a stat check (<0.1ms).
 if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
-    # Call/byte limits per agent type (Bash 3.2 compatible via indirect expansion)
-    CALL_BUDGET=$(_warden_call_limit "$AGENT_TYPE")
-    BYTE_BUDGET=$(_warden_byte_limit "$AGENT_TYPE")
-
-    WARN_CALL_AT=$((CALL_BUDGET * 80 / 100))
-    WARN_BYTE_AT=$((BYTE_BUDGET * 80 / 100))
-
-    mkdir -p "$WARDEN_SUBAGENT_STATE_DIR"
-    CALL_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.calls"
-    BYTE_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.bytes"
-
-    # Read + increment call count
-    CURRENT_CALLS=0
-    if [[ -f "$CALL_FILE" ]]; then
-        RAW=$(cat "$CALL_FILE" 2>/dev/null || echo "0")
-        if [[ "$RAW" == *"|"* ]]; then
-            CURRENT_CALLS=$(echo "$RAW" | cut -d'|' -f2)
-        else
-            CURRENT_CALLS="$RAW"
-        fi
-        [[ ! "$CURRENT_CALLS" =~ ^[0-9]+$ ]] && CURRENT_CALLS=0
+    DENY_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden/budget-deny-$AGENT_ID"
+    if [[ -f "$DENY_FILE" ]]; then
+        DENY_REASON=$(<"$DENY_FILE" 2>/dev/null)
+        _warden_emit_block "budget_exceeded" 2000
+        _warden_deny "Budget exceeded: ${DENY_REASON:-limit reached}. Stop and report findings."
     fi
-    NEW_CALLS=$((CURRENT_CALLS + 1))
-    printf '%s|%s|%s\n' "$AGENT_ID" "$NEW_CALLS" "$(date +%s)" > "$CALL_FILE"
-
-    # Read cumulative output bytes (written by post-tool-use)
-    CURRENT_BYTES=0
-    if [[ -f "$BYTE_FILE" ]]; then
-        RAW=$(cat "$BYTE_FILE" 2>/dev/null || echo "0")
-        if [[ "$RAW" == *"|"* ]]; then
-            CURRENT_BYTES=$(echo "$RAW" | cut -d'|' -f1)
-        else
-            CURRENT_BYTES="$RAW"
-        fi
-        [[ ! "$CURRENT_BYTES" =~ ^[0-9]+$ ]] && CURRENT_BYTES=0
-    fi
-
-    # Enforce call count budget
-    if (( NEW_CALLS >= CALL_BUDGET )); then
-        _warden_emit_block "budget_calls_exceeded" 2000
-        _warden_deny "Budget exceeded: $AGENT_TYPE calls $NEW_CALLS/$CALL_BUDGET. Stop and report findings."
-    elif (( NEW_CALLS >= WARN_CALL_AT )); then
-        echo "WARNING: Tool call #$NEW_CALLS/$CALL_BUDGET for $AGENT_TYPE agent." >&2
-    fi
-
-    # Enforce cumulative output bytes budget
-    if (( CURRENT_BYTES >= BYTE_BUDGET )); then
-        _warden_emit_block "budget_bytes_exceeded" $((CURRENT_BYTES / 4))
-        _warden_deny "Budget exceeded: $AGENT_TYPE output ${CURRENT_BYTES}B/${BYTE_BUDGET}B. Stop and report findings."
-    elif (( CURRENT_BYTES >= WARN_BYTE_AT )); then
-        echo "WARNING: ${CURRENT_BYTES}B/$((BYTE_BUDGET/1024))KB cumulative output for $AGENT_TYPE agent." >&2
-    fi
+    # POST tool call event to collector (async, fire-and-forget)
+    _warden_post_to_collector "$(printf '{"event_type":"subagent_tool_call","agent_id":"%s","session_id":"%s","tool":"%s"}' \
+        "$AGENT_ID" "$SESSION_ID" "$TOOL_NAME")"
 fi
 
 # === NON-BASH TOOLS: fast path ===
@@ -198,17 +158,24 @@ if [[ "$NORM_CMD" =~ :\(\)[[:space:]]*\{[[:space:]]*:\|:[[:space:]]*\&[[:space:]
     _warden_emit_block "fork_bomb" 0; _warden_deny "Blocked fork bomb"
 fi
 
-# RCE pipe detection: curl/wget piped to any interpreter
-case "$NORM_CMD" in
-    *"curl"*"|"*"bash"*|*"curl"*"|"*"sh"*|*"curl"*"|"*"zsh"*|\
-    *"curl"*"|"*"python"*|*"curl"*"|"*"perl"*|*"curl"*"|"*"ruby"*|*"curl"*"|"*"node"*|\
-    *"wget"*"|"*"bash"*|*"wget"*"|"*"sh"*|*"wget"*"|"*"zsh"*|\
-    *"wget"*"|"*"python"*|*"wget"*"|"*"perl"*|*"wget"*"|"*"ruby"*|*"wget"*"|"*"node"*|\
-    *"bash <(curl"*|*"sh <(curl"*|*"zsh <(curl"*|\
-    *"bash <(wget"*|*"sh <(wget"*|*"zsh <(wget"*|\
-    *"python"*" <(curl"*|*"python"*" <(wget"*)
-        _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution" ;;
-esac
+# RCE pipe detection: curl/wget/aurl piped to any interpreter
+# Uses regex instead of case/glob to avoid substring false positives
+# (e.g. *"sh"* matching "should", "fresh", "hash")
+_RCE_INTERP='(bash|sh|zsh|dash|python[23]?|perl|ruby|node)'
+if [[ "$NORM_CMD" =~ (curl|wget|aurl) ]]; then
+    # Direct pipe: ... | interpreter ...
+    if [[ "$NORM_CMD" =~ \|[[:space:]]*${_RCE_INTERP}([[:space:]\;]|$) ]]; then
+        _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution"
+    fi
+    # Pipe to absolute path: ... | /usr/bin/interpreter ...
+    if [[ "$NORM_CMD" =~ \|[[:space:]]*/[^[:space:]]*/+${_RCE_INTERP}([[:space:]\;]|$) ]]; then
+        _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution"
+    fi
+    # Process substitution: interpreter <(curl/wget/aurl ...)
+    if [[ "$NORM_CMD" =~ ${_RCE_INTERP}[[:space:]]+\<\((curl|wget|aurl) ]]; then
+        _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution"
+    fi
+fi
 
 # === ENVIRONMENT VARIABLE DUMP PREVENTION ===
 # Block commands that dump the full environment (API keys, tokens, credentials).
@@ -238,12 +205,40 @@ if [[ "$COMMAND" =~ /proc/(self|[0-9]+)/environ ]]; then
     _warden_deny "Environment safety: '${COMMAND:0:80}' reads raw process environment containing all secrets. Query specific variables instead: echo \$VAR_NAME"
 fi
 
-# === DATA EXFILTRATION PREVENTION ===
-# Block curl/wget with data upload flags (POST body, file upload, form data)
+# === CURL SAFETY ===
+# Check order: dangerous patterns blocked first, then rewrite safe commands through aurl.
 if [[ "$COMMAND" =~ (^|[;&|[:space:]])curl[[:space:]] ]]; then
-    if [[ "$COMMAND" =~ [[:space:]](-d[^[:space:]]*|--data(=|[[:space:]])|--data-binary(=|[[:space:]])|--data-raw(=|[[:space:]])|--data-urlencode(=|[[:space:]])|-F[^[:space:]]*|--form(=|[[:space:]])|--upload-file(=|[[:space:]])|-T[^[:space:]]*) ]]; then
-        _warden_emit_block "data_exfil_curl" 0 "curl with data upload"
-        _warden_deny "Data upload blocked: '${COMMAND:0:120}' sends data to a remote server. curl with -d/--data/-F/--form/--upload-file/-T is restricted. Ask the user to run this manually if needed."
+    _CURL_PREFIX="${BASH_REMATCH[1]}"
+    _CMD_LOWER=$(printf '%s' "$COMMAND" | tr '[:upper:]' '[:lower:]')
+    _CURL_REMOTE_RE='curl[[:space:]]+[^|]*https?://'
+    _CURL_LOCAL_RE="${_CURL_REMOTE_RE}(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\])"
+
+    if [[ "$_CMD_LOWER" =~ 169\.254\.169\.254 ]] || \
+       [[ "$_CMD_LOWER" =~ metadata\.google\.internal ]] || \
+       [[ "$_CMD_LOWER" =~ 169\.254\.169\.250 ]] || \
+       [[ "$_CMD_LOWER" =~ 100\.100\.100\.200 ]]; then
+        _warden_emit_block "ssrf_metadata_bash" 0
+        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a cloud metadata endpoint. These addresses expose instance credentials and are never safe to query from model context."
+    fi
+    if [[ "$_CMD_LOWER" =~ ${_CURL_REMOTE_RE}(10\.[0-9]|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+        _warden_emit_block "ssrf_private_bash" 0
+        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a private network address. Internal network access via curl is not allowed. Ask the user to provide the data or check specific files."
+    fi
+    if [[ "$COMMAND" =~ (-d|--data|--data-binary|--data-raw|--data-urlencode|-F|--form|--upload-file|-T) ]] && \
+       [[ ! "$_CMD_LOWER" =~ ${_CURL_LOCAL_RE} ]]; then
+        _warden_emit_block "data_exfil_curl" 0 "curl with data upload to remote"
+        _warden_deny "Data upload blocked: '${COMMAND:0:120}' sends data to a remote server. POST/form/upload data only allowed to localhost. Ask the user to run this manually if needed."
+    fi
+    if [[ "$_CMD_LOWER" =~ (-x[[:space:]]|--request[[:space:]]|--request=)(post|put|patch|delete) ]] && \
+       [[ ! "$_CMD_LOWER" =~ ${_CURL_LOCAL_RE} ]]; then
+        _CURL_WRITE_METHOD=$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:lower:]' '[:upper:]')
+        _warden_emit_block "curl_write_method" 0
+        _warden_deny "Write method blocked: '${COMMAND:0:120}' uses ${_CURL_WRITE_METHOD} to a remote server. Explicit write methods (POST/PUT/PATCH/DELETE) to remote servers are not allowed. Ask the user to run this manually."
+    fi
+    _AURL_BIN="$(cd "${BASH_SOURCE[0]%/*}/bin" 2>/dev/null && pwd)/aurl"
+    if [[ -x "$_AURL_BIN" ]]; then
+        _QUIET_CMD="${COMMAND/"${_CURL_PREFIX}curl "/"${_CURL_PREFIX}${_AURL_BIN} "}"
+        _warden_quiet_override "curl_to_aurl" "$_QUIET_CMD"
     fi
 fi
 if [[ "$COMMAND" =~ (^|[;&|[:space:]])wget[[:space:]] ]] && [[ "$COMMAND" =~ --post-data|--post-file ]]; then
@@ -251,8 +246,8 @@ if [[ "$COMMAND" =~ (^|[;&|[:space:]])wget[[:space:]] ]] && [[ "$COMMAND" =~ --p
     _warden_deny "Data upload blocked: '${COMMAND:0:120}' sends data to a remote server. wget with --post-data/--post-file is restricted. Ask the user to run this manually if needed."
 fi
 
-# === SSRF VIA BASH (curl/wget to internal networks) ===
-if [[ "$COMMAND" =~ (curl|wget)[[:space:]] ]]; then
+# === SSRF VIA BASH (wget to internal networks) ===
+if [[ "$COMMAND" =~ wget[[:space:]] ]]; then
     _CMD_LOWER=$(printf '%s' "$COMMAND" | tr '[:upper:]' '[:lower:]')
     if [[ "$_CMD_LOWER" =~ 169\.254\.169\.254 ]] || \
        [[ "$_CMD_LOWER" =~ metadata\.google\.internal ]] || \
@@ -261,14 +256,13 @@ if [[ "$COMMAND" =~ (curl|wget)[[:space:]] ]]; then
         _warden_emit_block "ssrf_metadata_bash" 0
         _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a cloud metadata endpoint. These addresses expose instance credentials and are never safe to query from model context."
     fi
-    if [[ "$_CMD_LOWER" =~ (curl|wget)[[:space:]]+[^|]*https?://(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\]) ]]; then
+    if [[ "$_CMD_LOWER" =~ wget[[:space:]]+[^|]*https?://(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\]) ]]; then
         _warden_emit_block "ssrf_localhost_bash" 0
         _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets localhost/loopback. If you need local service data, ask the user to provide it or check specific log files."
     fi
-    # Private RFC1918 ranges (10.x, 172.16-31.x, 192.168.x)
-    if [[ "$_CMD_LOWER" =~ (curl|wget)[[:space:]]+[^|]*https?://(10\.[0-9]|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+    if [[ "$_CMD_LOWER" =~ wget[[:space:]]+[^|]*https?://(10\.[0-9]|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
         _warden_emit_block "ssrf_private_bash" 0
-        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a private network address. Internal network access via curl/wget is not allowed. Ask the user to provide the data or check specific files."
+        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a private network address. Internal network access via wget is not allowed. Ask the user to provide the data or check specific files."
     fi
 fi
 
@@ -389,12 +383,7 @@ if [[ "$COMMAND" =~ (^|python3?[[:space:]]+-m[[:space:]]+)pip3?[[:space:]]+(inst
     _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/(pip3?[[:space:]]+(install|download))/\1 -q/')
     _warden_quiet_override "pip_quiet_override" "$_QUIET_CMD"
 fi
-# curl: only override if verbose (-v) without output redirection
-if [[ "$COMMAND" =~ ^curl[[:space:]] ]]; then
-    if [[ "$COMMAND" =~ (-v|--verbose) ]] && [[ ! "$COMMAND" =~ (\||>>?|-o|-O|--output|--remote-name) ]]; then
-        _warden_emit_block "curl_verbose" 2000; _warden_deny "curl -v needs output redirection or -o; cannot auto-fix"
-    fi
-fi
+# curl verbose: handled by aurl rewrite above (auto-adds -s)
 # wget
 if [[ "$COMMAND" =~ ^wget[[:space:]] ]] && [[ ! "$COMMAND" =~ (-q|--quiet|-O) ]]; then
     _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/^wget/wget -q/')

@@ -14,6 +14,7 @@ source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
 _warden_read_input || exit 0
 export WARDEN_SESSION_ID="$(_warden_parse_session_id)"
+_warden_resolve_session_start "$WARDEN_SESSION_ID"
 
 # Parse tool info - detect subagent via transcript_path, get file path for type detection
 TOOL_NAME=$(_warden_parse_tool_name)
@@ -25,7 +26,6 @@ IFS=$'\t' read -r FILE_PATH < <(_warden_parse_tool_input file_path)
 # Detect subagent via transcript_path patterns
 IS_SUBAGENT=false
 [[ "$TRANSCRIPT_PATH" == *"/subagents/"* ]] && IS_SUBAGENT=true
-[[ "$TRANSCRIPT_PATH" == *"/tmp/"* ]] && IS_SUBAGENT=true
 
 # Get file content
 CONTENT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
@@ -124,8 +124,6 @@ if [[ -n "$SUMMARY" ]]; then
 [Use Read with offset/limit for full content]"
     WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
     _warden_emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_config"
-    WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
-    _warden_fire_token_count "$ORIGINAL_CONTENT" "$_FINAL" "$(( (ORIGINAL_SIZE - ${#_FINAL}) * 10 / 35 ))" "read_compress_config"
     jq -n --arg text "$_FINAL" '{"modifyOutput":$text}'
     exit 0
 fi
@@ -189,6 +187,4 @@ _FINAL="$SUMMARY
 [Use Read with offset/limit for implementation details]"
 WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
 _warden_emit_event "truncated" "$ORIGINAL_SIZE" "${#_FINAL}" "read_compress_code"
-WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
-_warden_fire_token_count "$ORIGINAL_CONTENT" "$_FINAL" "$(( (ORIGINAL_SIZE - ${#_FINAL}) * 10 / 35 ))" "read_compress_code"
 jq -n --arg text "$_FINAL" '{"modifyOutput":$text}'

@@ -30,7 +30,9 @@ CAPTURE_DIR = Path.home() / "claude-captures"
 SCRUB = {"x-api-key", "authorization", "proxy-authorization"}
 
 CAPTURE_BODIES = os.environ.get("WARDEN_CAPTURE_BODIES", "0") == "1"
-BODY_KEYS_SCRUB = {"system", "messages"}
+# Allowlist: only these top-level keys are preserved when capturing bodies.
+# Everything else (system, messages, tools, tool_choice, metadata, etc.) is scrubbed.
+BODY_KEYS_ALLOW = {"model", "max_tokens", "stream", "temperature", "top_p", "stop_sequences"}
 MAX_BODY_PREVIEW = 200
 
 _log_file = None
@@ -73,10 +75,13 @@ def _scrub_body(raw: bytes) -> str:
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
-            for key in BODY_KEYS_SCRUB:
-                if key in obj:
-                    obj[key] = f"[REDACTED: {len(json.dumps(obj[key]))} chars]"
-            return json.dumps(obj)
+            scrubbed = {}
+            for key, value in obj.items():
+                if key in BODY_KEYS_ALLOW:
+                    scrubbed[key] = value
+                else:
+                    scrubbed[key] = f"[REDACTED: {len(json.dumps(value))} chars]"
+            return json.dumps(scrubbed)
     except (json.JSONDecodeError, TypeError):
         pass
     return text

