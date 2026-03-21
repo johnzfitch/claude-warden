@@ -51,3 +51,4 @@ target/
 
 # Claude Code project config (auto-generated)
 .claude/
+collector/collector
