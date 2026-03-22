@@ -29,6 +29,7 @@ HALL_START  = -13
 HALL_END    =  24
 NARROW_X   =  7
 DOOR_X     = 16
+CAMERA_LEAD = 3.8
 
 JUNK = [
     (-7,  "node_modules/react/...",     800,  UP*0.35 + RIGHT*0.15),
@@ -57,10 +58,7 @@ class RipgrepHallway(MovingCameraScene):
         mass = VGroup(arrow)
         self.add(mass)
 
-        self.camera.frame.move_to([arrow.get_center()[0], 0, 0])
-        self.camera.frame.add_updater(
-            lambda m: m.set_x(arrow.get_center()[0] + 1.5)
-        )
+        self.camera.frame.move_to([self._camera_x_for(arrow.get_center()[0]), 0, 0])
 
         query = Text(
             "rg formData .", font="JetBrains Mono", font_size=18, color=TEAL
@@ -118,6 +116,9 @@ class RipgrepHallway(MovingCameraScene):
             running_tokens += half_cost
             self.play(
                 mass.animate.shift(RIGHT * dx),
+                self.camera.frame.animate.set_x(
+                    self._camera_x_for(arrow.get_center()[0] + dx)
+                ),
                 token_val.animate.set_value(running_tokens),
                 run_time=speed,
             )
@@ -141,6 +142,9 @@ class RipgrepHallway(MovingCameraScene):
         door_dx = DOOR_X - arrow.get_center()[0]
         self.play(
             mass.animate.shift(RIGHT * door_dx),
+            self.camera.frame.animate.set_x(
+                self._camera_x_for(arrow.get_center()[0] + door_dx)
+            ),
             run_time=1.5,
             rate_func=rush_from,
         )
@@ -154,7 +158,13 @@ class RipgrepHallway(MovingCameraScene):
         self.play(FadeIn(result, shift=LEFT * 0.2), run_time=0.3)
         mass.add(result)
 
-        self.play(mass.animate.shift(RIGHT * 3), run_time=0.8)
+        self.play(
+            mass.animate.shift(RIGHT * 3),
+            self.camera.frame.animate.set_x(
+                self._camera_x_for(arrow.get_center()[0] + 3)
+            ),
+            run_time=0.8,
+        )
 
         saved_n = int(peak_tokens - 800)
         saved = Text(
@@ -251,6 +261,9 @@ class RipgrepHallway(MovingCameraScene):
         lbl = Text("formData", font="JetBrains Mono", font_size=12, color=GRN)
         lbl.move_to(rect)
         return VGroup(rect, lbl)
+
+    def _camera_x_for(self, arrow_x):
+        return arrow_x + CAMERA_LEAD
 
     def _wall_scrape(self, mass):
         flash = Rectangle(

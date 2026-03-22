@@ -1,223 +1,110 @@
-# claude-warden demo video (hybrid: real claude -p + mock JSON)
+# claude-warden product demo
 # Render: vhs demo/demo.tape
 # Output: demo/claude-warden-demo.mp4
 
 Output demo/claude-warden-demo.mp4
 Set FontSize 16
-Set Width 1400
-Set Height 800
+Set Width 1440
+Set Height 810
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 25ms
+Set TypingSpeed 20ms
 Set Shell bash
-Set Padding 15
+Set Padding 18
 
-# ============================================================
-# Scene 1: Title Card (5s)
-# ============================================================
+# Scene 1: Title card
 Type "figlet -f small 'claude-warden'"
 Enter
-Sleep 500ms
-Type "echo '  Token-saving hooks for Claude Code'"
+Sleep 400ms
+Type "echo '  Token-saving hooks + observability for Claude Code'"
 Enter
-Sleep 500ms
-Type "echo '  Blocks verbose commands, compresses reads, enforces budgets'"
+Sleep 400ms
+Type "echo '  Rewrites noisy commands, blocks risky reads, trims huge output'"
 Enter
-Sleep 2s
+Sleep 2200ms
 
-# ============================================================
-# Scene 2: One-Command Install (10s)
-# ============================================================
+# Scene 2: Hero split screen
 Hide
 Type "clear"
 Enter
 Show
-Sleep 200ms
+Sleep 250ms
 
-Type "echo '=== One-Command Install ==='"
+Type "echo '=== Stock terminal vs Claude + Warden ==='"
 Enter
-Sleep 500ms
-Type "echo '# git clone + ./install.sh -- symlinks 11 hooks in seconds'"
-Enter
-Sleep 500ms
-
-Type "./install.sh --dry-run 2>&1 | head -15"
-Enter
-Sleep 3s
-
-Type "echo '... (11 hooks + statusline + settings merge)'"
-Enter
-Sleep 2s
-
-# ============================================================
-# Scene 3: Split Screen -- Stock vs Warden (hero scene)
-# ============================================================
-Hide
-Type "clear"
-Enter
-Show
-Sleep 200ms
-
-Type "echo '=== Split Screen: Stock Claude vs Claude + Warden ==='"
-Enter
-Sleep 1s
-
-# Launch tmux hero scene (sets up split panes and attaches)
+Sleep 900ms
 Type "./demo/tmux-hero.sh"
 Enter
-Sleep 30s
-
-# Detach from tmux
+Sleep 16s
 Ctrl+B
 Type "d"
 Sleep 500ms
-
-# Kill tmux session and clean up
 Hide
-Type "tmux kill-session -t demo 2>/dev/null; rm -rf node_modules package.json package-lock.json 2>/dev/null"
+Type "tmux kill-session -t demo 2>/dev/null"
 Enter
 Show
-Sleep 200ms
-
-# ============================================================
-# Scene 4: Rapid-fire hook demos (mock JSON)
-# ============================================================
-Hide
-Type "clear"
-Enter
-Show
-Sleep 200ms
-
-Type "echo '=== Verbose Command Blocking ==='"
-Enter
-Sleep 500ms
-
-Type "echo '# npm install -> BLOCKED'"
-Enter
-Sleep 200ms
-Type "cat demo/mock-inputs/pre-tool-use-npm.json | ./hooks/pre-tool-use 2>&1"
-Enter
-Sleep 1500ms
-
-Type "echo '# cargo build -> BLOCKED'"
-Enter
-Sleep 200ms
-Type "cat demo/mock-inputs/pre-tool-use-cargo.json | ./hooks/pre-tool-use 2>&1"
-Enter
-Sleep 1500ms
-
-Type "echo '# curl without -s -> BLOCKED'"
-Enter
-Sleep 200ms
-Type "cat demo/mock-inputs/pre-tool-use-curl.json | ./hooks/pre-tool-use 2>&1"
-Enter
-Sleep 1500ms
-
-Type "echo '# docker build -> BLOCKED'"
-Enter
-Sleep 200ms
-Type "cat demo/mock-inputs/pre-tool-use-docker.json | ./hooks/pre-tool-use 2>&1"
-Enter
-Sleep 1500ms
-
-Type "echo '# grep -r without -l -> BLOCKED'"
-Enter
-Sleep 200ms
-Type "cat demo/mock-inputs/pre-tool-use-grep-recursive.json | ./hooks/pre-tool-use 2>&1"
-Enter
-Sleep 1500ms
-
-Type "echo '# ffmpeg without -nostats -> BLOCKED'"
-Enter
-Sleep 200ms
-Type "cat demo/mock-inputs/pre-tool-use-ffmpeg.json | ./hooks/pre-tool-use 2>&1"
-Enter
-Sleep 2s
-
-# ============================================================
-# Scene 5: Bundled File + Read Compression
-# ============================================================
-Hide
-Type "clear"
-Enter
-Show
-Sleep 200ms
-
-Type "echo '=== Read Guards ==='"
-Enter
-Sleep 500ms
-
-Type "echo '# Reading node_modules/ -> BLOCKED'"
-Enter
-Sleep 200ms
-Type "cat demo/mock-inputs/read-guard-bundle.json | ./hooks/read-guard 2>&1"
-Enter
-Sleep 1500ms
-
-Type "echo '# Reading dist/ -> BLOCKED'"
-Enter
-Sleep 200ms
-Type "cat demo/mock-inputs/read-guard-dist.json | ./hooks/read-guard 2>&1"
-Enter
-Sleep 1500ms
-
-Type "echo ''"
-Enter
-Type "echo '=== Read Compression ==='"
-Enter
-Sleep 500ms
-Type "echo '# 206-line Python file -> 36 structural signatures'"
-Enter
 Sleep 300ms
 
-Type "./demo/demo-helper.sh build_read_compress_input | ./hooks/read-compress | jq -r '.modifyOutput' 2>/dev/null | tail -10"
-Enter
-Sleep 3s
-
-# ============================================================
-# Scene 6: Output Truncation + Write Guard
-# ============================================================
+# Scene 3: Quiet rewrites and targeted blocking
 Hide
 Type "clear"
 Enter
 Show
-Sleep 200ms
+Sleep 250ms
 
-Type "echo '=== Smart Output Truncation ==='"
+Type "./demo/demo-helper.sh show_hook_summary pre-tool-use demo/mock-inputs/pre-tool-use-npm.json 'npm install express'"
 Enter
-Sleep 500ms
+Sleep 1800ms
+Type "./demo/demo-helper.sh show_hook_summary pre-tool-use demo/mock-inputs/pre-tool-use-cargo.json 'cargo build'"
+Enter
+Sleep 1800ms
+Type "./demo/demo-helper.sh show_hook_summary pre-tool-use demo/mock-inputs/pre-tool-use-curl.json 'curl -v https://api.example.com/v1/data'"
+Enter
+Sleep 1800ms
+Type "./demo/demo-helper.sh show_hook_summary pre-tool-use demo/mock-inputs/pre-tool-use-grep-recursive.json 'grep -r TODO src/'"
+Enter
+Sleep 2200ms
 
-Type "echo '# 30KB bash output -> truncated to 10KB (8KB head + 2KB tail)'"
-Enter
-Sleep 300ms
-Type "./demo/demo-helper.sh generate_large_output 30 | ./hooks/post-tool-use 2>/dev/null | grep -oP 'truncated to 10KB'"
-Enter
-Sleep 1500ms
-
-Type "echo '# Write >100KB -> BLOCKED'"
-Enter
-Sleep 200ms
-Type "cat demo/mock-inputs/pre-tool-use-write-large.json | ./hooks/pre-tool-use 2>&1"
-Enter
-Sleep 2s
-
-# ============================================================
-# Scene 7: Rich Statusline
-# ============================================================
+# Scene 4: Read guards and structural compression
 Hide
 Type "clear"
 Enter
 Show
-Sleep 200ms
+Sleep 250ms
 
-Type "echo '=== Rich Statusline ==='"
+Type "./demo/demo-helper.sh show_hook_summary read-guard demo/mock-inputs/read-guard-bundle.json 'Read bundled file'"
 Enter
-Sleep 500ms
-
-Type "echo '# Model, context %, tokens, cache stats, tool count -- all live'"
+Sleep 1800ms
+Type "./demo/demo-helper.sh show_hook_summary read-guard demo/mock-inputs/read-guard-dist.json 'Read dist artifact'"
 Enter
-Sleep 500ms
+Sleep 1800ms
+Type "./demo/demo-helper.sh show_read_compress_preview"
+Enter
+Sleep 3200ms
 
-Type "cat demo/mock-inputs/statusline.json | ./statusline.sh"
+# Scene 5: Output truncation and write guard
+Hide
+Type "clear"
+Enter
+Show
+Sleep 250ms
+
+Type "./demo/demo-helper.sh show_post_tool_summary 30"
+Enter
+Sleep 2400ms
+Type "./demo/demo-helper.sh show_hook_summary pre-tool-use demo/mock-inputs/pre-tool-use-write-large.json 'Write 100KB+'"
+Enter
+Sleep 2200ms
+
+# Scene 6: Statusline
+Hide
+Type "clear"
+Enter
+Show
+Sleep 250ms
+
+Type "./demo/demo-helper.sh show_statusline_preview"
+Enter
+Sleep 3200ms
 Enter
 Sleep 3s
 
