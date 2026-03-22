@@ -98,6 +98,7 @@ if [[ -d "$WARDEN_STATE_DIR" ]]; then
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'clears-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'peak-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.session_start-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'startup-model-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'subagent-count-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
     # Stale locks: flock files + legacy mkdir lock dirs
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '*.lock' -mmin +60 -exec rm -f {} + 2>/dev/null || true
@@ -127,6 +128,7 @@ fi
 
 # Clean up this session's per-session state files
 rm -f "$WARDEN_STATE_DIR/.session_start-$SESSION_ID" 2>/dev/null
+rm -f "$WARDEN_STATE_DIR/startup-model-$SESSION_ID" 2>/dev/null
 rm -f "$WARDEN_STATE_DIR/subagent-count-$SESSION_ID" 2>/dev/null
 # Remove tool-start and quiet-override markers for this session
 rm -f "$WARDEN_STATE_DIR"/.tool-start-*-"$SESSION_ID" 2>/dev/null

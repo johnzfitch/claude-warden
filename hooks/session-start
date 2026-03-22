@@ -12,6 +12,7 @@ _warden_read_input || exit 0
 
 SESSION_ID=$(_warden_parse_session_id)
 SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
+SESSION_MODEL="$(printf '%s' "$WARDEN_INPUT" | jq -r '.model // ""' 2>/dev/null || echo "")"
 AGENT_STATS="$HOME/.claude/agent-stats.csv"
 
 if [ -n "$SESSION_ID" ]; then
@@ -24,6 +25,10 @@ if [ -n "$SESSION_ID" ]; then
   # from overwriting each other's timestamps (common.sh falls back to date +%s).
   mkdir -p "$WARDEN_STATE_DIR"
   _warden_date_sns > "$WARDEN_STATE_DIR/.session_start-$SESSION_ID"
+  if [ -n "$SESSION_MODEL" ]; then
+    printf '%s\n' "$SESSION_MODEL" > "$WARDEN_STATE_DIR/startup-model-$SESSION_ID.tmp.$$" \
+      && mv "$WARDEN_STATE_DIR/startup-model-$SESSION_ID.tmp.$$" "$WARDEN_STATE_DIR/startup-model-$SESSION_ID"
+  fi
 
   # Snapshot budget at session start
   _warden_budget_export > "$WARDEN_SESSION_BUDGET_DIR/$SESSION_ID.start.json" 2>/dev/null || true
