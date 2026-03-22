@@ -3,8 +3,9 @@
 *.tmp
 .venv/
 
-# Internal design docs
+# Internal design/planning docs
 DESIGN-*.md
+plan.md
 
 # Internal security reports
 *-threat-model.md
@@ -36,6 +37,7 @@ warden.env.sh
 .vscode/
 
 # Test result logs (generated locally)
+test-output.log
 tests/verbosity/results.txt
 
 # Demo artifacts
