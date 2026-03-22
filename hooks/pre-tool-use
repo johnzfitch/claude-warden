@@ -105,7 +105,8 @@ case "$TOOL_NAME" in
         _warden_suppress_ok ;;
     WebFetch|WebSearch)
         # === SSRF / INTERNAL NETWORK PROTECTION ===
-        # Block requests to internal networks, cloud metadata endpoints, and localhost.
+        # Block cloud metadata and private networks. Localhost access is left to
+        # the normal permission dialog (PermissionRequest) so the user decides.
         _URL=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.url // .tool_input.query // ""' 2>/dev/null)
         _URL_LOWER=$(printf '%s' "$_URL" | tr '[:upper:]' '[:lower:]')
         # Cloud metadata endpoints (AWS, GCP, Azure, DigitalOcean, Oracle)
@@ -115,11 +116,6 @@ case "$TOOL_NAME" in
            [[ "$_URL_LOWER" =~ 100\.100\.100\.200 ]]; then
             _warden_emit_block "ssrf_metadata" 0 "$TOOL_NAME $_URL"
             _warden_deny "Network boundary violation: $TOOL_NAME tried to reach cloud metadata endpoint ($_URL). This is a protected internal address that exposes instance credentials."
-        fi
-        # Localhost / loopback
-        if [[ "$_URL_LOWER" =~ ^https?://(localhost|127\.[0-9]+\.[0-9]+\.[0-9]+|0\.0\.0\.0|\[::1\]) ]]; then
-            _warden_emit_block "ssrf_localhost" 0 "$TOOL_NAME $_URL"
-            _warden_deny "Network boundary violation: $TOOL_NAME tried to reach localhost ($_URL). This tool cannot access local services. Run the local request directly in your terminal and share the relevant output, or read specific log files."
         fi
         # Private RFC1918 ranges
         if [[ "$_URL_LOWER" =~ ^https?://(10\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+|192\.168\.[0-9]+)\.[0-9]+ ]]; then
@@ -255,10 +251,6 @@ if [[ "$COMMAND" =~ wget[[:space:]] ]]; then
        [[ "$_CMD_LOWER" =~ 100\.100\.100\.200 ]]; then
         _warden_emit_block "ssrf_metadata_bash" 0
         _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a cloud metadata endpoint. These addresses expose instance credentials and are never safe to query from model context."
-    fi
-    if [[ "$_CMD_LOWER" =~ wget[[:space:]]+[^|]*https?://(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\]) ]]; then
-        _warden_emit_block "ssrf_localhost_bash" 0
-        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets localhost/loopback. If you need local service data, ask the user to provide it or check specific log files."
     fi
     if [[ "$_CMD_LOWER" =~ wget[[:space:]]+[^|]*https?://(10\.[0-9]|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
         _warden_emit_block "ssrf_private_bash" 0
