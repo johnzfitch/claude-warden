@@ -71,6 +71,9 @@ claude-warden installs a set of shell hooks that intercept Claude Code tool call
 
 ### Guard catalog
 
+<details>
+<summary>Full guard catalog &mdash; 15 hooks</summary>
+
 | Hook | Event | What it guards |
 |---|---|---|
 | `pre-tool-use` | PreToolUse | <strong>Quiet overrides</strong>: injects quiet flags (<code>-q</code>, <code>--silent</code>, <code>-nostats</code>) into verbose commands (<code>git</code>, <code>npm</code>, <code>cargo</code>, <code>make</code>, <code>pip</code>, <code>wget</code>, <code>docker</code>, <code>ffmpeg</code>) via <code>updatedInput</code> instead of blocking. <strong>Network security</strong>: blocks <abbr title="Server-Side Request Forgery">SSRF</abbr> to metadata endpoints, localhost, and <abbr title="RFC 1918">private networks</abbr> (via <code>curl</code>/<code>wget</code>, WebFetch, WebSearch). Blocks data exfiltration (<code>curl</code> POST/upload flags). Blocks raw sockets (<code>nc</code>/<code>ncat</code>/<code>socat</code>) and network scanners (<code>nmap</code>/<code>masscan</code>). <strong>Environment safety</strong>: blocks full env dumps (<code>env</code>, <code>printenv</code>, <code>/proc/*/environ</code>); allows filtered forms. <strong>Sandbox</strong>: blocks Write/Edit/Bash writes to <code>.claude/settings</code> and <code>.claude/hooks</code>. <strong>Token guards</strong>: blocks binary reads, recursive grep/find without limits, oversized Write/Edit/NotebookEdit, minified file access, unbounded <code>git&nbsp;log</code>. Enforces subagent budgets. |
@@ -88,6 +91,8 @@ claude-warden installs a set of shell hooks that intercept Claude Code tool call
 | `tool-error` | PostToolUseFailure | Logs errors with context. Provides recovery hints. |
 | `pre-compact` | PreCompact | Injects warden context into compaction summaries. |
 | `statusline.sh` | StatusLine | Model, context&nbsp;%, IO tokens, cache stats, tool count, hottest output, active subagents, budget utilization. |
+
+</details>
 
 ### Hook lifecycle
 
@@ -140,13 +145,16 @@ To pin a version:
 curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash -s -- v0.6.1
 ```
 
-### Install from source (development)
+<details>
+<summary>Install from source (development)</summary>
 
 ```bash
 git clone https://github.com/johnzfitch/claude-warden.git ~/dev/claude-warden
 cd ~/dev/claude-warden
 ./install.sh
 ```
+
+</details>
 
 ### ![key][icon-key] Profiles
 
@@ -172,7 +180,8 @@ cp config/user.json.template config/user.json
 
 Merge order: `config/defaults.json` &larr; profile &larr; `config/user.json` &larr; existing `settings.json` (non-warden keys preserved).
 
-### Install modes
+<details>
+<summary>Install modes &amp; what install.sh does</summary>
 
 <dl>
   <dt><strong>Symlink</strong> (default)</dt>
@@ -183,7 +192,7 @@ Merge order: `config/defaults.json` &larr; profile &larr; `config/user.json` &la
   <dd>See what would happen without writing anything. <code>./install.sh --dry-run</code></dd>
 </dl>
 
-### What install.sh does
+**What install.sh does**
 
 <dl>
   <dt><strong>Detect &amp; prepare</strong></dt>
@@ -199,6 +208,8 @@ Merge order: `config/defaults.json` &larr; profile &larr; `config/user.json` &la
   <dt><strong>Validate</strong></dt>
   <dd>Checks JSON validity and shell syntax for every installed script.</dd>
 </dl>
+
+</details>
 
 ## ![cross][icon-cross] Uninstall
 
@@ -230,56 +241,51 @@ Token limits and tool permissions are set in the `env` and `permissions` section
 - **Read compression**: `read-compress` &mdash; subagent threshold at 300 lines, main agent at 500 lines
 - **Binary detection**: `post-tool-use` &mdash; POSIX `od` + `grep` for <abbr title="null byte">NUL</abbr> bytes (full-stream scan)
 
-### ![terminal][icon-terminal] Shell environment
+<details>
+<summary>Shell environment, token accounting, disabling guards, custom allow-list</summary>
 
-The installer generates `warden.env.sh` and prints the line to add to your shell RC. Add it to `~/.zshrc`, `~/.bashrc`, or both:
+**Shell environment**
+
+Add to `~/.zshrc` or `~/.bashrc`:
 
 ```bash
 # claude-warden env
 source "$HOME/.claude/.warden/warden.env.sh"
 ```
 
-This exports <abbr title="OpenTelemetry">OTEL</abbr>, token limit, timeout, and sandbox vars from your chosen profile into every new shell. Re-running `install.sh` regenerates `warden.env.sh` with the current profile&rsquo;s values.
+This exports <abbr title="OpenTelemetry">OTEL</abbr>, token limit, timeout, and sandbox vars from your chosen profile into every new shell. Re-running `install.sh` regenerates it.
 
-If you have existing Claude Code env vars in your shell RC, you can remove them after adding the source line &mdash; warden now manages those values.
+**Token savings accounting**
 
-### ![chart][icon-chart] Token savings accounting
-
-All hooks report token savings to `~/.claude/.statusline/events.jsonl` using the standard warden event schema. By default, token counts are estimated at ~3.5 bytes/token (benchmarked against Claude&rsquo;s tokenizer across code, prose, and structured output).
-
-For exact counts, set the `WARDEN_TOKEN_COUNT` environment variable:
+All hooks report savings to `~/.claude/.statusline/events.jsonl` at ~3.5&nbsp;bytes/token (estimated). For exact counts:
 
 ```bash
 export WARDEN_TOKEN_COUNT=api
 ```
 
-When enabled, each truncation event spawns a background process that calls the [Anthropic token counting API][token-api] (free, separate rate limits) and appends a correction event to `events.jsonl`. The hook returns immediately &mdash; zero added latency.
+Each truncation event spawns a background call to the [Anthropic token counting API][token-api] (free, separate rate limits) and appends a correction event. Zero added latency.
 
 <dl>
   <dt>Requirements for API mode</dt>
-  <dd><code>ANTHROPIC_API_KEY</code> in environment (set automatically by Claude Code)</dd>
-  <dd><code>python3</code> with the <code>anthropic</code> package installed</dd>
+  <dd><code>ANTHROPIC_API_KEY</code> in environment; <code>python3</code> with <code>anthropic</code> installed</dd>
   <dt>Custom Python path</dt>
-  <dd>If <code>python3</code> on your <var>PATH</var> doesn&rsquo;t have <code>anthropic</code>, set <code>WARDEN_PYTHON=/path/to/venv/bin/python3</code></dd>
+  <dd>Set <code>WARDEN_PYTHON=/path/to/venv/bin/python3</code> if needed</dd>
   <dt>Graceful degradation</dt>
-  <dd>If the API key is missing, <code>anthropic</code> isn&rsquo;t installed, or the network is unavailable, the background process silently exits and the estimate stands.</dd>
+  <dd>Missing key, missing package, or network failure &rarr; silently exits, estimate stands</dd>
 </dl>
 
-### Disabling specific guards
+**Disabling specific guards**
 
-To disable a specific guard category, remove or comment out the corresponding matcher in `settings.hooks.json` and re-run `./install.sh`. For example, to disable read compression:
+Remove the corresponding matcher from `settings.hooks.json` and re-run `./install.sh`. Example &mdash; disable read compression:
 
 ```json
-// Remove or comment this block from settings.hooks.json:
 {
   "matcher": "Read",
   "hooks": [{"type": "command", "command": "$HOME/.claude/hooks/read-compress", "timeout": 7}]
 }
 ```
 
-### ![key][icon-key] Adding your own permission allow-list
-
-Profiles include a set of pre-approved tool permissions. To add your own, create `config/user.json` and add to the `permissions.allow` array:
+**Adding your own permission allow-list**
 
 ```bash
 cp config/user.json.template config/user.json
@@ -288,16 +294,14 @@ cp config/user.json.template config/user.json
 ```json
 {
   "permissions": {
-    "allow": [
-      "Bash(gh api:*)",
-      "Bash(pacman -Q:*)",
-      "mcp__filesystem__list_directory"
-    ]
+    "allow": ["Bash(gh api:*)", "Bash(pacman -Q:*)", "mcp__filesystem__list_directory"]
   }
 }
 ```
 
-Re-run `./install.sh` to merge. User permissions are unioned with the profile permissions &mdash; nothing is removed. Commands in the allow-list never reach the permission hook.
+Re-run `./install.sh` to merge. User permissions are unioned with profile permissions &mdash; nothing is removed.
+
+</details>
 
 ## ![network][icon-network] Platform support
 
@@ -323,7 +327,8 @@ Re-run `./install.sh` to merge. User permissions are unioned with the profile pe
 
 The **warden-collector** is a lightweight Go service that acts as the central backbone for all observation and state. It starts automatically when a Claude Code session begins (via the `session-start` hook) and stops when idle.
 
-### What it does
+<details>
+<summary>Collector internals, data storage &amp; viewer</summary>
 
 <dl>
   <dt><strong>Session tracking</strong></dt>
@@ -338,9 +343,7 @@ The **warden-collector** is a lightweight Go service that acts as the central ba
   <dd><code>GET /v1/sessions</code> lists sessions. <code>GET /v1/sessions/{id}/context</code> returns token counts, context percentage, and compact threshold. The statusline queries this endpoint.</dd>
 </dl>
 
-### Data storage
-
-State lives in `${XDG_STATE_HOME:-~/.local/state}/claude-warden/`:
+**Data storage** &mdash; `${XDG_STATE_HOME:-~/.local/state}/claude-warden/`:
 
 | File | Purpose |
 |---|---|
@@ -349,13 +352,13 @@ State lives in `${XDG_STATE_HOME:-~/.local/state}/claude-warden/`:
 | `collector.pid` | PID file for lifecycle management |
 | `budget-deny-*` | Deny files written when subagent budgets are exceeded |
 
-### Viewer
-
-The **warden-viewer** (`viewer/warden-viewer.py`) is an optional htmx-based web UI that reads directly from `collector.db`. It serves on port 8477 and provides six views: context gauge, request waterfall, event log, cost tracking, tool breakdown, and token trend.
+**Viewer** &mdash; optional htmx web UI on port 8477 (context gauge, request waterfall, event log, cost tracking, tool breakdown, token trend):
 
 ```bash
 python3 viewer/warden-viewer.py
 ```
+
+</details>
 
 ## ![monitor][icon-monitor] Monitoring stack (optional)
 
@@ -364,103 +367,44 @@ Warden includes an optional Docker-based observability stack in `monitoring/` fo
 > [!NOTE]
 > The Go collector is the primary observability backbone and is always installed. The Docker monitoring stack is optional and provides additional visualization via Grafana, long-term log storage via Loki, and distributed tracing via Tempo.
 
-### Components
+<details>
+<summary>Components, setup, data flow, dashboards</summary>
 
 | Service | Image | Port | Purpose |
 |---|---|---|---|
-| Loki | `grafana/loki:3.4.2` | 3100 | Log aggregation (30-day retention, <abbr title="Time Series Database">TSDB</abbr> filesystem storage) |
+| Loki | `grafana/loki:3.4.2` | 3100 | Log aggregation (30-day retention, <abbr title="Time Series Database">TSDB</abbr> storage) |
 | <abbr title="OpenTelemetry">OTEL</abbr> Collector | `otel/opentelemetry-collector-contrib` | 4317/4318 | Receives <abbr title="OpenTelemetry Protocol">OTLP</abbr> logs + traces, tails `events.jsonl`, exports to Loki + Tempo |
-| Prometheus | `prom/prometheus` | 9090 | Metrics (Claude Code <abbr title="OpenTelemetry Protocol">OTLP</abbr> metrics plus claude-warden textfile fallbacks) |
-| Node Exporter | `prom/node-exporter` | 9101 | Textfile collector for claude-warden budget and session metrics |
+| Prometheus | `prom/prometheus` | 9090 | Metrics (<abbr title="OpenTelemetry Protocol">OTLP</abbr> + warden textfile fallbacks) |
+| Node Exporter | `prom/node-exporter` | 9101 | Textfile collector for budget and session metrics |
 | Tempo | `grafana/tempo:2.7.2` | 3200/3205 | Distributed trace storage and visualization |
 | Grafana | `grafana/grafana` | 3000 | Dashboards (<samp>admin</samp>/<samp>admin</samp>) |
 
-### Setup
-
-**Linux** (uses `network_mode: host`):
+**Start** (Linux):
 
 ```bash
 cd monitoring && docker compose up -d
 ```
 
-**macOS / Docker Desktop** (uses bridge networking with service <abbr title="Domain Name System">DNS</abbr>):
+**macOS / Docker Desktop**:
 
 ```bash
 cd monitoring && docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
 ```
 
-> [!NOTE]
-> Docker Desktop does not support `network_mode: host`. The macOS override switches to bridge networking and mounts config overrides that replace `localhost` references with Docker service names (`loki`, `prometheus`, `otel-collector`, etc.).
+**Dashboards** &mdash; four provisioned in `monitoring/grafana/dashboards/`: cost/tokens/budget (`claude-code-otel`), tool latency/traces (`warden-tool-latency`), output size/tokens (`warden-output-size`), subagent/session lifecycle (`warden-subagent-lifecycle`).
 
-### ![flow][icon-flow] Data flow
-
-```
-Claude Code ──OTLP (HTTP/JSON)──> warden-collector (:4319)
-                                       │
-                                       ├──> SQLite (sessions, tokens, spans)
-                                       └──> budget-deny files (subagent enforcement)
-
-hooks ──POST (UDS)──> warden-collector (collector.sock)
-                           │
-                           └──> SQLite (hook_events, subagent_budgets)
-
-statusline.sh ──GET (UDS)──> warden-collector ──> context %, tokens, model
-
-[Optional Docker stack]
-hooks/events.jsonl ──filelog──> OTEL Collector ──> Loki (logs)
-Claude Code ──OTLP──> OTEL Collector ──> Prometheus (metrics)
-                                    ──> Tempo (traces)
-```
-
-### ![clock][icon-clock] Per-tool latency tracking
-
-Claude Code emits native <abbr title="OpenTelemetry Protocol">OTLP</abbr> spans for every tool call (`claude_code.tool`) with `duration_ms` and `result_tokens` attributes. The warden-collector receives these spans on `:4319` and stores them in SQLite for querying.
-
-Hooks still emit `tool_latency` events to `events.jsonl` for backward compatibility with the Docker monitoring stack:
-
-```
-{service_name="claude-code"} | json | event_type="tool_latency" | duration_ms > 2000
-```
-
-When the Docker stack is running, traces are stored in Tempo and can be explored in Grafana via the Tempo datasource.
-
-### ![chart][icon-chart] Dashboards
-
-Four provisioned dashboards in `monitoring/grafana/dashboards/`:
-
-| Dashboard | <abbr title="Unique Identifier">UID</abbr> | What it shows |
-|---|---|---|
-| Working Dashboard | `claude-code-otel` | Cost, tokens, budget utilization, session duration, API metrics |
-| Tool Latency &amp; Traces | `warden-tool-latency` | Latency scatter plot, per-tool avg/p95/max, call frequency, slow calls, tokens saved by rule |
-| Output Size &amp; Tokens | `warden-output-size` | Per-tool output bytes, estimated tokens, large output table, cumulative token trend |
-| Subagent &amp; Session Lifecycle | `warden-subagent-lifecycle` | Subagent duration by type, session stop reasons, blocked events by rule, worktree tracking |
-
-The latency and output-size dashboards include session and tool filter variables. Tool filtering matches the `tool` field parsed from the log body via `| json` &mdash; only `session_id` is indexed as a Loki stream label. All other fields (including `event_type`, `duration_ms`, `output_bytes`) are queried against the raw <abbr title="JavaScript Object Notation">JSON</abbr> body ingested from `events.jsonl`.
-
-<details>
-<summary>Verification commands</summary>
+**Verification**:
 
 ```bash
-# Loki healthy
-curl -s http://localhost:3100/ready
-
-# Query tool latency events
-curl -sG http://localhost:3100/loki/api/v1/query_range \
-  --data-urlencode 'query={service_name="claude-code"} | json | event_type="tool_latency"' \
-  --data-urlencode 'limit=5' \
-  --data-urlencode "start=$(date -d '1 hour ago' +%s)" \
-  --data-urlencode "end=$(date +%s)"
-
-# Check trace spans in Tempo
-curl -s http://localhost:3200/ready
-
-# Check latency events in events.jsonl
+curl -s http://localhost:3100/ready   # Loki
+curl -s http://localhost:3200/ready   # Tempo
 grep tool_latency ~/.claude/.statusline/events.jsonl | tail -5
 ```
 
 </details>
 
-## ![flow][icon-flow] API capture
+<details>
+<summary>![flow][icon-flow] API capture</summary>
 
 The `capture/` directory contains a <abbr title="man-in-the-middle">MITM</abbr> proxy wrapper for recording full Claude Code API traffic.
 
@@ -483,7 +427,10 @@ Logs land in <samp>~/claude-captures/YYYY-MM-DD/capture-HHMMSS.jsonl</samp>. Eac
   <dd><code>x-api-key</code>, <code>authorization</code>, and <code>proxy-authorization</code> headers are redacted in both streaming and non-streaming paths</dd>
 </dl>
 
-## ![folder][icon-folder] Project layout
+</details>
+
+<details>
+<summary>![folder][icon-folder] Project layout</summary>
 
 | Path | Purpose |
 |---|---|
@@ -510,6 +457,8 @@ Logs land in <samp>~/claude-captures/YYYY-MM-DD/capture-HHMMSS.jsonl</samp>. Eac
 | `VERSION` | Current release version |
 | `assets/` | README images (architecture diagram) |
 | `demo/mock-inputs/` | Small JSON fixtures for exercising hooks locally |
+
+</details>
 
 ## ![book][icon-book] How it works
 
