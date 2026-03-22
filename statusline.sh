@@ -338,6 +338,7 @@ USED_PCT_DISPLAY="0"
 COLLECTOR_SOCK="${WARDEN_COLLECTOR_SOCK:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-warden/collector.sock}"
 COLLECTOR_JSON=""
 COLLECTOR_PCT=""
+COLLECTOR_MODEL=""
 COLLECTOR_TOOL_COUNT=""
 COLLECTOR_SUBAGENT_COUNT=""
 COLLECTOR_LAST_TOOL=""
@@ -350,13 +351,14 @@ if [ -n "$SESSION_ID" ] && [ -S "$COLLECTOR_SOCK" ]; then
     if [ -n "$COLLECTOR_JSON" ]; then
         # Extract all useful fields in one jq call
         eval "$(printf '%s' "$COLLECTOR_JSON" | jq -r '
-            "COLLECTOR_PCT=\(.used_pct // "")",
-            "COLLECTOR_TOOL_COUNT=\(.tool_count // 0)",
-            "COLLECTOR_SUBAGENT_COUNT=\(.subagent_count // 0)",
-            "COLLECTOR_LAST_TOOL=\(.last_tool // "")",
-            "COLLECTOR_LAST_TOOL_MS=\(.last_tool_duration_ms // "")",
-            "COLLECTOR_CACHE_HIT=\(.cache_hit_rate // "")",
-            "COLLECTOR_COMPACT_PCT=\(.compact_threshold_pct // 85)"
+            "COLLECTOR_PCT=\(.used_pct // "" | @sh)",
+            "COLLECTOR_MODEL=\(.model // "" | @sh)",
+            "COLLECTOR_TOOL_COUNT=\(.tool_count // 0 | @sh)",
+            "COLLECTOR_SUBAGENT_COUNT=\(.subagent_count // 0 | @sh)",
+            "COLLECTOR_LAST_TOOL=\(.last_tool // "" | @sh)",
+            "COLLECTOR_LAST_TOOL_MS=\(.last_tool_duration_ms // "" | @sh)",
+            "COLLECTOR_CACHE_HIT=\(.cache_hit_rate // "" | @sh)",
+            "COLLECTOR_COMPACT_PCT=\(.compact_threshold_pct // 85 | @sh)"
         ' 2>/dev/null)" || true
     fi
 fi
@@ -420,6 +422,7 @@ CYAN=$'\033[36m'
 
 STATE_DIR="${WARDEN_STATE_DIR:-$HOME/.claude/.statusline}"
 STATE_FILE="$STATE_DIR/state${SESSION_ID:+-$SESSION_ID}"
+STARTUP_MODEL_FILE="$STATE_DIR/startup-model${SESSION_ID:+-$SESSION_ID}"
 REASON_FILE="$STATE_DIR/reset-reason"
 mkdir -p "$STATE_DIR"
 
@@ -436,8 +439,13 @@ PREV_TOTAL_OUT=0
 PREV_CTX=0
 PREV_COST_USD="0"
 PREV_MODEL=""
+STARTUP_MODEL=""
 RESET_TS=0
 RESET_REASON=""
+
+if [ -f "$STARTUP_MODEL_FILE" ]; then
+    STARTUP_MODEL="$(cat "$STARTUP_MODEL_FILE" 2>/dev/null || true)"
+fi
 
 if [ -f "$STATE_FILE" ]; then
     PREV_F2="" PREV_F3="" PREV_F4="" PREV_F5=""
@@ -481,10 +489,19 @@ if [ -n "$SESSION_ID" ] && [ "$PREV_SESSION" = "$SESSION_ID" ]; then
     SAME_SESSION=1
 fi
 
-# Model bleed fix: Claude Code sends the current global model setting to all
-# sessions, so switching models in one terminal changes ALL statuslines.
-# Use cached per-session model unless tokens changed (actual API call happened).
-if [ "$SAME_SESSION" -eq 1 ] && [ -n "$PREV_MODEL" ] && [ "$TOTAL" -eq "$PREV_TOTAL" ]; then
+# Model source priority:
+# 1. Collector model (authoritative per-session, populated from OTLP spans)
+# 2. Cached per-session model when Claude Code's polled statusline payload is idle/stale
+# 3. Session-start snapshot before the first OTLP span arrives
+# 4. Raw statusline JSON model as the last fallback
+if [ -n "$COLLECTOR_MODEL" ]; then
+    MODEL="$COLLECTOR_MODEL"
+elif [ -n "$STARTUP_MODEL" ]; then
+    # Startup snapshot is written fresh on every session-start — prefer it
+    # over stale cache (which may carry a model from a previous resume)
+    MODEL="$STARTUP_MODEL"
+elif [ "$SAME_SESSION" -eq 1 ] && [ -n "$PREV_MODEL" ] \
+    && [ "$TOTAL" -eq "$PREV_TOTAL" ] && [ "$COST_USD" = "$PREV_COST_USD" ]; then
     MODEL="$PREV_MODEL"
 fi
 
@@ -611,7 +628,7 @@ if [ -n "$SESSION_ID" ] && [ "$HAS_VALID_DELTA" = "1" ]; then
     PEAK_FILE="$STATE_DIR/peak-$SESSION_ID"
     PEAK_COST="0"
     if [ -f "$PEAK_FILE" ]; then
-        PEAK_COST=$(<"$PEAK_FILE" 2>/dev/null || echo "0")
+        PEAK_COST="$(cat "$PEAK_FILE" 2>/dev/null || echo "0")"
         [[ "$PEAK_COST" =~ ^[0-9]*\.?[0-9]+$ ]] || PEAK_COST="0"
     fi
     IS_PEAK=$(LC_NUMERIC=C awk -v turn="$TURN_COST" -v peak="$PEAK_COST" 'BEGIN {print (turn > peak) ? 1 : 0}' 2>/dev/null)
@@ -624,7 +641,7 @@ elif [ -n "$SESSION_ID" ]; then
     # Read existing peak even if this turn has no valid delta
     PEAK_FILE="$STATE_DIR/peak-$SESSION_ID"
     if [ -f "$PEAK_FILE" ]; then
-        PEAK_COST=$(<"$PEAK_FILE" 2>/dev/null || echo "0")
+        PEAK_COST="$(cat "$PEAK_FILE" 2>/dev/null || echo "0")"
         [[ "$PEAK_COST" =~ ^[0-9]*\.?[0-9]+$ ]] || PEAK_COST="0"
         PEAK_COST_FMT=$(LC_NUMERIC=C printf '%.2f' "$PEAK_COST")
     fi

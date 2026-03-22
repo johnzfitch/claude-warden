@@ -566,6 +566,69 @@ assert_contains "$override_out" 'Clr:2' "statusline WARDEN_STATE_DIR override"
 rm -rf "$CUSTOM_STATE_DIR"
 rm -f "$STATUS_FIXTURE"
 
+echo "[tests] statusline (session-start model snapshot fallback)"
+STARTUP_SESSION_FIXTURE="$(mktemp)"
+cat > "$STARTUP_SESSION_FIXTURE" <<'JSON'
+{"session_id":"startup-demo","model":"claude-haiku-4-5-20251001","source":"startup"}
+JSON
+IFS=$'\t' read -r rc out err < <(run_hook session-start "$STARTUP_SESSION_FIXTURE")
+assert_exit 0 "$rc" "session-start startup model snapshot"
+STARTUP_MODEL_FILE="$HOME/.claude/.statusline/startup-model-startup-demo"
+[[ -f "$STARTUP_MODEL_FILE" ]] || fail "session-start startup model snapshot: missing $STARTUP_MODEL_FILE"
+startup_model_saved="$(cat "$STARTUP_MODEL_FILE")"
+assert_contains "$startup_model_saved" "claude-haiku-4-5-20251001" "session-start startup model saved"
+
+STARTUP_STATUS_FIXTURE="$(mktemp)"
+cat > "$STARTUP_STATUS_FIXTURE" <<'JSON'
+{"session_id":"startup-demo","model":{"display_name":"Claude Opus 4.6"},"context_window":{"context_window_size":200000,"used_percentage":"11.0"}}
+JSON
+startup_status="$(WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$STARTUP_STATUS_FIXTURE")"
+startup_status_plain="$(LC_ALL=C printf '%s' "$startup_status" | sed $'s/\033\\[[0-9;]*m//g')"
+assert_contains "$startup_status_plain" "Haiku 4.5" "statusline startup model snapshot fallback"
+assert_not_contains "$startup_status_plain" "Opus 4.6" "statusline ignores stale raw model when startup snapshot exists"
+rm -f "$STARTUP_SESSION_FIXTURE" "$STARTUP_STATUS_FIXTURE" "$STARTUP_MODEL_FILE"
+
+echo "[tests] statusline (collector model wins over stale JSON)"
+COLLECTOR_FIXTURE="$(mktemp)"
+cat > "$COLLECTOR_FIXTURE" <<'JSON'
+{"session_id":"11111111-1111-4111-8111-111111111111","model":{"display_name":"Claude Opus 4.6"},"context_window":{"context_window_size":200000,"used_percentage":"42.3"}}
+JSON
+if command -v socat >/dev/null 2>&1; then
+  COLLECTOR_DIR="$(mktemp -d)"
+  COLLECTOR_SOCK="$COLLECTOR_DIR/collector.sock"
+  COLLECTOR_BODY_FILE="$(mktemp)"
+  COLLECTOR_HANDLER="$(mktemp)"
+  printf '%s' '{"model":"claude-sonnet-4-6","used_pct":18.5,"tool_count":7,"compact_threshold_pct":85,"subagent_count":0}' > "$COLLECTOR_BODY_FILE"
+  COLLECTOR_BODY_BYTES="$(wc -c < "$COLLECTOR_BODY_FILE" | tr -d ' ')"
+  cat > "$COLLECTOR_HANDLER" <<EOF
+#!/usr/bin/env bash
+printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: $COLLECTOR_BODY_BYTES\r\n\r\n'
+cat "$COLLECTOR_BODY_FILE"
+EOF
+  chmod +x "$COLLECTOR_HANDLER"
+  socat UNIX-LISTEN:"$COLLECTOR_SOCK",fork EXEC:"$COLLECTOR_HANDLER" >/dev/null 2>&1 &
+  SOCAT_PID=$!
+  for _ in 1 2 3 4 5; do
+    [[ -S "$COLLECTOR_SOCK" ]] && break
+    sleep 0.05
+  done
+  if [[ ! -S "$COLLECTOR_SOCK" ]]; then
+    fail "collector socket '$COLLECTOR_SOCK' not created in time"
+  fi
+  collector_status="$(WARDEN_COLLECTOR_SOCK="$COLLECTOR_SOCK" WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$COLLECTOR_FIXTURE")"
+  collector_status_plain="$(LC_ALL=C printf '%s' "$collector_status" | sed $'s/\033\\[[0-9;]*m//g')"
+  assert_contains "$collector_status_plain" "Sonnet 4.6" "statusline collector model priority"
+  assert_not_contains "$collector_status_plain" "Opus 4.6" "statusline collector overrides stale raw model"
+  assert_contains "$collector_status_plain" "18.5%/200k" "statusline collector context percentage"
+  kill "$SOCAT_PID" 2>/dev/null || true
+  wait "$SOCAT_PID" 2>/dev/null || true
+  rm -rf "$COLLECTOR_DIR"
+  rm -f "$COLLECTOR_BODY_FILE" "$COLLECTOR_HANDLER"
+else
+  echo "[skip] socat missing; collector statusline regression skipped"
+fi
+rm -f "$COLLECTOR_FIXTURE"
+
 echo "[tests] statusline (fallback context math + metrics export)"
 METRIC_FIXTURE="$(mktemp)"
 cat > "$METRIC_FIXTURE" <<'JSON'

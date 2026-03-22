@@ -98,6 +98,21 @@ EOJSON
     rm -f "$tmpfile" "$json_file"
 }
 
+# Deterministic "stock npm install" noise for the split-screen hero scene.
+simulate_stock_npm() {
+    cat <<'EOF'
+npm WARN deprecated inflight@1.0.6: This module is not supported, and leaks memory.
+npm WARN deprecated glob@7.2.3: Glob versions prior to v9 are no longer supported
+npm WARN deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
+added 67 packages, and audited 68 packages in 4s
+
+12 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+EOF
+}
+
 # Generate a synthetic source file for read-compress testing
 generate_source_file() {
     local lines="${1:-200}"
@@ -310,20 +325,117 @@ if __name__ == "__main__":
     app = create_app(sys.argv[1] if len(sys.argv) > 1 else None)
     print(f"Server ready on {app.config.host}:{app.config.port}")
 PYEOF
+
+    local current_lines=174
+    local idx=1
+    while (( current_lines < lines )); do
+        cat <<EOF
+
+def generated_handler_${idx}(request: Dict[str, Any]) -> Dict[str, Any]:
+    """Synthetic handler used to trigger read-compress in the demo."""
+    payload = request.get("payload", {})
+    return {
+        "handler": "generated_handler_${idx}",
+        "keys": sorted(payload.keys()),
+        "count": len(payload),
+    }
+EOF
+        current_lines=$(( current_lines + 8 ))
+        idx=$(( idx + 1 ))
+    done
 }
 
 # Build a read-compress input JSON from a source file
 build_read_compress_input() {
     local content
-    content=$(generate_source_file)
+    content=$(generate_source_file 650)
     jq -n \
         --arg text "$content" \
         --arg tp "/tmp/subagent-demo/transcript.jsonl" \
+        --arg fp "/tmp/demo/service.py" \
         '{
             tool_name: "Read",
             transcript_path: $tp,
+            tool_input: { file_path: $fp },
             tool_response: { content: [{ text: $text }] }
         }'
+}
+
+show_hook_summary() {
+    local hook="$1"
+    local input_file="$2"
+    local label="${3:-}"
+
+    [[ -n "$label" ]] && scene "$label"
+
+    local stdout stderr rc=0
+    stderr=$(mktemp)
+    stdout=$(cat "$input_file" | "$HOOKS_DIR/$hook" 2>"$stderr") || rc=$?
+
+    if [[ $rc -eq 2 ]]; then
+        blocked "$(cat "$stderr")"
+        rm -f "$stderr"
+        return 0
+    fi
+
+    if printf '%s' "$stdout" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1; then
+        local reason
+        reason=$(printf '%s' "$stdout" | jq -r '.hookSpecificOutput.permissionDecisionReason // "denied"')
+        blocked "$reason"
+    elif printf '%s' "$stdout" | jq -e '.hookSpecificOutput.permissionDecision == "allow"' >/dev/null 2>&1; then
+        local rewritten
+        rewritten=$(printf '%s' "$stdout" | jq -r '.hookSpecificOutput.updatedInput.command // empty')
+        if [[ -n "$rewritten" ]]; then
+            pass "rewritten command:"
+            printf '  %s\n' "$rewritten"
+        else
+            pass "allowed"
+        fi
+    elif printf '%s' "$stdout" | jq -e '.modifyOutput' >/dev/null 2>&1; then
+        local preview
+        preview=$(printf '%s' "$stdout" | jq -r '.modifyOutput' | sed -n '1,8p')
+        pass "output modified:"
+        printf '%s\n' "$preview"
+    elif printf '%s' "$stdout" | jq -e '.suppressOutput == true' >/dev/null 2>&1; then
+        pass "allowed (output suppressed)"
+    elif [[ -n "$stdout" ]]; then
+        printf '%s\n' "$stdout"
+    elif [[ -s "$stderr" ]]; then
+        printf '%s\n' "$(cat "$stderr")"
+    fi
+
+    rm -f "$stderr"
+}
+
+show_read_compress_preview() {
+    scene "Read compression"
+    build_read_compress_input \
+        | "$HOOKS_DIR/read-compress" \
+        | jq -r '.modifyOutput // ""' \
+        | awk '
+            NR <= 10 { print; next }
+            /^\[Structure extracted:/ { print; printed = 1; next }
+            printed == 1 && /^\[Use Read with offset\/limit/ { print; exit }
+        '
+}
+
+show_post_tool_summary() {
+    local size_kb="${1:-30}"
+    scene "Post-tool truncation"
+    generate_large_output "$size_kb" \
+        | "$HOOKS_DIR/post-tool-use" \
+        | jq -r '.modifyOutput // ""' \
+        | awk '
+            BEGIN { printed = 0 }
+            /\.\.\. \[[0-9]+KB truncated to 10KB\] \.\.\./ { print; printed = 1; next }
+            printed == 0 && NR <= 6 { print }
+            printed == 1 && tail < 4 { print; tail += 1 }
+        '
+}
+
+show_statusline_preview() {
+    scene "Statusline"
+    "$DEMO_DIR/../statusline.sh" < "$DEMO_DIR/mock-inputs/statusline.json"
 }
 
 "$@"

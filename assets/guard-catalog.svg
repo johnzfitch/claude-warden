@@ -1,0 +1,239 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 884">
+<defs>
+<style>
+/* Dark theme (default) */
+.bg { fill: #0d1117; }
+.card { fill: #161b22; stroke: #30363d; stroke-width: 1; }
+.hook-name { fill: #e6edf3; font-size: 13.5px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; }
+.hook-desc { fill: #8b949e; font-size: 11.5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Noto Sans, Helvetica, Arial, sans-serif; }
+.hook-event { font-size: 10.5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Noto Sans, Helvetica, Arial, sans-serif; }
+.cat-label { font-size: 11px; font-weight: 600; letter-spacing: 1.5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Noto Sans, Helvetica, Arial, sans-serif; }
+.cat-count { font-size: 10px; fill: #484f58; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Noto Sans, Helvetica, Arial, sans-serif; }
+
+/* Light theme */
+@media (prefers-color-scheme: light) {
+  .bg { fill: #ffffff; }
+  .card { fill: #f6f8fa; stroke: #d0d7de; }
+  .hook-name { fill: #1f2328; }
+  .hook-desc { fill: #656d76; }
+  .cat-count { fill: #8c959f; }
+}
+
+/* Animations */
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes accentPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+.cat-group { opacity: 0; animation: fadeIn 0.4s ease forwards; }
+.card-group { opacity: 0; animation: cardIn 0.45s ease forwards; }
+.accent { animation: accentPulse 3s ease-in-out infinite; }
+
+/* Category stagger */
+.cat-1 { animation-delay: 0s; }
+.cat-2 { animation-delay: 0.34s; }
+.cat-3 { animation-delay: 0.64s; }
+.cat-4 { animation-delay: 0.90s; }
+
+/* Card stagger */
+.c1  { animation-delay: 0.06s; }
+.c2  { animation-delay: 0.12s; }
+.c3  { animation-delay: 0.18s; }
+.c4  { animation-delay: 0.24s; }
+.c5  { animation-delay: 0.30s; }
+.c6  { animation-delay: 0.40s; }
+.c7  { animation-delay: 0.46s; }
+.c8  { animation-delay: 0.52s; }
+.c9  { animation-delay: 0.58s; }
+.c10 { animation-delay: 0.70s; }
+.c11 { animation-delay: 0.76s; }
+.c12 { animation-delay: 0.82s; }
+.c13 { animation-delay: 0.88s; }
+.c14 { animation-delay: 0.94s; }
+.c15 { animation-delay: 0.96s; }
+</style>
+</defs>
+
+<!-- Background -->
+<rect class="bg" width="720" height="884" rx="12"/>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- PRE-EXECUTION                              -->
+<!-- ═══════════════════════════════════════════ -->
+<g class="cat-group cat-1">
+  <text x="24" y="34" class="cat-label" fill="#d29922">PRE-EXECUTION</text>
+  <text x="696" y="34" class="cat-count" text-anchor="end">5 hooks</text>
+  <line x1="24" y1="42" x2="696" y2="42" stroke="#d29922" stroke-opacity="0.25" stroke-width="1"/>
+</g>
+
+<!-- pre-tool-use -->
+<g class="card-group c1">
+  <rect class="card" x="20" y="52" width="330" height="66" rx="6"/>
+  <rect class="accent" x="21" y="58" width="2.5" height="54" rx="1.25" fill="#d29922"/>
+  <text class="hook-name" x="36" y="76">pre-tool-use</text>
+  <text class="hook-event" fill="#d29922" x="336" y="76" text-anchor="end">PreToolUse</text>
+  <text class="hook-desc" x="36" y="98">Quiet flags · network blocks · env safety · budget</text>
+</g>
+
+<!-- read-guard -->
+<g class="card-group c2">
+  <rect class="card" x="370" y="52" width="330" height="66" rx="6"/>
+  <rect class="accent" x="371" y="58" width="2.5" height="54" rx="1.25" fill="#d29922"/>
+  <text class="hook-name" x="386" y="76">read-guard</text>
+  <text class="hook-event" fill="#d29922" x="686" y="76" text-anchor="end">PreToolUse</text>
+  <text class="hook-desc" x="386" y="98">Blocks bundled/generated files · size limits</text>
+</g>
+
+<!-- permission-request -->
+<g class="card-group c3">
+  <rect class="card" x="20" y="128" width="330" height="66" rx="6"/>
+  <rect class="accent" x="21" y="134" width="2.5" height="54" rx="1.25" fill="#d29922"/>
+  <text class="hook-name" x="36" y="152">permission-request</text>
+  <text class="hook-event" fill="#d29922" x="336" y="152" text-anchor="end">PermissionReq</text>
+  <text class="hook-desc" x="36" y="174">Auto-deny dangerous · auto-allow safe commands</text>
+</g>
+
+<!-- config-change -->
+<g class="card-group c4">
+  <rect class="card" x="370" y="128" width="330" height="66" rx="6"/>
+  <rect class="accent" x="371" y="134" width="2.5" height="54" rx="1.25" fill="#d29922"/>
+  <text class="hook-name" x="386" y="152">config-change</text>
+  <text class="hook-event" fill="#d29922" x="686" y="152" text-anchor="end">ConfigChange</text>
+  <text class="hook-desc" x="386" y="174">Blocks model self-disabling guardrails</text>
+</g>
+
+<!-- pre-compact -->
+<g class="card-group c5">
+  <rect class="card" x="20" y="204" width="680" height="66" rx="6"/>
+  <rect class="accent" x="21" y="210" width="2.5" height="54" rx="1.25" fill="#d29922"/>
+  <text class="hook-name" x="36" y="228">pre-compact</text>
+  <text class="hook-event" fill="#d29922" x="686" y="228" text-anchor="end">PreCompact</text>
+  <text class="hook-desc" x="36" y="250">Injects warden context into compaction summaries</text>
+</g>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- POST-EXECUTION                             -->
+<!-- ═══════════════════════════════════════════ -->
+<g class="cat-group cat-2">
+  <text x="24" y="308" class="cat-label" fill="#3fb950">POST-EXECUTION</text>
+  <text x="696" y="308" class="cat-count" text-anchor="end">4 hooks</text>
+  <line x1="24" y1="316" x2="696" y2="316" stroke="#3fb950" stroke-opacity="0.25" stroke-width="1"/>
+</g>
+
+<!-- post-tool-use -->
+<g class="card-group c6">
+  <rect class="card" x="20" y="326" width="330" height="66" rx="6"/>
+  <rect class="accent" x="21" y="332" width="2.5" height="54" rx="1.25" fill="#3fb950"/>
+  <text class="hook-name" x="36" y="350">post-tool-use</text>
+  <text class="hook-event" fill="#3fb950" x="336" y="350" text-anchor="end">PostToolUse</text>
+  <text class="hook-desc" x="36" y="372">Compress · truncate · strip tags · detect binary</text>
+</g>
+
+<!-- read-compress -->
+<g class="card-group c7">
+  <rect class="card" x="370" y="326" width="330" height="66" rx="6"/>
+  <rect class="accent" x="371" y="332" width="2.5" height="54" rx="1.25" fill="#3fb950"/>
+  <text class="hook-name" x="386" y="350">read-compress</text>
+  <text class="hook-event" fill="#3fb950" x="686" y="350" text-anchor="end">PostToolUse</text>
+  <text class="hook-desc" x="386" y="372">Structural extraction from large file reads</text>
+</g>
+
+<!-- mcp-output-compress -->
+<g class="card-group c8">
+  <rect class="card" x="20" y="402" width="330" height="66" rx="6"/>
+  <rect class="accent" x="21" y="408" width="2.5" height="54" rx="1.25" fill="#3fb950"/>
+  <text class="hook-name" x="36" y="426">mcp-output-compress</text>
+  <text class="hook-event" fill="#3fb950" x="336" y="426" text-anchor="end">PostToolUse</text>
+  <text class="hook-desc" x="36" y="448">MCP output compression above 10.5 KB</text>
+</g>
+
+<!-- tool-error -->
+<g class="card-group c9">
+  <rect class="card" x="370" y="402" width="330" height="66" rx="6"/>
+  <rect class="accent" x="371" y="408" width="2.5" height="54" rx="1.25" fill="#3fb950"/>
+  <text class="hook-name" x="386" y="426">tool-error</text>
+  <text class="hook-event" fill="#3fb950" x="686" y="426" text-anchor="end">ToolUseFailure</text>
+  <text class="hook-desc" x="386" y="448">Error logging with recovery hints</text>
+</g>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- LIFECYCLE                                  -->
+<!-- ═══════════════════════════════════════════ -->
+<g class="cat-group cat-3">
+  <text x="24" y="506" class="cat-label" fill="#2ea68f">LIFECYCLE</text>
+  <text x="696" y="506" class="cat-count" text-anchor="end">5 hooks</text>
+  <line x1="24" y1="514" x2="696" y2="514" stroke="#2ea68f" stroke-opacity="0.25" stroke-width="1"/>
+</g>
+
+<!-- session-start -->
+<g class="card-group c10">
+  <rect class="card" x="20" y="524" width="330" height="66" rx="6"/>
+  <rect class="accent" x="21" y="530" width="2.5" height="54" rx="1.25" fill="#2ea68f"/>
+  <text class="hook-name" x="36" y="548">session-start</text>
+  <text class="hook-event" fill="#2ea68f" x="336" y="548" text-anchor="end">SessionStart</text>
+  <text class="hook-desc" x="36" y="570">Init timing · budgets · event markers</text>
+</g>
+
+<!-- session-end -->
+<g class="card-group c11">
+  <rect class="card" x="370" y="524" width="330" height="66" rx="6"/>
+  <rect class="accent" x="371" y="530" width="2.5" height="54" rx="1.25" fill="#2ea68f"/>
+  <text class="hook-name" x="386" y="548">session-end</text>
+  <text class="hook-event" fill="#2ea68f" x="686" y="548" text-anchor="end">SessionEnd</text>
+  <text class="hook-desc" x="386" y="570">Duration · budget deltas · OTLP span · cleanup</text>
+</g>
+
+<!-- stop -->
+<g class="card-group c12">
+  <rect class="card" x="20" y="600" width="330" height="66" rx="6"/>
+  <rect class="accent" x="21" y="606" width="2.5" height="54" rx="1.25" fill="#2ea68f"/>
+  <text class="hook-name" x="36" y="624">stop</text>
+  <text class="hook-event" fill="#2ea68f" x="336" y="624" text-anchor="end">Stop</text>
+  <text class="hook-desc" x="36" y="646">Log session stop events with duration</text>
+</g>
+
+<!-- subagent-start -->
+<g class="card-group c13">
+  <rect class="card" x="370" y="600" width="330" height="66" rx="6"/>
+  <rect class="accent" x="371" y="606" width="2.5" height="54" rx="1.25" fill="#2ea68f"/>
+  <text class="hook-name" x="386" y="624">subagent-start</text>
+  <text class="hook-event" fill="#2ea68f" x="686" y="624" text-anchor="end">SubagentStart</text>
+  <text class="hook-desc" x="386" y="646">Budget limits · cross-process tracking · guidance</text>
+</g>
+
+<!-- subagent-stop -->
+<g class="card-group c14">
+  <rect class="card" x="20" y="676" width="680" height="66" rx="6"/>
+  <rect class="accent" x="21" y="682" width="2.5" height="54" rx="1.25" fill="#2ea68f"/>
+  <text class="hook-name" x="36" y="700">subagent-stop</text>
+  <text class="hook-event" fill="#2ea68f" x="686" y="700" text-anchor="end">SubagentStop</text>
+  <text class="hook-desc" x="36" y="722">Budget reclaim · subagent duration metrics</text>
+</g>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- OBSERVATION                                -->
+<!-- ═══════════════════════════════════════════ -->
+<g class="cat-group cat-4">
+  <text x="24" y="780" class="cat-label" fill="#58a6ff">OBSERVATION</text>
+  <text x="696" y="780" class="cat-count" text-anchor="end">1 hook</text>
+  <line x1="24" y1="788" x2="696" y2="788" stroke="#58a6ff" stroke-opacity="0.25" stroke-width="1"/>
+</g>
+
+<!-- statusline.sh -->
+<g class="card-group c15">
+  <rect class="card" x="20" y="798" width="680" height="66" rx="6"/>
+  <rect class="accent" x="21" y="804" width="2.5" height="54" rx="1.25" fill="#58a6ff"/>
+  <text class="hook-name" x="36" y="822">statusline.sh</text>
+  <text class="hook-event" fill="#58a6ff" x="686" y="822" text-anchor="end">StatusLine</text>
+  <text class="hook-desc" x="36" y="844">Context % · I/O tokens · cache · tools · budget</text>
+</g>
+
+</svg>
