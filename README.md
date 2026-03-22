@@ -31,7 +31,7 @@
 
 [![version][badge-version]][releases] [![license][badge-license]][license-file] [![platform][badge-platform]][repo]
 
-Token-saving hooks + observability for [Claude Code][claude-code]. Prevents verbose output, blocks binary reads, enforces subagent budgets, truncates large outputs, and provides a rich statusline &mdash; saving thousands of tokens per session.
+<ruby>claude-warden<rp>(</rp><rt>token guardian</rt><rp>)</rp></ruby> is a hook system for [Claude Code][claude-code] that intercepts every tool call before and after execution. It silences verbose commands, compresses large outputs, blocks unsafe network calls, enforces subagent budgets, and surfaces a live statusline &mdash; saving <mark>tens of thousands of tokens per session</mark> with negligible added latency.
 
 ## ![lightning][icon-lightning] Quickstart
 
@@ -43,19 +43,27 @@ Token-saving hooks + observability for [Claude Code][claude-code]. Prevents verb
 3. Choose a profile when prompted (or pass `--profile standard`).
 4. Start a new Claude Code session. Hooks run automatically.
 
-Dry-run (no changes to `~/.claude/`):
+> [!TIP]
+> Run `./install.sh --dry-run` first to preview every change before anything touches `~/.claude/`.
 
 ```bash
 ./install.sh --dry-run
 ```
 
+## ![monitor][icon-monitor] Demo Assets
+
+Source demos live in [`demo/README.md`](demo/README.md). The repo includes VHS tapes for the main product walkthrough and the installer walkthrough, plus helper scripts for deterministic rendering.
+
 ## ![stack][icon-stack] Architecture
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/architecture-light.png">
-  <img alt="Architecture: claude-warden hooks intercept tool calls for token governance and observability" src="assets/architecture-dark.png" width="800">
-</picture>
+<figure>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/architecture-light.png">
+    <img alt="3D architecture: Claude Code → Hook Membrane (bash) → warden-collector (Go) → SQLite + OTLP, with colored data-flow connectors" src="assets/architecture-dark.png" width="840">
+  </picture>
+  <figcaption>Three-layer architecture: <strong>Claude Code</strong> tool calls pass through the <strong>Hook Membrane</strong> (bash enforcement) into the <strong>warden-collector</strong> Go backbone, which stores spans in <abbr title="Write-Ahead Log">WAL</abbr>-mode SQLite and enforces subagent budgets via sub-millisecond <code>stat()</code> checks. Native <abbr title="OpenTelemetry Protocol">OTLP</abbr> telemetry flows directly from Claude Code to the collector on <code>:4319</code>.</figcaption>
+</figure>
 
 ## ![shield][icon-shield] What it does
 
@@ -83,13 +91,24 @@ claude-warden installs a set of shell hooks that intercept Claude Code tool call
 
 ### Hook lifecycle
 
-```
-SessionStart ──> PreToolUse ──> [tool executes] ──> PostToolUse ──> SessionEnd
-                      │                                  │
-                      ├─ pre-tool-use (all tools)        ├─ post-tool-use (all tools)
-                      └─ read-guard (Read only)          └─ read-compress (Read only)
+```mermaid
+flowchart LR
+    SS([SessionStart]) --> PTU
+    subgraph turn ["Per-turn"]
+        direction LR
+        PTU[PreToolUse\npre-tool-use\nread-guard] --> EX[[tool executes]]
+        EX --> POTU[PostToolUse\npost-tool-use\nread-compress\nmcp-output-compress]
+    end
+    POTU --> SE([SessionEnd])
+    CC([ConfigChange]) --> CCH[config-change\nguardrail lock]
 
-ConfigChange ──> config-change (blocks disableAllHooks / hook tampering)
+    style SS fill:#2ea68f,color:#fff,stroke:none
+    style SE fill:#2ea68f,color:#fff,stroke:none
+    style PTU fill:#d29922,color:#0d1117,stroke:none
+    style EX  fill:#58a6ff,color:#0d1117,stroke:none
+    style POTU fill:#3fb950,color:#0d1117,stroke:none
+    style CC  fill:#f85149,color:#fff,stroke:none
+    style CCH fill:#f85149,color:#fff,stroke:none
 ```
 
 ## ![wrench][icon-wrench] Requirements
@@ -136,7 +155,7 @@ The installer applies a configuration profile that sets token limits, tool permi
 | Profile | What it sets |
 |---|---|
 | `minimal` | Hooks only. No env or permission changes. For users who manage `settings.json` themselves. |
-| `standard` | Token/output limits, <abbr title="OpenTelemetry">OTEL</abbr> monitoring, 40 safe tool permissions (read-only git, search, inspection). <strong>Recommended.</strong> |
+| `standard` | Token/output limits, <abbr title="OpenTelemetry">OTEL</abbr> monitoring, 40 safe tool permissions (read-only git, search, inspection). <mark><strong>Recommended.</strong></mark> |
 | `strict` | ~40% tighter limits across the board. Fewer pre-approved tools (19). Lower subagent budgets. |
 
 ```bash
@@ -534,9 +553,12 @@ cat demo/mock-inputs/post-tool-use-reminder-bash.json | hooks/post-tool-use | jq
 <details>
 <summary>Hooks don&rsquo;t seem to run</summary>
 
-1. Confirm `~/.claude/settings.json` contains the `hooks` configuration (install merges `settings.hooks.json`).
-2. Start a fresh Claude Code session after installing.
-3. If a command is in your `permissions.allow` list, it will not reach the `permission-request` hook.
+1. Confirm <code>~/.claude/settings.json</code> contains the <code>hooks</code> key (install merges <code>settings.hooks.json</code> into it).
+2. Start a <strong>fresh</strong> Claude Code session &mdash; hooks load at startup, not mid-session.
+3. If a command appears in your <code>permissions.allow</code> list, it bypasses the <code>permission-request</code> hook entirely.
+
+> [!NOTE]
+> Run `jq '.hooks | keys' ~/.claude/settings.json` to verify the hook keys are present.
 
 </details>
 
@@ -569,7 +591,7 @@ Claude Code gates hook execution on <em>workspace trust</em>. A workspace is tru
 Skipping PreToolUse:Bash hook execution - workspace trust not accepted
 ```
 
-**Fix**: create a `CLAUDE.md` in the project root. Claude Code will prompt you to accept it on the next session start. Once accepted, all hooks fire normally.
+**Fix**: create a `CLAUDE.md` in the project root (contents can be a single comment). Claude Code will prompt you to accept it on the next session start &mdash; press <kbd>Enter</kbd> to trust it. Once accepted, all hooks fire normally.
 
 > [!NOTE]
 > This is a Claude Code behavior, not a warden limitation. Even user-global hooks in `~/.claude/settings.json` are gated by per-workspace trust.

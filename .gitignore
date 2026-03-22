@@ -40,7 +40,12 @@ tests/verbosity/results.txt
 
 # Demo artifacts
 demo/claude-warden-demo.mp4
+demo/install.gif
+demo/install.mp4
 demo/mock-inputs/pre-tool-use-write-large.json
+
+# Manim render cache (SVG/TeX/image fragments generated during rendering)
+demo/manim/media/
 
 # Go build artifacts
 collector/collector
