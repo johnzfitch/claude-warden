@@ -145,12 +145,12 @@ class _WardenArch(ThreeDScene):
 
         # ── Layers ───────────────────────────────────────────────────────────
         specs = [
-            dict(z=Z[0], color=p["green"], title="warden-collector  (Go)",
-                 chips=["SQLite WAL", "OTLP :4319", "collector.sock", "budget-deny"]),
-            dict(z=Z[1], color=p["amber"], title="Hook Membrane  (bash)",
-                 chips=["pre-tool-use", "post-tool-use", "read-guard", "config-change"]),
-            dict(z=Z[2], color=p["blue"],  title="Claude Code",
-                 chips=["tool calls", "conversation", "OTLP telemetry", "statusline.sh"]),
+            dict(z=Z[0], color=p["green"], title="⊕  warden-collector  (Go)",
+                 chips=["◉ SQLite WAL", "→ OTLP :4319", "⊙ collector.sock", "⊗ budget-deny"]),
+            dict(z=Z[1], color=p["amber"], title="⚓  Hook Membrane  (bash)",
+                 chips=["⚙ pre-tool-use", "◎ post-tool-use", "⊞ read-guard", "▲ config-change"]),
+            dict(z=Z[2], color=p["blue"],  title="◈  Claude Code",
+                 chips=["▶ tool calls", "≈ conversation", "→ OTLP telemetry", "◎ statusline.sh"]),
         ]
 
         for s in specs:
@@ -254,11 +254,11 @@ class WardenPipelineFlow(Scene):
     def construct(self):
         self.camera.background_color = D_BG
 
-        # ── Stage boxes ───────────────────────────────────────────────────────
+        # ── Stage boxes (icons: ⚙ intercept · ▶ execute · ◎ observe) ──────────
         stage_data = [
-            ("PreToolUse", D_AMBER),
-            ("Execute", D_BLUE),
-            ("PostToolUse", D_GREEN),
+            ("⚙  PreToolUse", D_AMBER),
+            ("▶  Execute",    D_BLUE),
+            ("◎  PostToolUse", D_GREEN),
         ]
         boxes, labels = VGroup(), VGroup()
         for name, color in stage_data:
@@ -288,14 +288,14 @@ class WardenPipelineFlow(Scene):
 
         self.play(
             LaggedStart(*[Create(b) for b in boxes], lag_ratio=0.18),
-            run_time=0.9,
+            run_time=1.35,  # ×1.5
         )
         self.play(
             LaggedStart(*[Write(lbl) for lbl in labels], lag_ratio=0.18),
             LaggedStart(*[GrowArrow(c) for c in connectors], lag_ratio=0.25),
-            run_time=0.7,
+            run_time=1.05,  # ×1.5
         )
-        self.wait(0.3)
+        self.wait(0.45)
 
         # ── Token counter (top-right, persistent) ─────────────────────────────
         saved_val = ValueTracker(0)
@@ -329,30 +329,30 @@ class WardenPipelineFlow(Scene):
 
         call = _data_rect("npm install", D_TEXT)
         call.next_to(boxes[0], LEFT, buff=1.6)
-        self.play(FadeIn(call, shift=RIGHT * 0.4), run_time=0.4)
+        self.play(FadeIn(call, shift=RIGHT * 0.4), run_time=0.60)  # ×1.5
 
-        # ── ACT 1: PreToolUse — inject --silent ────────────────────────────────
-        self.play(call.animate.move_to(boxes[0].get_center()), run_time=0.55)
+        # ── ACT 1: ⚙ PreToolUse — inject --silent ─────────────────────────────
+        self.play(call.animate.move_to(boxes[0].get_center()), run_time=0.83)  # ×1.5
         flash_pre = boxes[0].copy().set_stroke(D_AMBER, width=7)
-        self.play(Create(flash_pre), run_time=0.18)
+        self.play(Create(flash_pre), run_time=0.27)  # ×1.5
 
-        inject_tag = Text("+ --silent", font=MONO, font_size=15, color=D_AMBER)
+        inject_tag = Text("⚙ + --silent", font=MONO, font_size=15, color=D_AMBER)
         inject_tag.next_to(boxes[0], UP, buff=0.35)
-        self.play(Write(inject_tag), run_time=0.35)
+        self.play(Write(inject_tag), run_time=0.53)  # ×1.5
 
         call_mod = _data_rect("npm install --silent", D_AMBER)
         call_mod.move_to(boxes[0].get_center())
         self.play(
             ReplacementTransform(call, call_mod),
             FadeOut(flash_pre),
-            run_time=0.45,
+            run_time=0.68,  # ×1.5
         )
-        self.wait(0.25)
+        self.wait(0.38)
 
-        # ── ACT 2: Execute — large output erupts ──────────────────────────────
-        self.play(call_mod.animate.move_to(boxes[1].get_center()), run_time=0.55)
+        # ── ACT 2: ▶ Execute — large output erupts ────────────────────────────
+        self.play(call_mod.animate.move_to(boxes[1].get_center()), run_time=0.83)  # ×1.5
         exec_flash = boxes[1].copy().set_stroke(D_BLUE, width=7)
-        self.play(Create(exec_flash), FadeOut(exec_flash), run_time=0.35)
+        self.play(Create(exec_flash), FadeOut(exec_flash), run_time=0.53)  # ×1.5
 
         spam_lines = [
             "npm warn deprecated @babel/plugin@7.x",
@@ -377,19 +377,19 @@ class WardenPipelineFlow(Scene):
         self.play(
             ReplacementTransform(call_mod, big_out),
             LaggedStart(*[FadeIn(n, shift=UP * 0.08) for n in noise], lag_ratio=0.07),
-            run_time=0.8,
+            run_time=1.20,  # ×1.5
         )
-        self.wait(0.3)
+        self.wait(0.45)
 
-        # ── ACT 3: PostToolUse — compress to 3 lines ──────────────────────────
+        # ── ACT 3: ◎ PostToolUse — compress to 3 lines ────────────────────────
         self.play(
             big_out.animate.move_to(boxes[2].get_center()),
             noise.animate.move_to(boxes[2].get_center()).set_opacity(0.2),
-            run_time=0.55,
+            run_time=0.83,  # ×1.5
         )
-        compress_tag = Text("truncate + strip noise", font=MONO, font_size=15, color=D_GREEN)
+        compress_tag = Text("◎ truncate + strip noise", font=MONO, font_size=15, color=D_GREEN)
         compress_tag.next_to(boxes[2], UP, buff=0.35)
-        self.play(Write(compress_tag), run_time=0.35)
+        self.play(Write(compress_tag), run_time=0.53)  # ×1.5
 
         small_out = _data_rect(
             "added 1,247 packages in 45s\n[warden: ran with --silent]",
@@ -399,12 +399,12 @@ class WardenPipelineFlow(Scene):
         self.play(
             ReplacementTransform(big_out, small_out),
             FadeOut(noise),
-            run_time=0.55,
+            run_time=0.83,  # ×1.5
         )
 
         # Token counter climbs
-        self.play(saved_val.animate.set_value(30_880), run_time=1.4, rate_func=rush_from)
-        self.wait(0.3)
+        self.play(saved_val.animate.set_value(30_880), run_time=2.10, rate_func=rush_from)  # ×1.5
+        self.wait(0.45)
 
         # ── Clean up stages, show final stat ─────────────────────────────────
         result_arrow = Arrow(
@@ -414,14 +414,14 @@ class WardenPipelineFlow(Scene):
         )
         conv_label = Text("model sees this", font=MONO, font_size=14, color=D_TEXT)
         conv_label.next_to(result_arrow, RIGHT, buff=0.15)
-        self.play(GrowArrow(result_arrow), FadeIn(conv_label), run_time=0.4)
+        self.play(GrowArrow(result_arrow), FadeIn(conv_label), run_time=0.60)  # ×1.5
 
-        self.wait(0.4)
+        self.wait(0.60)
         self.play(
             FadeOut(boxes), FadeOut(labels), FadeOut(connectors),
             FadeOut(inject_tag), FadeOut(compress_tag),
             FadeOut(small_out), FadeOut(result_arrow), FadeOut(conv_label),
-            run_time=0.5,
+            run_time=0.75,  # ×1.5
         )
 
         # Finale
@@ -429,9 +429,9 @@ class WardenPipelineFlow(Scene):
         pct.move_to(ORIGIN + UP * 0.5)
         sub = Text("per verbose install call", font=MONO, font_size=22, color=D_GRAY)
         sub.next_to(pct, DOWN, buff=0.3)
-        self.play(Write(pct), run_time=0.8)
-        self.play(FadeIn(sub, shift=UP * 0.15), run_time=0.4)
-        self.wait(1.5)
+        self.play(Write(pct), run_time=1.20)  # ×1.5
+        self.play(FadeIn(sub, shift=UP * 0.15), run_time=0.60)  # ×1.5
+        self.wait(2.25)  # ×1.5
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -450,12 +450,12 @@ class WardenSystemOverview(ThreeDScene):
     W, H = 9.4, 2.0
     Z_LAYERS = [0.0, 3.6, 7.2]
     LAYER_SPECS = [
-        dict(color=D_GREEN, title="warden-collector",
-             chips=["SQLite WAL", "OTLP :4319", "UDS", "budget-deny"]),
-        dict(color=D_AMBER, title="Hook Membrane",
-             chips=["pre-tool-use", "post-tool-use", "read-guard", "config-change"]),
-        dict(color=D_BLUE,  title="Claude Code",
-             chips=["tool calls", "conversation", "OTLP", "statusline"]),
+        dict(color=D_GREEN, title="⊕  warden-collector",
+             chips=["◉ SQLite WAL", "→ OTLP :4319", "⊙ UDS", "⊗ budget-deny"]),
+        dict(color=D_AMBER, title="⚓  Hook Membrane",
+             chips=["⚙ pre-tool-use", "◎ post-tool-use", "⊞ read-guard", "▲ config-change"]),
+        dict(color=D_BLUE,  title="◈  Claude Code",
+             chips=["▶ tool calls", "≈ conversation", "→ OTLP", "◎ statusline"]),
     ]
 
     def construct(self):
