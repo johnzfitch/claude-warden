@@ -351,14 +351,14 @@ if [ -n "$SESSION_ID" ] && [ -S "$COLLECTOR_SOCK" ]; then
     if [ -n "$COLLECTOR_JSON" ]; then
         # Extract all useful fields in one jq call
         eval "$(printf '%s' "$COLLECTOR_JSON" | jq -r '
-            "COLLECTOR_PCT=\(.used_pct // "")",
-            "COLLECTOR_MODEL=\(.model // "")",
-            "COLLECTOR_TOOL_COUNT=\(.tool_count // 0)",
-            "COLLECTOR_SUBAGENT_COUNT=\(.subagent_count // 0)",
-            "COLLECTOR_LAST_TOOL=\(.last_tool // "")",
-            "COLLECTOR_LAST_TOOL_MS=\(.last_tool_duration_ms // "")",
-            "COLLECTOR_CACHE_HIT=\(.cache_hit_rate // "")",
-            "COLLECTOR_COMPACT_PCT=\(.compact_threshold_pct // 85)"
+            "COLLECTOR_PCT=\(.used_pct // "" | @sh)",
+            "COLLECTOR_MODEL=\(.model // "" | @sh)",
+            "COLLECTOR_TOOL_COUNT=\(.tool_count // 0 | @sh)",
+            "COLLECTOR_SUBAGENT_COUNT=\(.subagent_count // 0 | @sh)",
+            "COLLECTOR_LAST_TOOL=\(.last_tool // "" | @sh)",
+            "COLLECTOR_LAST_TOOL_MS=\(.last_tool_duration_ms // "" | @sh)",
+            "COLLECTOR_CACHE_HIT=\(.cache_hit_rate // "" | @sh)",
+            "COLLECTOR_COMPACT_PCT=\(.compact_threshold_pct // 85 | @sh)"
         ' 2>/dev/null)" || true
     fi
 fi
@@ -496,11 +496,13 @@ fi
 # 4. Raw statusline JSON model as the last fallback
 if [ -n "$COLLECTOR_MODEL" ]; then
     MODEL="$COLLECTOR_MODEL"
+elif [ -n "$STARTUP_MODEL" ]; then
+    # Startup snapshot is written fresh on every session-start — prefer it
+    # over stale cache (which may carry a model from a previous resume)
+    MODEL="$STARTUP_MODEL"
 elif [ "$SAME_SESSION" -eq 1 ] && [ -n "$PREV_MODEL" ] \
     && [ "$TOTAL" -eq "$PREV_TOTAL" ] && [ "$COST_USD" = "$PREV_COST_USD" ]; then
     MODEL="$PREV_MODEL"
-elif [ -n "$STARTUP_MODEL" ] && [ -z "$PREV_MODEL" ]; then
-    MODEL="$STARTUP_MODEL"
 fi
 
 # Token reset and context clear only valid within the same session.

@@ -67,12 +67,12 @@ render_manim_scene() {
 
     if [[ -z "$scene" ]]; then
         printf 'Usage: %s manim <file.py> <SceneName> [quality] [max_mb]\n' "$0" >&2
-        exit 1
+        return 1
     fi
 
     if [[ ! -f "$file" ]]; then
         printf 'Manim source not found: %s\n' "$file" >&2
-        exit 1
+        return 1
     fi
 
     base_name="$(basename "${file%.py}")"
@@ -88,7 +88,7 @@ render_manim_scene() {
     rendered_mp4="$(find "$tmp_media" -type f -name "$stem.mp4" | head -n 1)"
     if [[ -z "$rendered_mp4" ]]; then
         printf 'Could not locate rendered mp4 for %s\n' "$scene" >&2
-        exit 1
+        return 1
     fi
 
     export_mp4="$export_dir/$stem.mp4"

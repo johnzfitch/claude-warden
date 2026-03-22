@@ -612,6 +612,9 @@ EOF
     [[ -S "$COLLECTOR_SOCK" ]] && break
     sleep 0.05
   done
+  if [[ ! -S "$COLLECTOR_SOCK" ]]; then
+    fail "collector socket '$COLLECTOR_SOCK' not created in time"
+  fi
   collector_status="$(WARDEN_COLLECTOR_SOCK="$COLLECTOR_SOCK" WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$COLLECTOR_FIXTURE")"
   collector_status_plain="$(LC_ALL=C printf '%s' "$collector_status" | sed $'s/\033\\[[0-9;]*m//g')"
   assert_contains "$collector_status_plain" "Sonnet 4.6" "statusline collector model priority"

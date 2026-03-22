@@ -178,13 +178,14 @@ if command -v pngquant >/dev/null 2>&1; then
 fi
 
 probe_json=$(ffprobe -v error \
-    -show_entries stream=width,height,r_frame_rate \
+    -show_entries stream=width,height,r_frame_rate,codec_type \
     -show_entries format=duration \
     -of json "$input")
 
-src_width=$(printf '%s' "$probe_json" | jq -r '.streams[0].width')
-src_height=$(printf '%s' "$probe_json" | jq -r '.streams[0].height')
-src_fps_expr=$(printf '%s' "$probe_json" | jq -r '.streams[0].r_frame_rate')
+# Select the first video stream (not audio/subtitle) for dimensions
+src_width=$(printf '%s' "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].width')
+src_height=$(printf '%s' "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].height')
+src_fps_expr=$(printf '%s' "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].r_frame_rate')
 duration=$(printf '%s' "$probe_json" | jq -r '.format.duration | tonumber')
 
 [[ "$src_width" != "null" && "$src_height" != "null" ]] || {
