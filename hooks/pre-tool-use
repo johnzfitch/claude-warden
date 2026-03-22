@@ -136,9 +136,41 @@ esac
 # ==========================================================================
 
 # === CRITICAL DENY RULES (must enforce even in non-interactive -p mode) ===
-# Destructive: mkfs, dd, chmod/chown recursive. rm -rf is handled by
-# the PermissionRequest hook with file-count awareness.
 NORM_CMD=$(echo "$COMMAND" | tr -s '[:space:]' ' ')
+
+# rm -rf: file-count aware. Dangerous targets always denied, small dirs
+# prompt the user via "ask", large dirs (>=10 files) auto-denied.
+if [[ "$NORM_CMD" =~ rm[[:space:]]+-[rf]+[[:space:]] ]]; then
+    # Always deny: root, home, cwd, glob, --no-preserve-root
+    case "$NORM_CMD" in
+        *"rm -rf /"[!a-zA-Z0-9_.]*|*"rm -fr /"[!a-zA-Z0-9_.]*|\
+        *"rm -rf /"$|*"rm -fr /"$|\
+        *"rm -rf ~"*|*"rm -fr ~"*|\
+        *"rm -rf ."*|*"rm -fr ."*|\
+        *"rm -rf *"*|*"rm -fr *"*|\
+        *"rm -rf --no-preserve-root"*|\
+        *"rm --recursive --force"*|*"rm --force --recursive"*)
+            _warden_emit_block "destructive_cmd" 0; _warden_deny "Blocked: targets root, home, or cwd" ;;
+    esac
+    # Extract target path and check file count
+    if [[ "$NORM_CMD" =~ rm[[:space:]]+-[rf]+[[:space:]]+([^[:space:];\&\|]+) ]]; then
+        _RM_TARGET="${BASH_REMATCH[1]}"
+        _RM_TARGET="${_RM_TARGET#\"}" ; _RM_TARGET="${_RM_TARGET%\"}"
+        _RM_TARGET="${_RM_TARGET#\'}" ; _RM_TARGET="${_RM_TARGET%\'}"
+        if [[ -d "$_RM_TARGET" ]]; then
+            _FC=$(find -P "$_RM_TARGET" -maxdepth 3 -type f 2>/dev/null | head -11 | wc -l)
+            if (( _FC >= 10 )); then
+                _warden_emit_block "destructive_cmd" 0
+                _warden_deny "Blocked: directory has ${_FC}+ files"
+            fi
+            # < 10 files: ask the user
+            printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"rm -rf on %s (%d files)"}}\n' "$_RM_TARGET" "$_FC"
+            exit 0
+        fi
+    fi
+fi
+
+# Destructive: disk formatting, device writes, recursive permission changes
 case "$NORM_CMD" in
     *"mkfs"*|*"dd if="*|*"dd of=/dev/"*|\
     *"> /dev/sd"*|*"> /dev/nvme"*|\

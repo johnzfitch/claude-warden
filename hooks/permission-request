@@ -17,39 +17,6 @@ IFS=$'\t' read -r COMMAND < <(_warden_parse_tool_input command)
 # Normalize whitespace for matching (collapse runs, trim)
 NORM_CMD=$(echo "$COMMAND" | tr -s '[:space:]' ' ')
 
-# === RM -RF: file-count aware ===
-# Dangerous targets (/, ~, ., *) are always denied. Named paths with
-# <= 10 files are auto-allowed. Larger dirs show the permission dialog.
-if [[ "$NORM_CMD" =~ rm[[:space:]]+-[rf]+[[:space:]] ]]; then
-    # Always deny: root, home, cwd, glob, --no-preserve-root
-    case "$NORM_CMD" in
-        *"rm -rf /"[!a-zA-Z0-9_.]*|*"rm -fr /"[!a-zA-Z0-9_.]*|\
-        *"rm -rf /"$|*"rm -fr /"$|\
-        *"rm -rf ~"*|*"rm -fr ~"*|\
-        *"rm -rf ."*|*"rm -fr ."*|\
-        *"rm -rf *"*|*"rm -fr *"*|\
-        *"rm -rf --no-preserve-root"*|\
-        *"rm --recursive --force"*|*"rm --force --recursive"*)
-            printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Blocked: rm targets root, home, or cwd"}}}\n'
-            exit 0 ;;
-    esac
-    # Extract target path
-    if [[ "$NORM_CMD" =~ rm[[:space:]]+-[rf]+[[:space:]]+([^[:space:];\&\|]+) ]]; then
-        _RM_TARGET="${BASH_REMATCH[1]}"
-        _RM_TARGET="${_RM_TARGET#\"}" ; _RM_TARGET="${_RM_TARGET%\"}"
-        _RM_TARGET="${_RM_TARGET#\'}" ; _RM_TARGET="${_RM_TARGET%\'}"
-        if [[ -d "$_RM_TARGET" ]]; then
-            _FC=$(find -P "$_RM_TARGET" -maxdepth 3 -type f 2>/dev/null | head -11 | wc -l)
-            if (( _FC >= 10 )); then
-                printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Blocked: rm -rf targets directory with 10+ files"}}}\n'
-                exit 0
-            fi
-            # < 10 files: fall through to default (user decides via dialog)
-        fi
-        # Target doesn't exist or is a file -- fall through (user decides)
-    fi
-fi
-
 case "$NORM_CMD" in
     # Fork bombs (all spacing variants)
     *':(){:|:&};:'*|*':(){ :|:& };:'*|*':(){ :|:&};:'*)
