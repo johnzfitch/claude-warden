@@ -139,16 +139,17 @@ esac
 NORM_CMD=$(echo "$COMMAND" | tr -s '[:space:]' ' ')
 
 # rm -rf: deny critical paths unconditionally, deny 10+ file dirs
-if [[ "$NORM_CMD" =~ rm[[:space:]]+-[rf]+[[:space:]]+([^[:space:];\&\|]+) ]]; then
-    _RM_TARGET="${BASH_REMATCH[1]}"
+# Only match rm at command start or after a separator (not inside strings)
+if [[ "$NORM_CMD" =~ (^|[;\&\|])[[:space:]]*rm[[:space:]]+-[rf]+[[:space:]]+([^[:space:];\&\|]+) ]]; then
+    _RM_TARGET="${BASH_REMATCH[2]}"
     _RM_TARGET="${_RM_TARGET#\"}" ; _RM_TARGET="${_RM_TARGET%\"}"
     _RM_TARGET="${_RM_TARGET#\'}" ; _RM_TARGET="${_RM_TARGET%\'}"
     # Resolve to real path for comparison (catch symlinks, relative paths)
     _RM_REAL=$(realpath -q "$_RM_TARGET" 2>/dev/null || echo "$_RM_TARGET")
     case "$_RM_REAL" in
-        /|/home|/home/*|/root|/etc|/var|/usr|/boot|/sys|/proc)
+        /|/home|"$HOME"|/root|/etc|/var|/usr|/boot|/sys|/proc)
             _warden_emit_block "destructive_cmd" 0
-            _warden_deny "Blocked: rm -rf on critical path ($_RM_REAL)" ;;
+            _warden_deny "Blocked: recursive delete on critical path ($_RM_REAL)" ;;
     esac
     if [[ -d "$_RM_TARGET" ]]; then
         _FC=$(find -P "$_RM_TARGET" -maxdepth 3 -type f 2>/dev/null | head -11 | wc -l)
