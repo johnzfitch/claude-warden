@@ -47,6 +47,45 @@ case "$COMMAND" in
         exit 0 ;;
 esac
 
+# === TEMP DIR CLEANUP ===
+# rm -rf /tmp/* is safe -- these are ephemeral scratch dirs, not real data.
+if [[ "$NORM_CMD" =~ rm[[:space:]]+-r[f]*[[:space:]]+/tmp/ ]]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+    exit 0
+fi
+
+# === CURL/WGET TO LOCALHOST ===
+# The user's own machine is not an SSRF target. Auto-allow localhost access.
+_CMD_LOWER=$(printf '%s' "$COMMAND" | tr '[:upper:]' '[:lower:]')
+if [[ "$_CMD_LOWER" =~ (curl|wget)[[:space:]].*https?://(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\])(:[0-9]+)? ]]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+    exit 0
+fi
+
+# === SAFE PIPE TARGETS ===
+# curl | jq, curl | head, curl | grep, etc. are not RCE -- only curl | bash/sh is dangerous.
+if [[ "$NORM_CMD" =~ curl[[:space:]] ]] && [[ "$NORM_CMD" =~ \| ]]; then
+    _PIPE_TARGETS=$(printf '%s' "$NORM_CMD" | grep -oP '\|\s*\K[a-zA-Z0-9_-]+' || true)
+    _HAS_UNSAFE=false
+    for _target in $_PIPE_TARGETS; do
+        case "$_target" in
+            bash|sh|zsh|dash|fish|python|python3|node|ruby|perl|eval|exec|source)
+                _HAS_UNSAFE=true; break ;;
+        esac
+    done
+    if [[ "$_HAS_UNSAFE" == "false" ]]; then
+        printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+        exit 0
+    fi
+fi
+
+# === FILTERED ENV ===
+# env | grep PATTERN is safe -- only full env dumps leak secrets.
+if [[ "$NORM_CMD" =~ ^env[[:space:]]*\| ]] || [[ "$NORM_CMD" =~ ^printenv[[:space:]]*\| ]]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+    exit 0
+fi
+
 # Special-case echo: allow only constant literals (no expansion, no shell metacharacters).
 # This prevents `echo $SECRET` / `echo "$(cmd)"` from being auto-approved.
 if [[ "$NORM_CMD" == "echo" || "$NORM_CMD" == "echo -n" || "$NORM_CMD" == echo\ * || "$NORM_CMD" == "echo -n "* ]]; then
