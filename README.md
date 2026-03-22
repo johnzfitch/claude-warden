@@ -26,7 +26,7 @@
 [badge-platform]: https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey
 [releases]: https://github.com/johnzfitch/claude-warden/releases
 [license-file]: https://github.com/johnzfitch/claude-warden/blob/master/LICENSE
-![claude-warden](https://github.com/user-attachments/assets/9a9dc297-aa2a-468a-b468-a2ec3b0e6d22)
+![claude-warden](https://github.com/user-attachments/assets/f801bd2f-8945-4ba1-9e5d-ff2174cc3a83)
 # claude-warden
 
 [![version][badge-version]][releases] [![license][badge-license]][license-file] [![platform][badge-platform]][repo]
@@ -54,6 +54,26 @@
 
 Source demos live in [`demo/README.md`](demo/README.md). The repo includes VHS tapes for the main product walkthrough and the installer walkthrough, plus helper scripts for deterministic rendering.
 
+<details>
+<summary>More animations &mdash; TokenSavings, HookPipeline, WardenSystemOverview</summary>
+
+<figure>
+  <img alt="TokenSavings — token counter animation showing cumulative savings" src="https://github.com/user-attachments/assets/2dff7a67-7819-48a8-be33-4ec4988efefa" width="840">
+  <figcaption>Token savings counter &mdash; cumulative tokens saved as hooks intercept tool calls.</figcaption>
+</figure>
+
+<figure>
+  <img alt="HookPipeline — pipeline flow visualization" src="https://github.com/user-attachments/assets/60f1a9cc-19b5-4f92-88ed-24f7478a17dd" width="840">
+  <figcaption>Hook pipeline &mdash; tool calls flowing through the pre/post enforcement chain.</figcaption>
+</figure>
+
+<figure>
+  <img alt="WardenSystemOverview — orbital 3D camera showcase of the full three-layer system" src="https://github.com/user-attachments/assets/58fbf890-9e95-4693-80ed-2208daff5dd2" width="840">
+  <figcaption>System overview &mdash; orbital camera pass over the full three-layer architecture.</figcaption>
+</figure>
+
+</details>
+
 ## ![stack][icon-stack] Architecture
 
 <figure>
@@ -65,9 +85,16 @@ Source demos live in [`demo/README.md`](demo/README.md). The repo includes VHS t
   <figcaption>Three-layer architecture: <strong>Claude Code</strong> tool calls pass through the <strong>Hook Membrane</strong> (bash enforcement) into the <strong>warden-collector</strong> Go backbone, which stores spans in <abbr title="Write-Ahead Log">WAL</abbr>-mode SQLite and enforces subagent budgets via sub-millisecond <code>stat()</code> checks. Native <abbr title="OpenTelemetry Protocol">OTLP</abbr> telemetry flows directly from Claude Code to the collector on <code>:4319</code>.</figcaption>
 </figure>
 
+<figure>
+  <img alt="WardenPipelineFlow — animated token savings walkthrough showing data flowing through all three layers" src="https://github.com/user-attachments/assets/7baf19c2-91f4-45e9-84fe-76120db9a49b" width="840">
+  <figcaption>Token savings pipeline &mdash; tool calls enter the hook membrane, get silenced/compressed/blocked, and exit with dramatically fewer tokens.</figcaption>
+</figure>
+
 ## ![shield][icon-shield] What it does
 
 claude-warden installs a set of shell hooks that intercept Claude Code tool calls at every stage of execution. Each hook enforces token-efficient patterns and blocks common waste.
+
+<img alt="HookDimensions — 3D visualization of the hook enforcement layers" src="https://github.com/user-attachments/assets/d688ac7a-1e94-483e-af01-2dc08b15207e" width="840">
 
 ### Guard catalog
 
@@ -115,6 +142,11 @@ flowchart LR
     style CC  fill:#f85149,color:#fff,stroke:none
     style CCH fill:#f85149,color:#fff,stroke:none
 ```
+
+<figure>
+  <img alt="LifeOfAHook — animated walkthrough of a single hook intercepting, evaluating, and responding to a tool call" src="https://github.com/user-attachments/assets/fb7d9792-fd59-4323-a324-f510cb0fc298" width="840">
+  <figcaption>A single tool call enters the hook membrane, gets evaluated against guard rules, and exits with a decision.</figcaption>
+</figure>
 
 ## ![wrench][icon-wrench] Requirements
 
