@@ -136,33 +136,10 @@ esac
 # ==========================================================================
 
 # === CRITICAL DENY RULES (must enforce even in non-interactive -p mode) ===
-# Destructive: rm (root/home/cwd/glob), mkfs, dd, chmod/chown recursive
+# Destructive: mkfs, dd, chmod/chown recursive. rm -rf is handled by
+# the PermissionRequest hook with file-count awareness.
 NORM_CMD=$(echo "$COMMAND" | tr -s '[:space:]' ' ')
-
-# Small-directory exemption: rm -rf on a dir with <= 10 files defers to
-# PermissionRequest (the user decides) instead of a blanket deny.
-if [[ "$NORM_CMD" =~ rm[[:space:]]+-[rf]+[[:space:]]+([^[:space:];\&\|]+) ]]; then
-    _RM_TARGET="${BASH_REMATCH[1]}"
-    # Strip quotes the model might wrap around the path
-    _RM_TARGET="${_RM_TARGET#\"}"
-    _RM_TARGET="${_RM_TARGET%\"}"
-    _RM_TARGET="${_RM_TARGET#\'}"
-    _RM_TARGET="${_RM_TARGET%\'}"
-    case "$_RM_TARGET" in
-        /|.|..|~|"") ;;  # never exempt root/cwd/home
-        *)
-            if [[ -d "$_RM_TARGET" ]]; then
-                _FC=$(find -P "$_RM_TARGET" -maxdepth 3 -type f 2>/dev/null | head -11 | wc -l)
-                (( _FC <= 10 )) && _warden_suppress_ok
-            fi ;;
-    esac
-fi
-
 case "$NORM_CMD" in
-    *"rm -rf /"*|*"rm -fr /"*|*"rm -rf ~"*|*"rm -fr ~"*|\
-    *"rm -rf ."*|*"rm -fr ."*|*"rm -rf *"*|*"rm -fr *"*|\
-    *"rm --recursive --force"*|*"rm --force --recursive"*|\
-    *"rm -rf --no-preserve-root"*|\
     *"mkfs"*|*"dd if="*|*"dd of=/dev/"*|\
     *"> /dev/sd"*|*"> /dev/nvme"*|\
     *"chmod -R 777 /"*|*"chown -R"*|*"chown --recursive"*)
