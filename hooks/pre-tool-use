@@ -145,7 +145,7 @@ if [[ "$NORM_CMD" =~ (^|[;\&\|])[[:space:]]*rm[[:space:]]+-[rf]+[[:space:]]+([^[
     _RM_TARGET="${_RM_TARGET#\"}" ; _RM_TARGET="${_RM_TARGET%\"}"
     _RM_TARGET="${_RM_TARGET#\'}" ; _RM_TARGET="${_RM_TARGET%\'}"
     # Resolve to real path for comparison (catch symlinks, relative paths)
-    _RM_REAL=$(realpath -q "$_RM_TARGET" 2>/dev/null || echo "$_RM_TARGET")
+    _RM_REAL=$(_warden_realpath "$_RM_TARGET")
     case "$_RM_REAL" in
         /|/home|"$HOME"|/root|/etc|/var|/usr|/boot|/sys|/proc)
             _warden_emit_block "destructive_cmd" 0

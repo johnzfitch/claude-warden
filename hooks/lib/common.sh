@@ -59,6 +59,20 @@ _warden_date_iso() {
     fi
 }
 
+# Cross-platform realpath with tilde expansion
+# macOS lacks realpath; readlink -f may also be absent. Fallback: cd + pwd -P.
+_warden_realpath() {
+    local path="$1"
+    case "$path" in
+        '~')   path="$HOME" ;;
+        '~/'*) path="$HOME/${path:2}" ;;
+    esac
+    realpath -q "$path" 2>/dev/null \
+        || readlink -f "$path" 2>/dev/null \
+        || (cd "$(dirname "$path")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$path")") \
+        || printf '%s' "$path"
+}
+
 # Cross-platform md5 hash (returns 32 hex chars on stdout)
 _warden_md5() {
     if command -v md5sum &>/dev/null; then
