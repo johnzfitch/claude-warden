@@ -623,6 +623,26 @@ _warden_emit_output_size() {
 # ==============================================================================
 # SYSTEM REMINDER STRIPPING
 # ==============================================================================
+# POST-TOOL-USE OUTPUT EXTRACTION
+# ==============================================================================
+
+# Extract tool output text from PostToolUse payload.
+# Handles both known response structures:
+#   - Object with content array: .tool_response.content[0].text
+#   - Direct string: .tool_response (string)
+# Usage: OUTPUT=$(_warden_extract_output)
+# Reads from WARDEN_INPUT (must be set). Returns text on stdout.
+_warden_extract_output() {
+    printf '%s' "$WARDEN_INPUT" | jq -r '
+        .tool_response // "" |
+        if type == "string" then .
+        elif type == "object" then (.content[0].text // "")
+        else ""
+        end
+    ' 2>/dev/null
+}
+
+# ==============================================================================
 
 # Strip <system-reminder> blocks from text
 # Usage: _warden_strip_reminders VAR_NAME
