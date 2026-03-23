@@ -197,6 +197,10 @@ func (h *OTLPHandler) HandleTraces(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	spanCount, llmCount := h.processSpans(ctx, &req)
 
+	if err := forwardOTLP(ctx, "/v1/traces", ct, body); err != nil {
+		slog.Debug("traces forward skipped", "err", err)
+	}
+
 	slog.Debug("traces received", "spans", spanCount, "llm_requests", llmCount)
 
 	// OTLP success response
@@ -300,26 +304,48 @@ func (h *OTLPHandler) processMetrics(ctx context.Context, req *ExportMetricsRequ
 				dataPoints := metricDataPoints(metric)
 				points += len(dataPoints)
 
-				if metric.Name != "claude_code_cost_usage_USD_total" {
-					continue
-				}
-
-				for _, dp := range dataPoints {
-					dpAttrs := attrMap(dp.Attributes)
-					sessionID := resourceSessionID
-					if kv, ok := dpAttrs["session.id"]; ok && kv.StringVal() != "" {
-						sessionID = kv.StringVal()
-					}
-					if sessionID == "" {
-						continue
+				switch metric.Name {
+				case "claude_code_cost_usage_USD_total":
+					for _, dp := range dataPoints {
+						sessionID, model := metricSessionModel(dp, resourceSessionID)
+						if sessionID == "" {
+							continue
+						}
+						if err := h.store.UpsertSessionCost(ctx, sessionID, model, dp.FloatVal()); err != nil {
+							return points, err
+						}
 					}
 
-					model := ""
-					if kv, ok := dpAttrs["model"]; ok {
-						model = kv.StringVal()
+				case "claude_code_token_usage_tokens_total":
+					for _, dp := range dataPoints {
+						sessionID, model := metricSessionModel(dp, resourceSessionID)
+						if sessionID == "" {
+							continue
+						}
+						dpAttrs := attrMap(dp.Attributes)
+						tokenType := ""
+						if kv, ok := dpAttrs["type"]; ok {
+							tokenType = kv.StringVal()
+						}
+						tokens := int(dp.FloatVal())
+						if tokens <= 0 {
+							continue
+						}
+						contextWindow := contextWindowForModel(model)
+						if err := h.store.UpsertSessionTokens(ctx, sessionID, model, contextWindow, tokenType, tokens); err != nil {
+							return points, err
+						}
 					}
-					if err := h.store.UpsertSessionCost(ctx, sessionID, model, dp.FloatVal()); err != nil {
-						return points, err
+
+				case "claude_code_active_time_seconds_total":
+					for _, dp := range dataPoints {
+						sessionID, _ := metricSessionModel(dp, resourceSessionID)
+						if sessionID == "" {
+							continue
+						}
+						if err := h.store.UpsertSessionActiveTime(ctx, sessionID, dp.FloatVal()); err != nil {
+							slog.Debug("upsert active time failed", "err", err)
+						}
 					}
 				}
 			}
@@ -327,6 +353,20 @@ func (h *OTLPHandler) processMetrics(ctx context.Context, req *ExportMetricsRequ
 	}
 
 	return points, nil
+}
+
+// metricSessionModel extracts session_id and model from a metric data point,
+// falling back to the resource-level session_id.
+func metricSessionModel(dp NumberDataPoint, resourceSessionID string) (sessionID, model string) {
+	dpAttrs := attrMap(dp.Attributes)
+	sessionID = resourceSessionID
+	if kv, ok := dpAttrs["session.id"]; ok && kv.StringVal() != "" {
+		sessionID = kv.StringVal()
+	}
+	if kv, ok := dpAttrs["model"]; ok {
+		model = kv.StringVal()
+	}
+	return
 }
 
 func forwardOTLPEndpoint() string {

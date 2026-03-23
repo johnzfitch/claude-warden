@@ -339,15 +339,15 @@ assert_exit 0 "$rc" "pre-tool-use WebFetch private"
 assert_structured_deny "$out" "pre-tool-use WebFetch private"
 rm -f "$DENY_FIXTURE"
 
-echo "[tests] pre-tool-use (security: WebFetch localhost blocked)"
-DENY_FIXTURE="$(mktemp)"
-cat > "$DENY_FIXTURE" <<'JSON'
+echo "[tests] pre-tool-use (security: WebFetch localhost allowed — user decides via PermissionRequest)"
+ALLOW_FIXTURE="$(mktemp)"
+cat > "$ALLOW_FIXTURE" <<'JSON'
 {"tool_name":"WebFetch","tool_input":{"url":"http://localhost:3000/api/secrets"},"session_id":"demo-session","transcript_path":"/tmp/main.jsonl"}
 JSON
-IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$DENY_FIXTURE")
+IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$ALLOW_FIXTURE")
 assert_exit 0 "$rc" "pre-tool-use WebFetch localhost"
-assert_structured_deny "$out" "pre-tool-use WebFetch localhost"
-rm -f "$DENY_FIXTURE"
+assert_stdout_json_has "$out" '.suppressOutput == true' "pre-tool-use WebFetch localhost"
+rm -f "$ALLOW_FIXTURE"
 
 echo "[tests] pre-tool-use (security: Write to settings blocked)"
 DENY_FIXTURE="$(mktemp)"
@@ -359,18 +359,18 @@ assert_exit 0 "$rc" "pre-tool-use write settings"
 assert_structured_deny "$out" "pre-tool-use write settings"
 rm -f "$DENY_FIXTURE"
 
-echo "[tests] permission-request (deny: destructive)"
+echo "[tests] permission-request (deny: fork bomb)"
 PERM_DENY_FIXTURE="$(mktemp)"
 cat > "$PERM_DENY_FIXTURE" <<'JSON'
-{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}
+{"tool_name":"Bash","tool_input":{"command":":(){ :|:& };:"}}
 JSON
 out="$(mktemp)"; err="$(mktemp)"
 set +e
 cat "$PERM_DENY_FIXTURE" | "$ROOT_DIR/hooks/permission-request" >"$out" 2>"$err"
 rc=$?
 set -e
-assert_exit 0 "$rc" "permission-request deny destructive"
-assert_permission_deny "$out" "permission-request deny destructive"
+assert_exit 0 "$rc" "permission-request deny fork bomb"
+assert_permission_deny "$out" "permission-request deny fork bomb"
 rm -f "$PERM_DENY_FIXTURE" "$out" "$err"
 
 echo "[tests] read-guard (blocking)"
@@ -539,7 +539,7 @@ JSON
 
 printf '65|500000|Bash:rg|%s\n' "$(date +%s)" > "$HOME/.claude/.statusline/session-demo"
 printf '2029|Bash\n' > "$HOME/.claude/.statusline/latency-demo"
-printf '%s|prompt_input_exit|demo\n' "$(date +%s)" > "$HOME/.claude/.statusline/reset-reason"
+printf '%s|prompt_input_exit|demo\n' "$(date +%s)" > "$HOME/.claude/.statusline/reset-reason-demo"
 printf '1|5000|5.14\n' > "$HOME/.claude/.statusline/clears-demo"
 
 status_out="$(WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$STATUS_FIXTURE")"
@@ -598,7 +598,7 @@ if command -v socat >/dev/null 2>&1; then
   COLLECTOR_SOCK="$COLLECTOR_DIR/collector.sock"
   COLLECTOR_BODY_FILE="$(mktemp)"
   COLLECTOR_HANDLER="$(mktemp)"
-  printf '%s' '{"model":"claude-sonnet-4-6","used_pct":18.5,"tool_count":7,"compact_threshold_pct":85,"subagent_count":0}' > "$COLLECTOR_BODY_FILE"
+  printf '%s' '{"model":"claude-sonnet-4-6","used_pct":18.5,"tool_count":7,"compact_threshold_pct":85,"subagent_count":0,"input_tokens":20000,"cache_read_tokens":5000}' > "$COLLECTOR_BODY_FILE"
   COLLECTOR_BODY_BYTES="$(wc -c < "$COLLECTOR_BODY_FILE" | tr -d ' ')"
   cat > "$COLLECTOR_HANDLER" <<EOF
 #!/usr/bin/env bash

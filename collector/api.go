@@ -129,6 +129,17 @@ func (a *APIHandler) HandleHookIngest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Increment tool_count from hook events so viewer has data even before
+	// OTLP metrics arrive (hooks fire immediately, metrics batch at 15s intervals).
+	if sessionID != "" {
+		switch eventType {
+		case "allowed":
+			if err := a.store.IncrementSessionToolCount(r.Context(), sessionID); err != nil {
+				slog.Debug("increment tool count failed", "err", err)
+			}
+		}
+	}
+
 	// Subagent budget management — async deny-file pattern
 	agentID, _ := evt["agent_id"].(string)
 	if agentID != "" {

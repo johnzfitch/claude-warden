@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -140,6 +141,25 @@ func main() {
 		}
 	}()
 
+	// Start viewer subprocess if we can find it
+	var viewerCmd *exec.Cmd
+	if viewerScript := findViewer(); viewerScript != "" {
+		viewerCmd = exec.Command("python3", viewerScript, "--db", dbPath)
+		viewerCmd.Stdout = os.Stderr
+		viewerCmd.Stderr = os.Stderr
+		if err := viewerCmd.Start(); err != nil {
+			slog.Warn("viewer start failed", "err", err, "script", viewerScript)
+		} else {
+			slog.Info("viewer started", "pid", viewerCmd.Process.Pid, "script", viewerScript)
+			// Reap in background so we notice if it dies
+			go func() {
+				if err := viewerCmd.Wait(); err != nil {
+					slog.Warn("viewer exited", "err", err)
+				}
+			}()
+		}
+	}
+
 	// Wait for shutdown signal or fatal server error
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -149,6 +169,11 @@ func main() {
 		slog.Info("shutting down", "signal", sig)
 	case err := <-errCh:
 		slog.Error("server error, shutting down", "err", err)
+	}
+
+	// Stop viewer
+	if viewerCmd != nil && viewerCmd.Process != nil {
+		viewerCmd.Process.Signal(syscall.SIGTERM)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -171,6 +196,35 @@ func defaultDBPath() string {
 
 func defaultSocketPath() string {
 	return filepath.Join(stateDir(), "collector.sock")
+}
+
+// findViewer locates warden-viewer.py by checking:
+//  1. WARDEN_DIR env (set by install.sh or user)
+//  2. Resolve from hooks symlink back to repo
+//  3. Common dev path
+func findViewer() string {
+	candidates := []string{}
+
+	// Env var (most explicit)
+	if d := os.Getenv("WARDEN_DIR"); d != "" {
+		candidates = append(candidates, filepath.Join(d, "viewer", "warden-viewer.py"))
+	}
+
+	// Resolve repo root from hooks symlink
+	home, _ := os.UserHomeDir()
+	hookLink := filepath.Join(home, ".claude", "hooks", "pre-tool-use")
+	if target, err := os.Readlink(hookLink); err == nil {
+		// target is like /home/user/dev/claude-warden/hooks/pre-tool-use
+		repoRoot := filepath.Dir(filepath.Dir(target))
+		candidates = append(candidates, filepath.Join(repoRoot, "viewer", "warden-viewer.py"))
+	}
+
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return ""
 }
 
 func stateDir() string {
