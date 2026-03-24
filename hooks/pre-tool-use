@@ -329,13 +329,37 @@ fi
 
 # === SETTINGS FILE TAMPERING VIA BASH ===
 _SETTINGS_RE='\.claude/(settings|hooks)'
-_REDIR_RE='>[[:space:]]*\.claude/(settings|hooks)'
+_REDIR_RE='>[[:space:]]*[^ ]*\.claude/(settings|hooks)'
 if [[ "$COMMAND" =~ $_SETTINGS_RE ]]; then
-    # Catch redirects writing into settings/hooks paths, or commands that modify them
-    if [[ "$COMMAND" =~ (mv|cp|ln|tee|sed[[:space:]]+-i)[[:space:]] ]] || \
+    # Redirects and in-place modifiers: always block
+    if [[ "$COMMAND" =~ (tee|sed[[:space:]]+-i)[[:space:]] ]] || \
        [[ "$COMMAND" =~ $_REDIR_RE ]]; then
         _warden_emit_block "settings_tamper_bash" 0
-        _warden_deny "Sandbox violation: '${COMMAND:0:100}' modifies Claude settings or hook files. These files are protected. Reading is allowed but writes are blocked."
+        _warden_deny "Sandbox violation: '${COMMAND:0:100}' modifies Claude settings or hook files. These files are protected."
+    fi
+    # cp/mv/ln: allow ONLY if settings path is clearly the source in a simple 2-arg form
+    if [[ "$COMMAND" =~ (cp|mv|ln)[[:space:]] ]]; then
+        _CP_CMD="${BASH_REMATCH[1]}"
+        _CP_PORTION="${COMMAND##*"$_CP_CMD" }"
+        # Extract non-flag args, stop at shell metacharacters
+        _CP_ARGS=""
+        for _w in $_CP_PORTION; do
+            case "$_w" in -*) continue ;; *[';''&''|''>']*) break ;; *) _CP_ARGS="${_CP_ARGS:+$_CP_ARGS }$_w" ;; esac
+        done
+        _ARG_COUNT=0; for _ in $_CP_ARGS; do ((_ARG_COUNT++)); done
+        if (( _ARG_COUNT == 2 )); then
+            _SRC="${_CP_ARGS%% *}"; _DEST="${_CP_ARGS##* }"
+            if [[ "$_SRC" =~ $_SETTINGS_RE ]] && [[ ! "$_DEST" =~ $_SETTINGS_RE ]]; then
+                : # Source is settings, dest is not — backup/read, allow
+            else
+                _warden_emit_block "settings_tamper_bash" 0
+                _warden_deny "Sandbox violation: '${COMMAND:0:100}' writes to Claude settings or hook files."
+            fi
+        else
+            # Not a simple 2-arg form — block conservatively
+            _warden_emit_block "settings_tamper_bash" 0
+            _warden_deny "Sandbox violation: '${COMMAND:0:100}' modifies Claude settings or hook files."
+        fi
     fi
 fi
 
