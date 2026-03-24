@@ -217,6 +217,40 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
     esac
 fi
 
+# === FORENSIC TOOL CHROME STRIP ===
+# hexyl box-drawing borders and binwalk dash separators are pure formatting
+# chrome with zero information value. Strip before truncation sizing.
+if [[ "$TOOL_NAME" == "Bash" ]]; then
+    case "$COMMAND" in
+        *hexyl*|*binwalk*)
+            if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
+                OUTPUT=$(_warden_extract_output)
+                OUTPUT_SIZE=${#OUTPUT}
+                REMINDER_PRE_STRIPPED=true
+            fi
+            _CHROME_ORIG="$OUTPUT_SIZE"
+            case "$COMMAND" in
+                *hexyl*)
+                    # Strip Unicode box-drawing characters and collapse empty lines
+                    OUTPUT=$(printf '%s' "$OUTPUT" | sed \
+                        -e 's/[┌┐└┘├┤┬┴┼─│┊]//g' \
+                        -e '/^[[:space:]]*$/d') ;;
+                *binwalk*)
+                    # Strip dash separator lines and analysis summary footer
+                    OUTPUT=$(printf '%s' "$OUTPUT" | sed \
+                        -e '/^-\{20,\}$/d' \
+                        -e '/^[[:space:]]*$/d' \
+                        -e '/^Analyzed [0-9]* file/d') ;;
+            esac
+            OUTPUT_SIZE=${#OUTPUT}
+            if (( OUTPUT_SIZE < _CHROME_ORIG )); then
+                _warden_emit_event "truncated" "$_CHROME_ORIG" "$OUTPUT_SIZE" "forensic_chrome"
+            fi
+            unset _CHROME_ORIG
+            ;;
+    esac
+fi
+
 # === QUIET OVERRIDE REMINDERS ===
 # Pre-tool-use injects quiet flags via updatedInput. Here we inject per-command
 # additionalContext so the model sees exactly what to run next time.
