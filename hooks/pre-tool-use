@@ -160,9 +160,18 @@ if [[ "$NORM_CMD" =~ (^|[;\&\|])[[:space:]]*rm[[:space:]]+-[rf]+[[:space:]]+([^[
     fi
 fi
 
-# Destructive: disk formatting, device writes, recursive permission changes
+# Destructive tools: command-position matching (not inside grep patterns/strings)
+# Matches: mkfs.ext4, sudo wipefs, env FOO=1 fdisk, /sbin/mkfs, sudo /usr/sbin/fdisk
+_DESTRUCTIVE_TOOLS='(mkfs|wipefs|fdisk|gdisk|parted|cfdisk|sfdisk|blockdev|hdparm)'
+_DESTRUCTIVE_PREFIX='((sudo|doas)[[:space:]]+|(env[[:space:]]+[A-Za-z_]+=[^[:space:]]+[[:space:]]+))*'
+_DESTRUCTIVE_PATH='(/[^[:space:]]*/)?'
+if [[ "$NORM_CMD" =~ (^|[;\&\|][[:space:]]*)${_DESTRUCTIVE_PREFIX}${_DESTRUCTIVE_PATH}${_DESTRUCTIVE_TOOLS}([[:space:].]|$) ]]; then
+    _warden_emit_block "destructive_cmd" 0; _warden_deny "Blocked destructive command"
+fi
+
+# Content-position patterns: specific enough to avoid false positives in grep args
 case "$NORM_CMD" in
-    *"mkfs"*|*"dd if="*|*"dd of=/dev/"*|\
+    *"dd if="*|*"dd of=/dev/"*|\
     *"> /dev/sd"*|*"> /dev/nvme"*|\
     *"chmod -R 777 /"*|*"chown -R"*|*"chown --recursive"*)
         _warden_emit_block "destructive_cmd" 0; _warden_deny "Blocked destructive command" ;;
