@@ -9,12 +9,25 @@ source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
 _warden_read_input || exit 0
 
+# Debug: capture one real payload shape (opt-in via WARDEN_DEBUG=1)
+if [[ "${WARDEN_DEBUG:-}" == "1" ]] && [[ ! -f "$WARDEN_STATE_DIR/post-debug.json" ]]; then
+    printf '%s' "$WARDEN_INPUT" | jq '{
+        tool_name, session_id,
+        tool_response_type: (.tool_response | type),
+        tool_response_keys: (.tool_response | if type == "object" then keys else "n/a" end)
+    }' > "$WARDEN_STATE_DIR/post-debug.json" 2>/dev/null
+fi
+
 # Single jq call: extract all needed fields
+# tool_response may be a string or object with .content[0].text — handle both
 read -r TOOL_NAME SESSION_ID OUTPUT_SIZE COMMAND < <(
     printf '%s' "$WARDEN_INPUT" | jq -r '[
         .tool_name // "",
         .session_id // "",
-        (.tool_response.content[0].text // "" | length),
+        (.tool_response // "" |
+         if type == "string" then length
+         elif type == "object" then (.content[0].text // "" | length)
+         else 0 end),
         (.tool_input.command // .tool_input.file_path // .tool_input.pattern // .tool_input.prompt // "")[0:200]
     ] | @tsv' 2>/dev/null
 ) || exit 0
@@ -35,10 +48,10 @@ if (( OUTPUT_SIZE > 0 )); then
     # Count lines (fast approximation: count newlines in first 50KB)
     OUTPUT_LINES=0
     if (( OUTPUT_SIZE <= 51200 )); then
-        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // "" | if . == "" then 0 elif endswith("\n") then split("\n") | length - 1 else split("\n") | length end' 2>/dev/null)
+        OUTPUT_LINES=$(_warden_extract_output | awk 'END{print NR}' 2>/dev/null)
     else
         # For large outputs, sample first 50KB for line count estimate
-        OUTPUT_LINES=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | head -c 51200 | awk 'END{print NR}')
+        OUTPUT_LINES=$(_warden_extract_output | head -c 51200 | awk 'END{print NR}')
         # Validate before arithmetic to avoid bash errors on non-numeric input
         [[ "$OUTPUT_LINES" =~ ^[0-9]+$ ]] || OUTPUT_LINES=0
         # Extrapolate
@@ -76,7 +89,7 @@ fi
 # They repeat per-call and compound across sessions. Strip before any further processing.
 REMINDER_PRE_STRIPPED=false
 if (( OUTPUT_SIZE > 50 )); then
-    _RAW=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+    _RAW=$(_warden_extract_output)
     case "$_RAW" in
         *'<system-reminder>'*)
             _CLEANED=$(printf '%s' "$_RAW" | sed '/^<system-reminder>/,/^<\/system-reminder>/d')
@@ -110,7 +123,7 @@ fi
 # Runs before generic truncation so banner bytes don't count toward threshold.
 if [[ "$TOOL_NAME" == "Bash" ]] && [[ "$COMMAND" == *"ssh"* || "$COMMAND" == *"scp"* || "$COMMAND" == *"frida"* ]]; then
     if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
-        OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+        OUTPUT=$(_warden_extract_output)
         OUTPUT_SIZE=${#OUTPUT}
         REMINDER_PRE_STRIPPED=true
     fi
@@ -182,7 +195,7 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
     case "$WARDEN_INPUT" in
         *'hint: '*|*'Note: switching to'*|*'warning: refs/tags/'*|*'detached HEAD'*)
             if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
-                OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+                OUTPUT=$(_warden_extract_output)
                 OUTPUT_SIZE=${#OUTPUT}
             fi
             _GIT_CLEANED=$(printf '%s' "$OUTPUT" | grep -v '^hint: ' | grep -v '^warning: refs/tags/' | sed \
@@ -292,7 +305,7 @@ _exit_clean_or_suppress() {
 if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
     # Need actual content for structured extraction
     if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
-        OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+        OUTPUT=$(_warden_extract_output)
         OUTPUT_SIZE=${#OUTPUT}
     fi
     if (( OUTPUT_SIZE > 6144 )); then
@@ -329,7 +342,7 @@ fi
 # Need actual output content for truncation - extract only when needed
 # Skip re-extraction if reminder strip already populated OUTPUT
 if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
-    OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+    OUTPUT=$(_warden_extract_output)
     OUTPUT_SIZE=${#OUTPUT}
 
     # Re-check after actual extraction (jq length vs bash length may differ)
@@ -338,7 +351,7 @@ fi
 
 # Binary check: detect null bytes portably (no grep -P which is Linux-only)
 # od + grep is POSIX-compliant and works on macOS/Linux/BSD
-if printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | od -An -tx1 | grep -q ' 00'; then
+if _warden_extract_output | od -An -tx1 | grep -q ' 00'; then
     _warden_emit_event "truncated" "$OUTPUT_SIZE" 50 "binary_output"
     jq -n --arg text "[Binary output: $((OUTPUT_SIZE/1024))KB. Use 'file' or redirect.]" '{"modifyOutput":$text}'
     exit 0
