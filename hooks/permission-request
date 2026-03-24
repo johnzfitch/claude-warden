@@ -50,9 +50,17 @@ fi
 # === SAFE PIPE TARGETS ===
 # curl | jq, curl | head, curl | grep, etc. are not RCE -- only curl | bash/sh is dangerous.
 if [[ "$NORM_CMD" =~ curl[[:space:]] ]] && [[ "$NORM_CMD" =~ \| ]]; then
-    _PIPE_TARGETS=$(printf '%s' "$NORM_CMD" | grep -oP '\|\s*\K[a-zA-Z0-9_-]+' || true)
+    # Extract first word of each pipe stage (POSIX awk, no grep -P dependency)
+    _PIPE_TARGETS=$(printf '%s' "$NORM_CMD" | awk -F'|' '{
+        for(i=2;i<=NF;i++){
+            gsub(/^[[:space:]]+/,"",$i)
+            split($i,a," ")
+            if(a[1]!="") print a[1]
+        }
+    }')
     _HAS_UNSAFE=false
     for _target in $_PIPE_TARGETS; do
+        _target="${_target##*/}"  # basename: /bin/bash -> bash
         case "$_target" in
             bash|sh|zsh|dash|fish|python|python3|node|ruby|perl|eval|exec|source)
                 _HAS_UNSAFE=true; break ;;
