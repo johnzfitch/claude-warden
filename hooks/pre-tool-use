@@ -199,6 +199,24 @@ if [[ "$NORM_CMD" =~ (curl|wget|aurl) ]]; then
     if [[ "$NORM_CMD" =~ ${_RCE_INTERP}[[:space:]]+\<\((curl|wget|aurl) ]]; then
         _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution"
     fi
+    # eval "$(curl ...)" or eval `curl ...`
+    if [[ "$NORM_CMD" =~ eval[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then
+        _warden_emit_block "rce_eval" 0; _warden_deny "Blocked remote code execution"
+    fi
+    # source <(curl ...) and . <(curl ...) — dot-sourcing
+    # [.] avoids bash regex treating . as "any char" in extended regex
+    if [[ "$NORM_CMD" =~ (source|[.])[[:space:]]+\<\((curl|wget|aurl) ]]; then
+        _warden_emit_block "rce_source" 0; _warden_deny "Blocked remote code execution"
+    fi
+    # interpreter -c "$(curl ...)" — bare name or absolute path
+    _RCE_INTERP_OR_PATH="(${_RCE_INTERP}|/[^[:space:]]*/+${_RCE_INTERP})"
+    if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+-c[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then
+        _warden_emit_block "rce_exec_c" 0; _warden_deny "Blocked remote code execution"
+    fi
+    # interpreter <<< "$(curl ...)" — herestring
+    if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+\<\<\<[[:space:]]*(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then
+        _warden_emit_block "rce_herestring" 0; _warden_deny "Blocked remote code execution"
+    fi
 fi
 
 # === ENVIRONMENT VARIABLE DUMP PREVENTION ===
