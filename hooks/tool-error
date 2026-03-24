@@ -49,20 +49,6 @@ if [[ -f "$ERROR_LOG" ]] && [[ $(awk 'END{print NR}' "$ERROR_LOG" 2>/dev/null ||
   tail -1000 "$ERROR_LOG" > "$ERROR_LOG_TMP" 2>/dev/null && mv "$ERROR_LOG_TMP" "$ERROR_LOG" 2>/dev/null || rm -f "$ERROR_LOG_TMP"
 fi
 
-# === PLAN FILE WRITE INTERCEPT ===
-# Write tool rejects paths outside project root (path.relative() produces ../).
-# Do the write ourselves, tell the model via additionalContext.
-if [[ "$TOOL_NAME" == "Write" ]] && echo "$ERROR_MSG" | grep -q 'path should be a .path.relative'; then
-    _PLAN_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
-    if [[ "$_PLAN_PATH" == "$HOME/.claude/plans/"* ]]; then
-        mkdir -p "$(dirname "$_PLAN_PATH")"
-        printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.content // empty' > "$_PLAN_PATH"
-        jq -n --arg ctx "Plan file written successfully by hook to: $_PLAN_PATH" \
-            '{"hookSpecificOutput":{"hookEventName":"PostToolUseFailure","additionalContext":$ctx}}'
-        exit 0
-    fi
-fi
-
 # === HINTS TO STDERR (if we want Claude to see them) ===
 case "$TOOL_NAME" in
   Bash)
