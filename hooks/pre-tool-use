@@ -23,6 +23,19 @@ export WARDEN_SESSION_ID="$SESSION_ID"
 # Resolve per-session start timestamp (fixes cross-session relative time skew)
 _warden_resolve_session_start "$SESSION_ID"
 
+# === SUDO AUDIT (observe-only, no blocking) ===
+if [[ "$TOOL_NAME" == "Bash" && -n "$COMMAND" ]]; then
+    case "$COMMAND" in
+        sudo\ *|*';'*sudo\ *|*'&&'*sudo\ *|*'||'*sudo\ *|*'|'*sudo\ *)
+            _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+            _CMD_SAFE="${COMMAND:0:200}"; _warden_json_escape _CMD_SAFE; _warden_maybe_scrub _CMD_SAFE
+            _SID_SAFE="${SESSION_ID:-}"; _warden_json_escape _SID_SAFE
+            printf -v _evt '{"timestamp":%d,"event_type":"sudo_audit","tool":"Bash","session_id":"%s","original_cmd":"%s"}' \
+                "$_TS" "$_SID_SAFE" "$_CMD_SAFE"
+            _warden_post_to_collector "$_evt" ;;
+    esac
+fi
+
 # === MCP TOOL TRACKING ===
 # Log MCP tool calls for separate monitoring (server name from mcp__server__tool pattern)
 if [[ "$TOOL_NAME" == mcp__* ]]; then
