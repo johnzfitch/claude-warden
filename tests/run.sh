@@ -359,6 +359,47 @@ assert_exit 0 "$rc" "pre-tool-use write settings"
 assert_structured_deny "$out" "pre-tool-use write settings"
 rm -f "$DENY_FIXTURE"
 
+# Helper: generate Bash pre-tool-use fixture and test deny/allow
+_test_bash_pre() {
+  local label="$1" cmd="$2" expect="$3"
+  local fixture
+  fixture="$(mktemp)"
+  jq -n --arg cmd "$cmd" '{tool_name:"Bash",tool_input:{command:$cmd},session_id:"demo-session",transcript_path:"/tmp/main.jsonl"}' > "$fixture"
+  IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$fixture")
+  assert_exit 0 "$rc" "$label"
+  if [[ "$expect" == "deny" ]]; then
+    assert_structured_deny "$out" "$label"
+  else
+    assert_stdout_json_has "$out" '.suppressOutput == true' "$label"
+  fi
+  rm -f "$fixture"
+}
+
+echo "[tests] pre-tool-use (security: disk tool blocking)"
+_test_bash_pre "disk: wipefs"   "wipefs -a /dev/sdc" deny
+_test_bash_pre "disk: fdisk"    "fdisk /dev/sdb" deny
+_test_bash_pre "disk: gdisk"    "gdisk /dev/nvme0n1" deny
+_test_bash_pre "disk: parted"   "parted /dev/sda" deny
+_test_bash_pre "disk: sudo wipefs" "sudo wipefs -a /dev/sdc" deny
+_test_bash_pre "disk: sudo /sbin/fdisk" "sudo /sbin/fdisk /dev/sdb" deny
+_test_bash_pre "disk: env prefix" "env LANG=C wipefs -a /dev/sdc" deny
+_test_bash_pre "disk: mkfs.ext4" "mkfs.ext4 /dev/sdc1" deny
+
+echo "[tests] pre-tool-use (false positive: destructive in grep pattern)"
+_test_bash_pre "fp: grep disk tools" "grep -iE 'wipefs' /var/log/syslog" allow
+_test_bash_pre "fp: echo disk tool"  "echo do not run fdisk" allow
+
+echo "[tests] pre-tool-use (security: settings backup allowed)"
+_test_bash_pre "settings: cp from (backup)" "cp ~/.claude/settings.json /tmp/backup.json" allow
+_test_bash_pre "settings: cp to (tamper)"   "cp /tmp/evil.json ~/.claude/settings.json" deny
+_test_bash_pre "settings: mv from (backup)" "mv ~/.claude/hooks/pre-tool-use /tmp/" allow
+_test_bash_pre "settings: mv to (tamper)"   "mv /tmp/evil ~/.claude/hooks/pre-tool-use" deny
+
+echo "[tests] pre-tool-use (security: grep -r scoping)"
+_test_bash_pre "grep-r: actual recursive"    "grep -rn pattern ." deny
+_test_bash_pre "grep-r: sort -rn not grep"   "grep 'pattern' file.txt | sort -rn" allow
+_test_bash_pre "grep-r: piped to head"       "grep -r pattern dir | head -20" allow
+
 echo "[tests] permission-request (deny: fork bomb)"
 PERM_DENY_FIXTURE="$(mktemp)"
 cat > "$PERM_DENY_FIXTURE" <<'JSON'
