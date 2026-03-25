@@ -372,16 +372,6 @@ func (s *Store) UpsertSessionCost(ctx context.Context, sessionID, model string, 
 	return err
 }
 
-// IncrementSessionToolCount bumps the tool_count for a session.
-// Called from hook event ingest on "allowed" events.
-func (s *Store) IncrementSessionToolCount(ctx context.Context, sessionID string) error {
-	now := time.Now().UnixNano()
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE sessions SET tool_count = tool_count + 1, updated_at_ns = ?
-		WHERE session_id = ?`, now, sessionID)
-	return err
-}
-
 // BudgetResult is returned by IncrementSubagentBudget to tell the caller
 // whether the budget is exceeded (and a deny file should be written).
 type BudgetResult struct {

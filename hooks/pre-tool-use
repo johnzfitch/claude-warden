@@ -150,11 +150,18 @@ if [[ "$NORM_CMD" =~ (^|[;\&\|])[[:space:]]*rm[[:space:]]+-[rf]+[[:space:]]+(.*)
         _warden_emit_block "destructive_cmd" 0
         _warden_deny "Blocked: rm --no-preserve-root"
     }
-    # Skip flags (--foo, -x) to find the actual filesystem path target
+    # Skip flags (--foo, -x) to find the actual filesystem path target.
+    # Use xargs to properly handle quoted paths with spaces.
     _RM_TARGET=""
-    for _arg in $_RM_ARGS; do
-        case "$_arg" in --) continue ;; -*) continue ;; *) _RM_TARGET="$_arg"; break ;; esac
-    done
+    while IFS= read -r _arg; do
+        case "$_arg" in "") continue ;; --) continue ;; -*) continue ;; *) _RM_TARGET="$_arg"; break ;; esac
+    done < <(printf '%s\n' "$_RM_ARGS" | xargs -n1 printf '%s\n' 2>/dev/null)
+    # Fallback: if xargs parsing failed, use simple word splitting
+    if [[ -z "$_RM_TARGET" ]]; then
+        for _arg in $_RM_ARGS; do
+            case "$_arg" in --) continue ;; -*) continue ;; *) _RM_TARGET="$_arg"; break ;; esac
+        done
+    fi
     if [[ -n "$_RM_TARGET" ]]; then
         _RM_TARGET="${_RM_TARGET#\"}" ; _RM_TARGET="${_RM_TARGET%\"}"
         _RM_TARGET="${_RM_TARGET#\'}" ; _RM_TARGET="${_RM_TARGET%\'}"
