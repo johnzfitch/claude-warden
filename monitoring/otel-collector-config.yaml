@@ -85,6 +85,11 @@ exporters:
     tls:
       insecure: true
 
+  otlphttp/warden:
+    endpoint: http://localhost:4319
+    tls:
+      insecure: true
+
   debug:
     verbosity: basic
     sampling_initial: 2
@@ -103,7 +108,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [otlp/tempo, debug]
+      exporters: [otlp/tempo, otlphttp/warden, debug]
 
   extensions: []
 

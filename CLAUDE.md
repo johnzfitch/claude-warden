@@ -26,12 +26,24 @@ Token-saving hooks + Go collector backbone for Claude Code observability.
 - Events are appended to `$WARDEN_EVENTS_FILE` (`~/.claude/.statusline/events.jsonl`)
 - Hooks exit with `_warden_suppress_ok` (allow, suppress output) or `_warden_deny` (block with reason)
 
+### Shared helpers (hooks/lib/common.sh)
+- `_warden_realpath` -- cross-platform realpath with tilde expansion (realpath -> readlink -f -> cd/pwd -> passthrough)
+- `_warden_extract_output` -- extracts tool output from PostToolUse payloads, handles both string and object response formats
+- `_warden_is_destructive_segment` -- command-position matching for destructive tools (handles sudo, env prefix, absolute paths)
+
+### Security enforcement (pre-tool-use)
+- **Destructive tools**: command-position regex blocks mkfs, wipefs, fdisk, gdisk, parted, cfdisk, sfdisk, blockdev, hdparm (with sudo/doas/env/absolute-path prefix support)
+- **RCE detection**: blocks pipe-to-interpreter, process substitution, eval+$(), source/<(), interpreter -c, herestrings -- all with absolute path support
+- **Settings protection**: blocks writes to `.claude/settings` and `.claude/hooks` via redirects, tee, sed -i, or cp/mv where settings is the destination
+- **SSRF protection**: blocks cloud metadata endpoints and RFC1918 private ranges via curl, wget, WebFetch, WebSearch
+- **sudo audit**: emits `sudo_audit` events (observe-only) for all sudo commands
+
 ### Event schema (events.jsonl)
 Every line is a JSON object with at minimum:
 ```json
 {"timestamp": <relative_seconds>, "event_type": "<type>", "tool": "<tool_name>"}
 ```
-Event types: `allowed`, `blocked`, `truncated`, `tool_latency`, `tool_output_size`, `completed`, `session_start`, `session_end`, `elicitation`, `elicitation_result`, `instructions_loaded`, `mcp_tool_start`
+Event types: `allowed`, `blocked`, `truncated`, `tool_latency`, `tool_output_size`, `completed`, `session_start`, `session_end`, `elicitation`, `elicitation_result`, `instructions_loaded`, `mcp_tool_start`, `sudo_audit`
 
 The `timestamp` field is **relative to session start** (not epoch). The OTEL collector filelog receiver uses ingestion time as the log timestamp and preserves the relative value as `session_relative_ts`.
 

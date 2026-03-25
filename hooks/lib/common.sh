@@ -59,6 +59,26 @@ _warden_date_iso() {
     fi
 }
 
+# Cross-platform realpath with tilde expansion
+# macOS lacks realpath; readlink -f may also be absent. Fallback: cd + pwd -P.
+_warden_realpath() {
+    local path="$1"
+    case "$path" in
+        '~')   path="$HOME" ;;
+        '~/'*) path="$HOME/${path:2}" ;;
+    esac
+    realpath -q "$path" 2>/dev/null \
+        || readlink -f "$path" 2>/dev/null \
+        || { \
+            if [[ -d "$path" ]]; then \
+                (cd "$path" 2>/dev/null && pwd -P); \
+            else \
+                (cd "$(dirname "$path")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$path")"); \
+            fi; \
+        } \
+        || printf '%s' "$path"
+}
+
 # Cross-platform md5 hash (returns 32 hex chars on stdout)
 _warden_md5() {
     if command -v md5sum &>/dev/null; then
@@ -412,6 +432,17 @@ _warden_get_agent_type() {
     printf '%s' "$agent_type"
 }
 
+# Load subagent detection info into IS_SUBAGENT, AGENT_ID, AGENT_TYPE globals.
+# Requires TRANSCRIPT_PATH to be set (from hook JSON input).
+_warden_load_subagent_info() {
+    IS_SUBAGENT=false; AGENT_ID=""; AGENT_TYPE=""
+    if _warden_is_subagent "$TRANSCRIPT_PATH"; then
+        IS_SUBAGENT=true
+        AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
+        [[ -n "$AGENT_ID" ]] && AGENT_TYPE=$(_warden_get_agent_type "$AGENT_ID")
+    fi
+}
+
 # ==============================================================================
 # EVENT EMISSION
 # ==============================================================================
@@ -608,6 +639,26 @@ _warden_emit_output_size() {
 
 # ==============================================================================
 # SYSTEM REMINDER STRIPPING
+# ==============================================================================
+# POST-TOOL-USE OUTPUT EXTRACTION
+# ==============================================================================
+
+# Extract tool output text from PostToolUse payload.
+# Handles both known response structures:
+#   - Object with content array: .tool_response.content[0].text
+#   - Direct string: .tool_response (string)
+# Usage: OUTPUT=$(_warden_extract_output)
+# Reads from WARDEN_INPUT (must be set). Returns text on stdout.
+_warden_extract_output() {
+    printf '%s' "$WARDEN_INPUT" | jq -r '
+        .tool_response // "" |
+        if type == "string" then .
+        elif type == "object" then (.content[0].text // "")
+        else ""
+        end
+    ' 2>/dev/null
+}
+
 # ==============================================================================
 
 # Strip <system-reminder> blocks from text

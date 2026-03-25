@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     cost_usd REAL NOT NULL DEFAULT 0,
     tool_count INTEGER NOT NULL DEFAULT 0,
     pending_output_tokens INTEGER NOT NULL DEFAULT 0,
+    active_time_seconds REAL NOT NULL DEFAULT 0,
     started_at_ns INTEGER NOT NULL,
     updated_at_ns INTEGER NOT NULL
 );

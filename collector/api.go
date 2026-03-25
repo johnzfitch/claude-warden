@@ -129,6 +129,9 @@ func (a *APIHandler) HandleHookIngest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// tool_count is incremented by AccumulateToolTokens on OTLP span ingest,
+	// which is the authoritative source. Avoid double-counting from hook events.
+
 	// Subagent budget management — async deny-file pattern
 	agentID, _ := evt["agent_id"].(string)
 	if agentID != "" {

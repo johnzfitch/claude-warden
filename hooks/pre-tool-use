@@ -23,6 +23,19 @@ export WARDEN_SESSION_ID="$SESSION_ID"
 # Resolve per-session start timestamp (fixes cross-session relative time skew)
 _warden_resolve_session_start "$SESSION_ID"
 
+# === SUDO AUDIT (observe-only, no blocking) ===
+if [[ "$TOOL_NAME" == "Bash" && -n "$COMMAND" ]]; then
+    case "$COMMAND" in
+        sudo\ *|*';'*sudo\ *|*'&&'*sudo\ *|*'||'*sudo\ *|*'|'*sudo\ *)
+            _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+            _CMD_SAFE="${COMMAND:0:200}"; _warden_json_escape _CMD_SAFE; _warden_maybe_scrub _CMD_SAFE
+            _SID_SAFE="${SESSION_ID:-}"; _warden_json_escape _SID_SAFE
+            printf -v _evt '{"timestamp":%d,"event_type":"sudo_audit","tool":"Bash","session_id":"%s","original_cmd":"%s"}' \
+                "$_TS" "$_SID_SAFE" "$_CMD_SAFE"
+            _warden_post_to_collector "$_evt" ;;
+    esac
+fi
+
 # === MCP TOOL TRACKING ===
 # Log MCP tool calls for separate monitoring (server name from mcp__server__tool pattern)
 if [[ "$TOOL_NAME" == mcp__* ]]; then
@@ -40,17 +53,7 @@ if [[ "$TOOL_NAME" == mcp__* ]]; then
 fi
 
 # === SUBAGENT DETECTION (applies to ALL tools) ===
-IS_SUBAGENT=false
-AGENT_TYPE=""
-AGENT_ID=""
-
-if _warden_is_subagent "$TRANSCRIPT_PATH"; then
-    IS_SUBAGENT=true
-    AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
-    if [[ -n "$AGENT_ID" ]]; then
-        AGENT_TYPE=$(_warden_get_agent_type "$AGENT_ID")
-    fi
-fi
+_warden_load_subagent_info
 
 # === SUBAGENT BUDGET ENFORCEMENT (applies to ALL tools) ===
 # Deny-file pattern: collector writes budget-deny-{agent_id} when exceeded.
@@ -105,7 +108,8 @@ case "$TOOL_NAME" in
         _warden_suppress_ok ;;
     WebFetch|WebSearch)
         # === SSRF / INTERNAL NETWORK PROTECTION ===
-        # Block requests to internal networks, cloud metadata endpoints, and localhost.
+        # Block cloud metadata and private networks. Localhost access is left to
+        # the normal permission dialog (PermissionRequest) so the user decides.
         _URL=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.url // .tool_input.query // ""' 2>/dev/null)
         _URL_LOWER=$(printf '%s' "$_URL" | tr '[:upper:]' '[:lower:]')
         # Cloud metadata endpoints (AWS, GCP, Azure, DigitalOcean, Oracle)
@@ -115,11 +119,6 @@ case "$TOOL_NAME" in
            [[ "$_URL_LOWER" =~ 100\.100\.100\.200 ]]; then
             _warden_emit_block "ssrf_metadata" 0 "$TOOL_NAME $_URL"
             _warden_deny "Network boundary violation: $TOOL_NAME tried to reach cloud metadata endpoint ($_URL). This is a protected internal address that exposes instance credentials."
-        fi
-        # Localhost / loopback
-        if [[ "$_URL_LOWER" =~ ^https?://(localhost|127\.[0-9]+\.[0-9]+\.[0-9]+|0\.0\.0\.0|\[::1\]) ]]; then
-            _warden_emit_block "ssrf_localhost" 0 "$TOOL_NAME $_URL"
-            _warden_deny "Network boundary violation: $TOOL_NAME tried to reach localhost ($_URL). This tool cannot access local services. Run the local request directly in your terminal and share the relevant output, or read specific log files."
         fi
         # Private RFC1918 ranges
         if [[ "$_URL_LOWER" =~ ^https?://(10\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+|192\.168\.[0-9]+)\.[0-9]+ ]]; then
@@ -140,14 +139,72 @@ esac
 # ==========================================================================
 
 # === CRITICAL DENY RULES (must enforce even in non-interactive -p mode) ===
-# Destructive: rm (root/home/cwd/glob), mkfs, dd, chmod/chown recursive
 NORM_CMD=$(echo "$COMMAND" | tr -s '[:space:]' ' ')
+
+# rm -rf: deny critical paths unconditionally, deny 10+ file dirs
+# Only match rm at command start or after a separator (not inside strings)
+if [[ "$NORM_CMD" =~ (^|[;\&\|])[[:space:]]*rm[[:space:]]+-[rf]+[[:space:]]+(.*) ]]; then
+    _RM_ARGS="${BASH_REMATCH[2]}"
+    # Explicitly block --no-preserve-root regardless of target
+    [[ "$_RM_ARGS" =~ --no-preserve-root ]] && {
+        _warden_emit_block "destructive_cmd" 0
+        _warden_deny "Blocked: rm --no-preserve-root"
+    }
+    # Skip flags (--foo, -x) to find the actual filesystem path target.
+    # Use xargs to properly handle quoted paths with spaces.
+    _RM_TARGET=""
+    _RM_AFTER_DD=""
+    while IFS= read -r _arg; do
+        case "$_arg" in
+            "") continue ;;
+            --) _RM_AFTER_DD=1; continue ;;
+            -*) [[ -z "$_RM_AFTER_DD" ]] && continue ;;&
+            *) _RM_TARGET="$_arg"; break ;;
+        esac
+    done < <(printf '%s\n' "$_RM_ARGS" | xargs -n1 printf '%s\n' 2>/dev/null)
+    # Fallback: if xargs parsing failed, use simple word splitting
+    if [[ -z "$_RM_TARGET" ]]; then
+        _RM_AFTER_DD=""
+        for _arg in $_RM_ARGS; do
+            case "$_arg" in
+                --) _RM_AFTER_DD=1; continue ;;
+                -*) [[ -z "$_RM_AFTER_DD" ]] && continue ;;&
+                *) _RM_TARGET="$_arg"; break ;;
+            esac
+        done
+    fi
+    if [[ -n "$_RM_TARGET" ]]; then
+        _RM_TARGET="${_RM_TARGET#\"}" ; _RM_TARGET="${_RM_TARGET%\"}"
+        _RM_TARGET="${_RM_TARGET#\'}" ; _RM_TARGET="${_RM_TARGET%\'}"
+        # Resolve to real path for comparison (catch symlinks, relative paths)
+        _RM_REAL=$(_warden_realpath "$_RM_TARGET")
+        case "$_RM_REAL" in
+            /|/home|"$HOME"|/root|/etc|/var|/usr|/boot|/sys|/proc)
+                _warden_emit_block "destructive_cmd" 0
+                _warden_deny "Blocked: recursive delete on critical path ($_RM_REAL)" ;;
+        esac
+        if [[ -d "$_RM_TARGET" ]]; then
+            _FC=$(find -P "$_RM_TARGET" -maxdepth 3 -type f 2>/dev/null | head -11 | wc -l)
+            if (( _FC >= 10 )); then
+                _warden_emit_block "destructive_cmd" 0
+                _warden_deny "Blocked: rm -rf on directory with ${_FC}+ files"
+            fi
+        fi
+    fi
+fi
+
+# Destructive tools: command-position matching (not inside grep patterns/strings)
+# Matches: mkfs.ext4, sudo wipefs, env FOO=1 fdisk, /sbin/mkfs, sudo /usr/sbin/fdisk
+_DESTRUCTIVE_TOOLS='(mkfs|wipefs|fdisk|gdisk|parted|cfdisk|sfdisk|blockdev|hdparm)'
+_DESTRUCTIVE_PREFIX='((sudo|doas)[[:space:]]+|(env[[:space:]]+[A-Za-z_]+=[^[:space:]]+[[:space:]]+))*'
+_DESTRUCTIVE_PATH='(/[^[:space:]]*/)?'
+if [[ "$NORM_CMD" =~ (^|[;\&\|][[:space:]]*)${_DESTRUCTIVE_PREFIX}${_DESTRUCTIVE_PATH}${_DESTRUCTIVE_TOOLS}([[:space:].]|$) ]]; then
+    _warden_emit_block "destructive_cmd" 0; _warden_deny "Blocked destructive command"
+fi
+
+# Content-position patterns: specific enough to avoid false positives in grep args
 case "$NORM_CMD" in
-    *"rm -rf /"*|*"rm -fr /"*|*"rm -rf ~"*|*"rm -fr ~"*|\
-    *"rm -rf ."*|*"rm -fr ."*|*"rm -rf *"*|*"rm -fr *"*|\
-    *"rm --recursive --force"*|*"rm --force --recursive"*|\
-    *"rm -rf --no-preserve-root"*|\
-    *"mkfs"*|*"dd if="*|*"dd of=/dev/"*|\
+    *"dd if="*|*"dd of=/dev/"*|\
     *"> /dev/sd"*|*"> /dev/nvme"*|\
     *"chmod -R 777 /"*|*"chown -R"*|*"chown --recursive"*)
         _warden_emit_block "destructive_cmd" 0; _warden_deny "Blocked destructive command" ;;
@@ -174,6 +231,24 @@ if [[ "$NORM_CMD" =~ (curl|wget|aurl) ]]; then
     # Process substitution: interpreter <(curl/wget/aurl ...)
     if [[ "$NORM_CMD" =~ ${_RCE_INTERP}[[:space:]]+\<\((curl|wget|aurl) ]]; then
         _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution"
+    fi
+    # eval "$(curl ...)" or eval `curl ...`
+    if [[ "$NORM_CMD" =~ eval[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then
+        _warden_emit_block "rce_eval" 0; _warden_deny "Blocked remote code execution"
+    fi
+    # source <(curl ...) and . <(curl ...) — dot-sourcing
+    # [.] avoids bash regex treating . as "any char" in extended regex
+    if [[ "$NORM_CMD" =~ (source|[.])[[:space:]]+\<\((curl|wget|aurl) ]]; then
+        _warden_emit_block "rce_source" 0; _warden_deny "Blocked remote code execution"
+    fi
+    # interpreter -c "$(curl ...)" — bare name or absolute path
+    _RCE_INTERP_OR_PATH="(${_RCE_INTERP}|/[^[:space:]]*/+${_RCE_INTERP})"
+    if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+-c[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then
+        _warden_emit_block "rce_exec_c" 0; _warden_deny "Blocked remote code execution"
+    fi
+    # interpreter <<< "$(curl ...)" — herestring
+    if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+\<\<\<[[:space:]]*(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then
+        _warden_emit_block "rce_herestring" 0; _warden_deny "Blocked remote code execution"
     fi
 fi
 
@@ -256,10 +331,6 @@ if [[ "$COMMAND" =~ wget[[:space:]] ]]; then
         _warden_emit_block "ssrf_metadata_bash" 0
         _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a cloud metadata endpoint. These addresses expose instance credentials and are never safe to query from model context."
     fi
-    if [[ "$_CMD_LOWER" =~ wget[[:space:]]+[^|]*https?://(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\]) ]]; then
-        _warden_emit_block "ssrf_localhost_bash" 0
-        _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets localhost/loopback. If you need local service data, ask the user to provide it or check specific log files."
-    fi
     if [[ "$_CMD_LOWER" =~ wget[[:space:]]+[^|]*https?://(10\.[0-9]|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
         _warden_emit_block "ssrf_private_bash" 0
         _warden_deny "Network boundary violation: '${COMMAND:0:120}' targets a private network address. Internal network access via wget is not allowed. Ask the user to provide the data or check specific files."
@@ -291,13 +362,37 @@ fi
 
 # === SETTINGS FILE TAMPERING VIA BASH ===
 _SETTINGS_RE='\.claude/(settings|hooks)'
-_REDIR_RE='>[[:space:]]*\.claude/(settings|hooks)'
+_REDIR_RE='>[[:space:]]*[^ ]*\.claude/(settings|hooks)'
 if [[ "$COMMAND" =~ $_SETTINGS_RE ]]; then
-    # Catch redirects writing into settings/hooks paths, or commands that modify them
-    if [[ "$COMMAND" =~ (mv|cp|ln|tee|sed[[:space:]]+-i)[[:space:]] ]] || \
+    # Redirects and in-place modifiers: always block
+    if [[ "$COMMAND" =~ (tee|sed[[:space:]]+-i)[[:space:]] ]] || \
        [[ "$COMMAND" =~ $_REDIR_RE ]]; then
         _warden_emit_block "settings_tamper_bash" 0
-        _warden_deny "Sandbox violation: '${COMMAND:0:100}' modifies Claude settings or hook files. These files are protected. Reading is allowed but writes are blocked."
+        _warden_deny "Sandbox violation: '${COMMAND:0:100}' modifies Claude settings or hook files. These files are protected."
+    fi
+    # cp/mv/ln: allow ONLY if settings path is clearly the source in a simple 2-arg form
+    if [[ "$COMMAND" =~ (cp|mv|ln)[[:space:]] ]]; then
+        _CP_CMD="${BASH_REMATCH[1]}"
+        _CP_PORTION="${COMMAND##*"$_CP_CMD" }"
+        # Extract non-flag args, stop at shell metacharacters
+        _CP_ARGS=""
+        for _w in $_CP_PORTION; do
+            case "$_w" in -*) continue ;; *[';''&''|''>']*) break ;; *) _CP_ARGS="${_CP_ARGS:+$_CP_ARGS }$_w" ;; esac
+        done
+        _ARG_COUNT=0; for _ in $_CP_ARGS; do ((_ARG_COUNT++)); done
+        if (( _ARG_COUNT == 2 )); then
+            _SRC="${_CP_ARGS%% *}"; _DEST="${_CP_ARGS##* }"
+            if [[ "$_SRC" =~ $_SETTINGS_RE ]] && [[ ! "$_DEST" =~ $_SETTINGS_RE ]]; then
+                : # Source is settings, dest is not — backup/read, allow
+            else
+                _warden_emit_block "settings_tamper_bash" 0
+                _warden_deny "Sandbox violation: '${COMMAND:0:100}' writes to Claude settings or hook files."
+            fi
+        else
+            # Not a simple 2-arg form — block conservatively
+            _warden_emit_block "settings_tamper_bash" 0
+            _warden_deny "Sandbox violation: '${COMMAND:0:100}' modifies Claude settings or hook files."
+        fi
     fi
 fi
 
@@ -406,8 +501,37 @@ if [[ "$IS_BUILD_ARTIFACT" == true ]]; then
 fi
 
 # === RECURSIVE GREP (main agent only - subagent already blocked above) ===
+# Inspect each pipeline stage individually to avoid matching flags on downstream
+# commands (e.g. sort -rn, tail -r). Also catches grep in non-first stages.
 if [[ "$IS_SUBAGENT" == false ]]; then
-    if [[ "$COMMAND" =~ (^|[[:space:];&|])grep[[:space:]]+(-[a-zA-Z]*[rR][a-zA-Z]*|.*[[:space:]]-[a-zA-Z]*[rR][a-zA-Z]*|.*--recursive) ]] && [[ ! "$COMMAND" =~ (-l[[:space:]]|--files-with-matches) ]]; then
+    _HAS_RECURSIVE_GREP=false
+    while IFS= read -r _stage; do
+        _stage="${_stage#"${_stage%%[![:space:]]*}"}"
+        # Strip env assignments (VAR=val ...) and sudo/doas prefixes
+        while [[ "$_stage" =~ ^[A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+ ]]; do
+            _stage="${_stage#${BASH_REMATCH[0]}}"
+        done
+        # Strip sudo/doas and their flags (e.g. sudo -E grep -> grep)
+        if [[ "$_stage" =~ ^(sudo|doas)[[:space:]] ]]; then
+            _stage="${_stage#* }"  # Remove sudo/doas
+            while [[ "$_stage" =~ ^-[^[:space:]]*[[:space:]]+ ]]; do
+                _stage="${_stage#${BASH_REMATCH[0]}}"
+            done
+        fi
+        _stage="${_stage#"${_stage%%[![:space:]]*}"}"  # Re-trim after prefix strip
+        _stage_cmd="${_stage%% *}"
+        _stage_cmd="${_stage_cmd##*/}"  # basename for /usr/bin/grep
+        if [[ "$_stage_cmd" == "grep" ]]; then
+            if [[ "$_stage" =~ grep[[:space:]]+-[a-zA-Z]*[rR] ]] || \
+               [[ "$_stage" =~ grep[[:space:]]+--recursive ]]; then
+                if [[ ! "$_stage" =~ (-l[[:space:]]|--files-with-matches) ]]; then
+                    _HAS_RECURSIVE_GREP=true
+                fi
+            fi
+            break
+        fi
+    done < <(printf '%s\n' "$COMMAND" | tr '|' '\n')
+    if [[ "$_HAS_RECURSIVE_GREP" == true ]]; then
         [[ ! "$COMMAND" =~ \|[[:space:]]*(head|tail|wc) ]] && {
             _warden_emit_block "grep_recursive" 10000; _warden_deny "grep -r scans all - use rg or grep -l"
         }

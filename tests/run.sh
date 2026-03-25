@@ -339,15 +339,15 @@ assert_exit 0 "$rc" "pre-tool-use WebFetch private"
 assert_structured_deny "$out" "pre-tool-use WebFetch private"
 rm -f "$DENY_FIXTURE"
 
-echo "[tests] pre-tool-use (security: WebFetch localhost blocked)"
-DENY_FIXTURE="$(mktemp)"
-cat > "$DENY_FIXTURE" <<'JSON'
+echo "[tests] pre-tool-use (security: WebFetch localhost allowed — user decides via PermissionRequest)"
+ALLOW_FIXTURE="$(mktemp)"
+cat > "$ALLOW_FIXTURE" <<'JSON'
 {"tool_name":"WebFetch","tool_input":{"url":"http://localhost:3000/api/secrets"},"session_id":"demo-session","transcript_path":"/tmp/main.jsonl"}
 JSON
-IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$DENY_FIXTURE")
+IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$ALLOW_FIXTURE")
 assert_exit 0 "$rc" "pre-tool-use WebFetch localhost"
-assert_structured_deny "$out" "pre-tool-use WebFetch localhost"
-rm -f "$DENY_FIXTURE"
+assert_stdout_json_has "$out" '.suppressOutput == true' "pre-tool-use WebFetch localhost"
+rm -f "$ALLOW_FIXTURE"
 
 echo "[tests] pre-tool-use (security: Write to settings blocked)"
 DENY_FIXTURE="$(mktemp)"
@@ -359,18 +359,59 @@ assert_exit 0 "$rc" "pre-tool-use write settings"
 assert_structured_deny "$out" "pre-tool-use write settings"
 rm -f "$DENY_FIXTURE"
 
-echo "[tests] permission-request (deny: destructive)"
+# Helper: generate Bash pre-tool-use fixture and test deny/allow
+_test_bash_pre() {
+  local label="$1" cmd="$2" expect="$3"
+  local fixture
+  fixture="$(mktemp)"
+  jq -n --arg cmd "$cmd" '{tool_name:"Bash",tool_input:{command:$cmd},session_id:"demo-session",transcript_path:"/tmp/main.jsonl"}' > "$fixture"
+  IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$fixture")
+  assert_exit 0 "$rc" "$label"
+  if [[ "$expect" == "deny" ]]; then
+    assert_structured_deny "$out" "$label"
+  else
+    assert_stdout_json_has "$out" '.suppressOutput == true' "$label"
+  fi
+  rm -f "$fixture"
+}
+
+echo "[tests] pre-tool-use (security: disk tool blocking)"
+_test_bash_pre "disk: wipefs"   "wipefs -a /dev/sdc" deny
+_test_bash_pre "disk: fdisk"    "fdisk /dev/sdb" deny
+_test_bash_pre "disk: gdisk"    "gdisk /dev/nvme0n1" deny
+_test_bash_pre "disk: parted"   "parted /dev/sda" deny
+_test_bash_pre "disk: sudo wipefs" "sudo wipefs -a /dev/sdc" deny
+_test_bash_pre "disk: sudo /sbin/fdisk" "sudo /sbin/fdisk /dev/sdb" deny
+_test_bash_pre "disk: env prefix" "env LANG=C wipefs -a /dev/sdc" deny
+_test_bash_pre "disk: mkfs.ext4" "mkfs.ext4 /dev/sdc1" deny
+
+echo "[tests] pre-tool-use (false positive: destructive in grep pattern)"
+_test_bash_pre "fp: grep disk tools" "grep -iE 'wipefs' /var/log/syslog" allow
+_test_bash_pre "fp: echo disk tool"  "echo do not run fdisk" allow
+
+echo "[tests] pre-tool-use (security: settings backup allowed)"
+_test_bash_pre "settings: cp from (backup)" "cp ~/.claude/settings.json /tmp/backup.json" allow
+_test_bash_pre "settings: cp to (tamper)"   "cp /tmp/evil.json ~/.claude/settings.json" deny
+_test_bash_pre "settings: mv from (backup)" "mv ~/.claude/hooks/pre-tool-use /tmp/" allow
+_test_bash_pre "settings: mv to (tamper)"   "mv /tmp/evil ~/.claude/hooks/pre-tool-use" deny
+
+echo "[tests] pre-tool-use (security: grep -r scoping)"
+_test_bash_pre "grep-r: actual recursive"    "grep -rn pattern ." deny
+_test_bash_pre "grep-r: sort -rn not grep"   "grep 'pattern' file.txt | sort -rn" allow
+_test_bash_pre "grep-r: piped to head"       "grep -r pattern dir | head -20" allow
+
+echo "[tests] permission-request (deny: fork bomb)"
 PERM_DENY_FIXTURE="$(mktemp)"
 cat > "$PERM_DENY_FIXTURE" <<'JSON'
-{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}
+{"tool_name":"Bash","tool_input":{"command":":(){ :|:& };:"}}
 JSON
 out="$(mktemp)"; err="$(mktemp)"
 set +e
 cat "$PERM_DENY_FIXTURE" | "$ROOT_DIR/hooks/permission-request" >"$out" 2>"$err"
 rc=$?
 set -e
-assert_exit 0 "$rc" "permission-request deny destructive"
-assert_permission_deny "$out" "permission-request deny destructive"
+assert_exit 0 "$rc" "permission-request deny fork bomb"
+assert_permission_deny "$out" "permission-request deny fork bomb"
 rm -f "$PERM_DENY_FIXTURE" "$out" "$err"
 
 echo "[tests] read-guard (blocking)"
@@ -539,7 +580,7 @@ JSON
 
 printf '65|500000|Bash:rg|%s\n' "$(date +%s)" > "$HOME/.claude/.statusline/session-demo"
 printf '2029|Bash\n' > "$HOME/.claude/.statusline/latency-demo"
-printf '%s|prompt_input_exit|demo\n' "$(date +%s)" > "$HOME/.claude/.statusline/reset-reason"
+printf '%s|prompt_input_exit|demo\n' "$(date +%s)" > "$HOME/.claude/.statusline/reset-reason-demo"
 printf '1|5000|5.14\n' > "$HOME/.claude/.statusline/clears-demo"
 
 status_out="$(WARDEN_STATUSLINE_MAX_BYTES=200 "$ROOT_DIR/statusline.sh" < "$STATUS_FIXTURE")"
@@ -598,7 +639,7 @@ if command -v socat >/dev/null 2>&1; then
   COLLECTOR_SOCK="$COLLECTOR_DIR/collector.sock"
   COLLECTOR_BODY_FILE="$(mktemp)"
   COLLECTOR_HANDLER="$(mktemp)"
-  printf '%s' '{"model":"claude-sonnet-4-6","used_pct":18.5,"tool_count":7,"compact_threshold_pct":85,"subagent_count":0}' > "$COLLECTOR_BODY_FILE"
+  printf '%s' '{"model":"claude-sonnet-4-6","used_pct":18.5,"tool_count":7,"compact_threshold_pct":85,"subagent_count":0,"input_tokens":20000,"cache_read_tokens":5000}' > "$COLLECTOR_BODY_FILE"
   COLLECTOR_BODY_BYTES="$(wc -c < "$COLLECTOR_BODY_FILE" | tr -d ' ')"
   cat > "$COLLECTOR_HANDLER" <<EOF
 #!/usr/bin/env bash

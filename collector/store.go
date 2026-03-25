@@ -36,6 +36,22 @@ func OpenStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
 
+	// Column migrations (SQLite has no ADD COLUMN IF NOT EXISTS)
+	for _, col := range []struct{ table, column, ddl string }{
+		{"sessions", "active_time_seconds", "ALTER TABLE sessions ADD COLUMN active_time_seconds REAL NOT NULL DEFAULT 0"},
+	} {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", col.table, col.column).Scan(&count); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migration probe for %s.%s: %w", col.table, col.column, err)
+		}
+		if count == 0 {
+			if _, err := db.Exec(col.ddl); err != nil {
+				slog.Warn("migration failed", "ddl", col.ddl, "err", err)
+			}
+		}
+	}
+
 	slog.Info("database opened", "path", dbPath)
 	return &Store{db: db}, nil
 }
@@ -76,7 +92,7 @@ type SessionContext struct {
 func (s *Store) GetSessionContext(ctx context.Context, sessionID string) (*SessionContext, error) {
 	sc := &SessionContext{SessionID: sessionID}
 	err := s.db.QueryRowContext(ctx, `
-		SELECT model, context_window, input_tokens, output_tokens,
+		SELECT COALESCE(model, ''), context_window, input_tokens, output_tokens,
 		       cache_read_tokens, cache_creation_tokens, cost_usd,
 		       tool_count, pending_output_tokens, updated_at_ns
 		FROM sessions WHERE session_id = ?`, sessionID,
@@ -198,7 +214,7 @@ type SessionSummary struct {
 // ListSessions returns all sessions ordered by most recently updated.
 func (s *Store) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT session_id, model, context_window, input_tokens, output_tokens,
+		SELECT session_id, COALESCE(model, ''), context_window, input_tokens, output_tokens,
 		       cost_usd, tool_count, pending_output_tokens, started_at_ns, updated_at_ns
 		FROM sessions ORDER BY updated_at_ns DESC LIMIT 100`)
 	if err != nil {
@@ -290,6 +306,56 @@ func (s *Store) EnsureSession(ctx context.Context, sessionID string) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO sessions (session_id, started_at_ns, updated_at_ns)
 		VALUES (?, ?, ?)`, sessionID, now, now)
+	return err
+}
+
+// UpsertSessionTokens updates token counts from the claude_code_token_usage_tokens_total metric.
+// tokenType is one of: "input", "output", "cacheRead", "cacheCreation".
+// Delta temporality: each export is a delta, so we accumulate.
+func (s *Store) UpsertSessionTokens(ctx context.Context, sessionID, model string, contextWindow int, tokenType string, tokens int) error {
+	now := time.Now().UnixNano()
+
+	// Map metric type label to column name
+	var column string
+	switch tokenType {
+	case "input":
+		column = "input_tokens"
+	case "output":
+		column = "output_tokens"
+	case "cacheRead":
+		column = "cache_read_tokens"
+	case "cacheCreation":
+		column = "cache_creation_tokens"
+	default:
+		return nil // unknown type, skip
+	}
+
+	// Use dynamic SQL for the column update. The column name is from a fixed
+	// switch above, not from user input, so this is safe.
+	query := fmt.Sprintf(`
+		INSERT INTO sessions (session_id, model, context_window, %s, started_at_ns, updated_at_ns)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			model = CASE WHEN excluded.model != '' THEN excluded.model ELSE sessions.model END,
+			context_window = CASE WHEN excluded.context_window > 0 THEN excluded.context_window ELSE sessions.context_window END,
+			%s = sessions.%s + excluded.%s,
+			updated_at_ns = excluded.updated_at_ns`,
+		column, column, column, column)
+
+	_, err := s.db.ExecContext(ctx, query, sessionID, model, contextWindow, tokens, now, now)
+	return err
+}
+
+// UpsertSessionActiveTime updates the active_time_seconds from the metric.
+func (s *Store) UpsertSessionActiveTime(ctx context.Context, sessionID string, seconds float64) error {
+	now := time.Now().UnixNano()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO sessions (session_id, active_time_seconds, started_at_ns, updated_at_ns)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			active_time_seconds = excluded.active_time_seconds,
+			updated_at_ns = excluded.updated_at_ns`,
+		sessionID, seconds, now, now)
 	return err
 }
 
