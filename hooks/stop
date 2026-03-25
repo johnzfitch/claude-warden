@@ -69,10 +69,21 @@ if [[ -f "$_JSONL" ]]; then
         printf -v _auto_evt '{"timestamp":%d,"event_type":"autonomous_response","tool":"Stop","session_id":"%s","origin":"%s","request_id":"%s","response_preview":"%s"}' \
             "$_TS" "$SESSION_ID" "$_LAST_ORIGIN" "$_REQ_ID" "$_RESPONSE_PREVIEW"
         _warden_post_to_collector "$_auto_evt"
+        _warden_notify critical "Warden: Autonomous Response" \
+            "Claude responded to a ${_LAST_ORIGIN} trigger without user input. Review the last turn."
+        _WARDEN_AUTO_WARNING="[warden] The previous response was triggered by '${_LAST_ORIGIN}', not by you. It may not reflect your intent -- review before acting on it."
     fi
 fi
 
 # Build stop_hook_summary (shown in Claude UI on session completion)
-jq -n \
-  --arg s "Session: ${DURATION_SECS:-0}s | reason: $REASON" \
-  '{"stop_hook_summary": $s}'
+if [[ -n "${_WARDEN_AUTO_WARNING:-}" ]]; then
+    # Inject warning into both the summary and additionalContext so Claude sees it
+    jq -n \
+      --arg s "Session: ${DURATION_SECS:-0}s | reason: $REASON" \
+      --arg warn "$_WARDEN_AUTO_WARNING" \
+      '{"stop_hook_summary": $s, "hookSpecificOutput":{"hookEventName":"Stop","additionalContext":$warn}}'
+else
+    jq -n \
+      --arg s "Session: ${DURATION_SECS:-0}s | reason: $REASON" \
+      '{"stop_hook_summary": $s}'
+fi
