@@ -685,13 +685,13 @@ def render_conversation_view(db, session_id=None):
         LIMIT 100
     """, [session_id]).fetchall()
 
-    # Query all stop events (turn boundaries)
-    stop_events = db.execute("""
+    # Query conversation turn events (from Go collector JSONL tailer)
+    conv_events = db.execute("""
         SELECT occurred_at_ns, event_type, tool_name, payload_json
         FROM hook_events
-        WHERE session_id = ? AND event_type = 'session_stop'
+        WHERE session_id = ? AND (event_type LIKE 'conv_%' OR event_type = 'autonomous_response')
         ORDER BY occurred_at_ns DESC
-        LIMIT 200
+        LIMIT 500
     """, [session_id]).fetchall()
 
     auto_count = len(auto_events)
@@ -707,7 +707,7 @@ def render_conversation_view(db, session_id=None):
     html = f'''
     <div class="view-header">
       <h2>Conversation Trace</h2>
-      <span class="count">{len(stop_events)} turns, {auto_count} autonomous</span>
+      <span class="count">{len(conv_events)} turns, {auto_count} autonomous</span>
     </div>
     <div style="padding:16px;">
     {alert_banner}
@@ -746,25 +746,34 @@ def render_conversation_view(db, session_id=None):
     <h3 style="margin-bottom:8px;">Turn History</h3>
     <table class="data-grid">
       <thead><tr>
-        <th>Time</th><th>Event</th><th>Reason</th><th>Duration</th>
+        <th>Time</th><th>Type</th><th>Origin</th><th>Preview</th>
       </tr></thead><tbody>
     '''
-    for row in stop_events:
+    for row in conv_events:
         ts, etype, tool, payload = row
         ts_str = format_timestamp(ts)
         try:
             pdata = json.loads(payload)
-            reason = pdata.get('reason', '')
-            dur = pdata.get('duration_seconds', 0)
+            msg_type = pdata.get('message_type', etype)
+            origin = pdata.get('origin_kind', '')
+            preview = pdata.get('text_preview', pdata.get('response_preview', ''))
+            req_id = pdata.get('request_id', '')
         except Exception:
-            reason, dur = '', 0
+            msg_type, origin, preview = etype, '', ''
+
+        badge_class = msg_type.replace("-", "").replace("_", "")
+        origin_html = ""
+        if origin and origin != "human":
+            origin_html = f'<span class="origin-tag">{h(origin)}</span>'
+        elif origin == "human":
+            origin_html = "human"
 
         html += f'''
         <tr>
           <td class="col-ts">{h(ts_str)}</td>
-          <td><span class="badge sessionend">{h(etype)}</span></td>
-          <td>{h(reason)}</td>
-          <td>{dur}s</td>
+          <td><span class="badge {badge_class}">{h(msg_type)}</span></td>
+          <td>{origin_html}</td>
+          <td class="response-preview" title="{h(preview)}">{h(preview)}</td>
         </tr>
         '''
 

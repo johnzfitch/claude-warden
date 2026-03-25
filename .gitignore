@@ -3,6 +3,9 @@
 *.tmp
 .venv/
 
+# Frame timing log (CLAUDE_CODE_FRAME_TIMING_LOG=1 writes to CWD)
+/1
+
 # Internal design/planning docs
 DESIGN-*.md
 plan.md
