@@ -153,13 +153,24 @@ if [[ "$NORM_CMD" =~ (^|[;\&\|])[[:space:]]*rm[[:space:]]+-[rf]+[[:space:]]+(.*)
     # Skip flags (--foo, -x) to find the actual filesystem path target.
     # Use xargs to properly handle quoted paths with spaces.
     _RM_TARGET=""
+    _RM_AFTER_DD=""
     while IFS= read -r _arg; do
-        case "$_arg" in "") continue ;; --) continue ;; -*) continue ;; *) _RM_TARGET="$_arg"; break ;; esac
+        case "$_arg" in
+            "") continue ;;
+            --) _RM_AFTER_DD=1; continue ;;
+            -*) [[ -z "$_RM_AFTER_DD" ]] && continue ;;&
+            *) _RM_TARGET="$_arg"; break ;;
+        esac
     done < <(printf '%s\n' "$_RM_ARGS" | xargs -n1 printf '%s\n' 2>/dev/null)
     # Fallback: if xargs parsing failed, use simple word splitting
     if [[ -z "$_RM_TARGET" ]]; then
+        _RM_AFTER_DD=""
         for _arg in $_RM_ARGS; do
-            case "$_arg" in --) continue ;; -*) continue ;; *) _RM_TARGET="$_arg"; break ;; esac
+            case "$_arg" in
+                --) _RM_AFTER_DD=1; continue ;;
+                -*) [[ -z "$_RM_AFTER_DD" ]] && continue ;;&
+                *) _RM_TARGET="$_arg"; break ;;
+            esac
         done
     fi
     if [[ -n "$_RM_TARGET" ]]; then
@@ -500,7 +511,13 @@ if [[ "$IS_SUBAGENT" == false ]]; then
         while [[ "$_stage" =~ ^[A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+ ]]; do
             _stage="${_stage#${BASH_REMATCH[0]}}"
         done
-        _stage="${_stage#sudo }" ; _stage="${_stage#doas }"
+        # Strip sudo/doas and their flags (e.g. sudo -E grep -> grep)
+        if [[ "$_stage" =~ ^(sudo|doas)[[:space:]] ]]; then
+            _stage="${_stage#* }"  # Remove sudo/doas
+            while [[ "$_stage" =~ ^-[^[:space:]]*[[:space:]]+ ]]; do
+                _stage="${_stage#${BASH_REMATCH[0]}}"
+            done
+        fi
         _stage="${_stage#"${_stage%%[![:space:]]*}"}"  # Re-trim after prefix strip
         _stage_cmd="${_stage%% *}"
         _stage_cmd="${_stage_cmd##*/}"  # basename for /usr/bin/grep
