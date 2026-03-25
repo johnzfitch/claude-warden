@@ -6,7 +6,7 @@ set -euo pipefail
 source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
 LOG_FILE="$HOME/.claude/session-log.txt"
-RESET_REASON_FILE="$WARDEN_STATE_DIR/reset-reason"
+RESET_REASON_FILE=""  # Set after SESSION_ID is parsed below
 AGENT_STATS="$HOME/.claude/agent-stats.csv"
 SESSION_COST_LOG="$HOME/.claude/.monitoring/session-costs.csv"
 
@@ -20,6 +20,7 @@ SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
 [[ -z "$SESSION_ID" ]] && SESSION_ID="unknown"
 _warden_resolve_session_start "$SESSION_ID"
 SESSION_PROM_FILE="$HOME/.claude/.monitoring/textfile/claude-code-session-${SESSION_ID}.prom"
+RESET_REASON_FILE="$WARDEN_STATE_DIR/reset-reason${SESSION_ID:+-$SESSION_ID}"
 
 # Calculate terminal agent duration
 SESSION_START_FILE="$HOME/.claude/.session-times/$SESSION_ID.start"

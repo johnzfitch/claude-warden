@@ -41,7 +41,10 @@ func OpenStore(dbPath string) (*Store, error) {
 		{"sessions", "active_time_seconds", "ALTER TABLE sessions ADD COLUMN active_time_seconds REAL NOT NULL DEFAULT 0"},
 	} {
 		var count int
-		db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", col.table, col.column).Scan(&count)
+		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", col.table, col.column).Scan(&count); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migration probe for %s.%s: %w", col.table, col.column, err)
+		}
 		if count == 0 {
 			if _, err := db.Exec(col.ddl); err != nil {
 				slog.Warn("migration failed", "ddl", col.ddl, "err", err)

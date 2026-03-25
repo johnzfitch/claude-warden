@@ -69,7 +69,13 @@ _warden_realpath() {
     esac
     realpath -q "$path" 2>/dev/null \
         || readlink -f "$path" 2>/dev/null \
-        || (cd "$(dirname "$path")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$path")") \
+        || { \
+            if [[ -d "$path" ]]; then \
+                (cd "$path" 2>/dev/null && pwd -P); \
+            else \
+                (cd "$(dirname "$path")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$path")"); \
+            fi; \
+        } \
         || printf '%s' "$path"
 }
 

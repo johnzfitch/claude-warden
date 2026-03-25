@@ -141,22 +141,23 @@ func main() {
 		}
 	}()
 
-	// Start viewer subprocess if we can find it
+	// Start viewer subprocess (opt-in via WARDEN_VIEWER_AUTOSTART=1)
 	var viewerCmd *exec.Cmd
-	if viewerScript := findViewer(); viewerScript != "" {
-		viewerCmd = exec.Command("python3", viewerScript, "--db", dbPath)
-		viewerCmd.Stdout = os.Stderr
-		viewerCmd.Stderr = os.Stderr
-		if err := viewerCmd.Start(); err != nil {
-			slog.Warn("viewer start failed", "err", err, "script", viewerScript)
-		} else {
-			slog.Info("viewer started", "pid", viewerCmd.Process.Pid, "script", viewerScript)
-			// Reap in background so we notice if it dies
-			go func() {
-				if err := viewerCmd.Wait(); err != nil {
-					slog.Warn("viewer exited", "err", err)
-				}
-			}()
+	if os.Getenv("WARDEN_VIEWER_AUTOSTART") == "1" {
+		if viewerScript := findViewer(); viewerScript != "" {
+			viewerCmd = exec.Command("python3", viewerScript, "--db", dbPath)
+			viewerCmd.Stdout = os.Stderr
+			viewerCmd.Stderr = os.Stderr
+			if err := viewerCmd.Start(); err != nil {
+				slog.Warn("viewer start failed", "err", err, "script", viewerScript)
+			} else {
+				slog.Info("viewer started", "pid", viewerCmd.Process.Pid, "script", viewerScript)
+				go func() {
+					if err := viewerCmd.Wait(); err != nil {
+						slog.Warn("viewer exited", "err", err)
+					}
+				}()
+			}
 		}
 	}
 
