@@ -6,6 +6,35 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+  # Tail Claude Code conversation JSONL (all turns: user, assistant, system)
+  # Filters out high-volume noise (progress, file-history-snapshot).
+  # Enables: LogQL queries on conversation flow, autonomous response detection.
+  filelog/conversation:
+    include:
+      - /home/zack/.claude/projects/*/*.jsonl
+    exclude:
+      - /home/zack/.claude/projects/*/subagents/*.jsonl
+    start_at: end
+    operators:
+      - type: json_parser
+      - type: filter
+        expr: 'not (attributes.type matches "progress|file-history-snapshot|attachment")'
+      - type: move
+        from: attributes.type
+        to: attributes.message_type
+      - type: move
+        from: attributes.sessionId
+        to: attributes.session_id
+      - type: severity_parser
+        parse_from: attributes.message_type
+        mapping:
+          info:
+            - user
+            - assistant
+            - system
+          warn:
+            - queue-operation
+
   # Tail claude-warden hook events
   filelog/warden:
     include:
@@ -43,6 +72,7 @@ receivers:
             - blocked
             - truncated
             - suppressed
+            - autonomous_response
           error:
             - tool_error
 
@@ -102,7 +132,7 @@ service:
       processors: [memory_limiter, resource, batch]
       exporters: [prometheus, debug]
     logs:
-      receivers: [otlp, filelog/warden]
+      receivers: [otlp, filelog/warden, filelog/conversation]
       processors: [memory_limiter, resource, transform/session_label, batch]
       exporters: [otlp_http/loki, debug]
     traces:

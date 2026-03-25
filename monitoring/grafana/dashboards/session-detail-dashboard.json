@@ -547,7 +547,7 @@
     {
       "id": 10,
       "title": "Slowest Calls",
-      "description": "Individual tool calls ordered by duration \u2014 click rows to expand",
+      "description": "Individual tool calls ordered by duration — click rows to expand",
       "type": "table",
       "datasource": {
         "type": "loki",
@@ -846,6 +846,109 @@
           },
           "expr": "{service_name=\"claude-code\", session_id=\"$session_id\"} | json | event_type=\"blocked\"",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Autonomous Responses (Impersonation Detection)",
+      "description": "Detects when Claude responded to non-human input (task notifications, etc.) and may have impersonated the user. Red = action needed.",
+      "type": "table",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-claude-warden"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"claude-code\", session_id=~\"$session_id\"} | json | event_type=\"autonomous_response\"",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "response_preview"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 400
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "origin"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Time",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "Line",
+            "format": "json"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "id": true,
+              "labels": true,
+              "tsNs": true,
+              "timestamp": true,
+              "tool": true,
+              "session_id": true,
+              "event_type": true
+            },
+            "indexByName": {},
+            "renameByName": {
+              "origin": "Origin",
+              "request_id": "Request ID",
+              "response_preview": "Response Preview"
+            }
+          }
         }
       ]
     }

@@ -101,3 +101,35 @@ groups:
           severity: info
         annotations:
           summary: "{{ $value }} tool calls blocked in the last 5 minutes"
+
+      # Alert: Autonomous response detected (Claude responded to non-human input)
+      - uid: warden-autonomous-response
+        title: Autonomous response (impersonation risk)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki-claude-warden
+            model:
+              expr: 'count_over_time({service_name="claude-code"} | json | event_type="autonomous_response" [5m])'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Claude generated {{ $value }} autonomous response(s) to non-human input -- possible user impersonation"

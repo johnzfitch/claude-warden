@@ -240,6 +240,14 @@ html,body { background:var(--bg); color:var(--text); font:13px/1.5 var(--font);
 .badge.tool_output_size { background:var(--blue); color:#fff; }
 .badge.session_start { background:var(--teal); color:#fff; }
 .badge.session_end { background:var(--text-dim); color:#fff; }
+.badge.autonomousresponse { background:#cc2222; color:#fff; animation:pulse 2s infinite; }
+.badge.user { background:var(--teal); color:#fff; }
+.badge.assistant { background:var(--warden-blue-l); color:#fff; }
+.badge.system { background:var(--text-dim); color:#fff; }
+.badge.queueoperation { background:var(--amber); color:#000; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+.response-preview { font-size:11px; color:var(--text-dim); max-width:500px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.origin-tag { font-size:9px; padding:1px 4px; border-radius:2px; background:var(--red); color:#fff; margin-left:4px; }
 
 /* ── Chart containers ── */
 .chart-row { display:flex; gap:16px; padding:16px; flex-wrap:wrap; }
@@ -324,6 +332,7 @@ html,body { background:var(--bg); color:var(--text); font:13px/1.5 var(--font);
     <button hx-get="/view/cost" hx-target="#content">Cost</button>
     <button hx-get="/view/tools" hx-target="#content">Top Tools</button>
     <button hx-get="/view/trend" hx-target="#content">Trend</button>
+    <button hx-get="/view/conversation" hx-target="#content">Conv</button>
     <div class="spacer"></div>
     <span class="db-info">DB: %(db_path)s</span>
   </div>
@@ -659,6 +668,110 @@ def render_events_view(db, session_id=None, event_filter="ALL"):
     return html
 
 
+def render_conversation_view(db, session_id=None):
+    """Render conversation turn log with autonomous response detection."""
+    if not session_id:
+        row = db.execute("SELECT session_id FROM sessions ORDER BY updated_at_ns DESC LIMIT 1").fetchone()
+        if not row:
+            return '<div class="empty-state">No sessions available</div>'
+        session_id = row[0]
+
+    # Query autonomous_response events
+    auto_events = db.execute("""
+        SELECT occurred_at_ns, event_type, tool_name, payload_json
+        FROM hook_events
+        WHERE session_id = ? AND event_type = 'autonomous_response'
+        ORDER BY occurred_at_ns DESC
+        LIMIT 100
+    """, [session_id]).fetchall()
+
+    # Query all stop events (turn boundaries)
+    stop_events = db.execute("""
+        SELECT occurred_at_ns, event_type, tool_name, payload_json
+        FROM hook_events
+        WHERE session_id = ? AND event_type = 'session_stop'
+        ORDER BY occurred_at_ns DESC
+        LIMIT 200
+    """, [session_id]).fetchall()
+
+    auto_count = len(auto_events)
+    alert_banner = ""
+    if auto_count > 0:
+        alert_banner = f'''
+        <div style="background:var(--red);color:#fff;padding:8px 16px;border-radius:2px;margin-bottom:12px;">
+            {auto_count} autonomous response(s) detected &mdash;
+            Claude responded to non-human input and may have impersonated the user.
+        </div>
+        '''
+
+    html = f'''
+    <div class="view-header">
+      <h2>Conversation Trace</h2>
+      <span class="count">{len(stop_events)} turns, {auto_count} autonomous</span>
+    </div>
+    <div style="padding:16px;">
+    {alert_banner}
+    '''
+
+    if auto_events:
+        html += '''
+        <h3 style="margin-bottom:8px;">Autonomous Responses</h3>
+        <table class="data-grid">
+          <thead><tr>
+            <th>Time</th><th>Origin</th><th>Request ID</th><th>Response Preview</th>
+          </tr></thead><tbody>
+        '''
+        for row in auto_events:
+            ts, etype, tool, payload = row
+            ts_str = format_timestamp(ts)
+            try:
+                pdata = json.loads(payload)
+                origin = pdata.get('origin', '?')
+                req_id = pdata.get('request_id', '')[:12]
+                preview = pdata.get('response_preview', '')
+            except Exception:
+                origin, req_id, preview = '?', '', ''
+
+            html += f'''
+            <tr>
+              <td class="col-ts">{h(ts_str)}</td>
+              <td><span class="badge autonomousresponse">{h(origin)}</span></td>
+              <td style="font-size:10px;">{h(req_id)}</td>
+              <td class="response-preview" title="{h(preview)}">{h(preview)}</td>
+            </tr>
+            '''
+        html += '</tbody></table><br>'
+
+    html += '''
+    <h3 style="margin-bottom:8px;">Turn History</h3>
+    <table class="data-grid">
+      <thead><tr>
+        <th>Time</th><th>Event</th><th>Reason</th><th>Duration</th>
+      </tr></thead><tbody>
+    '''
+    for row in stop_events:
+        ts, etype, tool, payload = row
+        ts_str = format_timestamp(ts)
+        try:
+            pdata = json.loads(payload)
+            reason = pdata.get('reason', '')
+            dur = pdata.get('duration_seconds', 0)
+        except Exception:
+            reason, dur = '', 0
+
+        html += f'''
+        <tr>
+          <td class="col-ts">{h(ts_str)}</td>
+          <td><span class="badge sessionend">{h(etype)}</span></td>
+          <td>{h(reason)}</td>
+          <td>{dur}s</td>
+        </tr>
+        '''
+
+    html += '</tbody></table></div>'
+    return html
+
+
 def render_cost_view(db, session_id=None):
     """Render cost charts."""
     # Recent sessions cost bar chart
@@ -958,6 +1071,13 @@ class WardenHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header('Content-type', 'text/html; charset=utf-8')
                 self.end_headers()
                 html = render_trend_view(db, session_id)
+                self.wfile.write(html.encode())
+
+            elif path == '/view/conversation':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html; charset=utf-8')
+                self.end_headers()
+                html = render_conversation_view(db, session_id)
                 self.wfile.write(html.encode())
 
             else:

@@ -47,6 +47,31 @@ printf -v _evt '{"timestamp":%d,"event_type":"session_stop","tool":"Stop","sessi
   "$_TS" "$SESSION_ID" "$_REASON_SAFE" "${DURATION_SECS:-0}"
 _warden_post_to_collector "$_evt"
 
+# === AUTONOMOUS RESPONSE DETECTION ===
+# Check if the preceding user message was non-human (task-notification, etc.).
+# Claude Code project dirs use CWD with / -> - as the key.
+_PROJECT_KEY=$(printf '%s' "$PWD" | tr '/' '-')
+_JSONL="$HOME/.claude/projects/${_PROJECT_KEY}/${SESSION_ID}.jsonl"
+if [[ -f "$_JSONL" ]]; then
+    # Find the last user message origin (tail enough lines to catch it past progress/system noise)
+    _LAST_ORIGIN=$(tail -30 "$_JSONL" \
+        | jq -r 'select(.type == "user") | .origin.kind // "human"' 2>/dev/null \
+        | tail -1)
+    if [[ -n "$_LAST_ORIGIN" && "$_LAST_ORIGIN" != "human" ]]; then
+        # Extract the assistant response that followed the non-human trigger
+        _RESPONSE_PREVIEW=$(tail -10 "$_JSONL" \
+            | jq -r 'select(.type == "assistant") | .message.content[0].text // "" | .[0:200]' 2>/dev/null \
+            | tail -1)
+        _warden_json_escape _RESPONSE_PREVIEW
+        _REQ_ID=$(tail -10 "$_JSONL" \
+            | jq -r 'select(.type == "assistant") | .requestId // ""' 2>/dev/null \
+            | tail -1)
+        printf -v _auto_evt '{"timestamp":%d,"event_type":"autonomous_response","tool":"Stop","session_id":"%s","origin":"%s","request_id":"%s","response_preview":"%s"}' \
+            "$_TS" "$SESSION_ID" "$_LAST_ORIGIN" "$_REQ_ID" "$_RESPONSE_PREVIEW"
+        _warden_post_to_collector "$_auto_evt"
+    fi
+fi
+
 # Build stop_hook_summary (shown in Claude UI on session completion)
 jq -n \
   --arg s "Session: ${DURATION_SECS:-0}s | reason: $REASON" \

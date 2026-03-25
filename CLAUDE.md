@@ -74,6 +74,13 @@ The `timestamp` field is **relative to session start** (not epoch). The OTEL col
 - `_warden_emit_latency` writes the `tool_latency` event
 - `otel-trace.sh` emits an OTLP span via curl to `localhost:4318/v1/traces`
 
+### Autonomous response detection
+The `stop` hook checks if the preceding user message in the conversation JSONL had a non-human `origin.kind` (e.g., `task-notification`). When detected, it emits:
+```json
+{"timestamp":42,"event_type":"autonomous_response","tool":"Stop","session_id":"...","origin":"task-notification","request_id":"req_...","response_preview":"first 200 chars of Claude response"}
+```
+The OTEL collector also tails conversation JSONL files (`filelog/conversation` receiver) for full turn-level observability. Grafana alert `warden-autonomous-response` fires on any occurrence (severity: critical).
+
 ### Trace span format
 - `trace_id`: deterministic from session ID (md5 of `"warden-trace-$session_id"`)
 - `span_id`: random 16 hex chars (head -c8 /dev/urandom | xxd -p)
