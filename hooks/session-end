@@ -6,7 +6,7 @@ set -euo pipefail
 source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
 LOG_FILE="$HOME/.claude/session-log.txt"
-RESET_REASON_FILE="$WARDEN_STATE_DIR/reset-reason"
+RESET_REASON_FILE=""  # Set after SESSION_ID is parsed below
 AGENT_STATS="$HOME/.claude/agent-stats.csv"
 SESSION_COST_LOG="$HOME/.claude/.monitoring/session-costs.csv"
 
@@ -20,6 +20,7 @@ SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
 [[ -z "$SESSION_ID" ]] && SESSION_ID="unknown"
 _warden_resolve_session_start "$SESSION_ID"
 SESSION_PROM_FILE="$HOME/.claude/.monitoring/textfile/claude-code-session-${SESSION_ID}.prom"
+RESET_REASON_FILE="$WARDEN_STATE_DIR/reset-reason${SESSION_ID:+-$SESSION_ID}"
 
 # Calculate terminal agent duration
 SESSION_START_FILE="$HOME/.claude/.session-times/$SESSION_ID.start"
@@ -89,17 +90,11 @@ fi
 # unbounded file accumulation (previously missed .tool-start-*, .quiet-override-*,
 # clears-*, peak-*, .session_start-*).
 if [[ -d "$WARDEN_STATE_DIR" ]]; then
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'state-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.tool-start-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.quiet-override-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'clears-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'peak-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.session_start-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'startup-model-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'subagent-count-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    for _pat in 'tool-count-*' 'tool-top-*' 'session-*' 'state-*' '.tool-start-*' \
+                '.quiet-override-*' 'clears-*' 'peak-*' '.session_start-*' \
+                'startup-model-*' 'subagent-count-*'; do
+        find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name "$_pat" -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    done
     # Stale locks: flock files + legacy mkdir lock dirs
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '*.lock' -mmin +60 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type d -name '*.lock.d' -mmin +60 -exec rm -rf {} + 2>/dev/null || true

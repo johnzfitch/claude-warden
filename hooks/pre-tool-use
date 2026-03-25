@@ -53,17 +53,7 @@ if [[ "$TOOL_NAME" == mcp__* ]]; then
 fi
 
 # === SUBAGENT DETECTION (applies to ALL tools) ===
-IS_SUBAGENT=false
-AGENT_TYPE=""
-AGENT_ID=""
-
-if _warden_is_subagent "$TRANSCRIPT_PATH"; then
-    IS_SUBAGENT=true
-    AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
-    if [[ -n "$AGENT_ID" ]]; then
-        AGENT_TYPE=$(_warden_get_agent_type "$AGENT_ID")
-    fi
-fi
+_warden_load_subagent_info
 
 # === SUBAGENT BUDGET ENFORCEMENT (applies to ALL tools) ===
 # Deny-file pattern: collector writes budget-deny-{agent_id} when exceeded.
@@ -153,22 +143,52 @@ NORM_CMD=$(echo "$COMMAND" | tr -s '[:space:]' ' ')
 
 # rm -rf: deny critical paths unconditionally, deny 10+ file dirs
 # Only match rm at command start or after a separator (not inside strings)
-if [[ "$NORM_CMD" =~ (^|[;\&\|])[[:space:]]*rm[[:space:]]+-[rf]+[[:space:]]+([^[:space:];\&\|]+) ]]; then
-    _RM_TARGET="${BASH_REMATCH[2]}"
-    _RM_TARGET="${_RM_TARGET#\"}" ; _RM_TARGET="${_RM_TARGET%\"}"
-    _RM_TARGET="${_RM_TARGET#\'}" ; _RM_TARGET="${_RM_TARGET%\'}"
-    # Resolve to real path for comparison (catch symlinks, relative paths)
-    _RM_REAL=$(_warden_realpath "$_RM_TARGET")
-    case "$_RM_REAL" in
-        /|/home|"$HOME"|/root|/etc|/var|/usr|/boot|/sys|/proc)
-            _warden_emit_block "destructive_cmd" 0
-            _warden_deny "Blocked: recursive delete on critical path ($_RM_REAL)" ;;
-    esac
-    if [[ -d "$_RM_TARGET" ]]; then
-        _FC=$(find -P "$_RM_TARGET" -maxdepth 3 -type f 2>/dev/null | head -11 | wc -l)
-        if (( _FC >= 10 )); then
-            _warden_emit_block "destructive_cmd" 0
-            _warden_deny "Blocked: rm -rf on directory with ${_FC}+ files"
+if [[ "$NORM_CMD" =~ (^|[;\&\|])[[:space:]]*rm[[:space:]]+-[rf]+[[:space:]]+(.*) ]]; then
+    _RM_ARGS="${BASH_REMATCH[2]}"
+    # Explicitly block --no-preserve-root regardless of target
+    [[ "$_RM_ARGS" =~ --no-preserve-root ]] && {
+        _warden_emit_block "destructive_cmd" 0
+        _warden_deny "Blocked: rm --no-preserve-root"
+    }
+    # Skip flags (--foo, -x) to find the actual filesystem path target.
+    # Use xargs to properly handle quoted paths with spaces.
+    _RM_TARGET=""
+    _RM_AFTER_DD=""
+    while IFS= read -r _arg; do
+        case "$_arg" in
+            "") continue ;;
+            --) _RM_AFTER_DD=1; continue ;;
+            -*) [[ -z "$_RM_AFTER_DD" ]] && continue ;;&
+            *) _RM_TARGET="$_arg"; break ;;
+        esac
+    done < <(printf '%s\n' "$_RM_ARGS" | xargs -n1 printf '%s\n' 2>/dev/null)
+    # Fallback: if xargs parsing failed, use simple word splitting
+    if [[ -z "$_RM_TARGET" ]]; then
+        _RM_AFTER_DD=""
+        for _arg in $_RM_ARGS; do
+            case "$_arg" in
+                --) _RM_AFTER_DD=1; continue ;;
+                -*) [[ -z "$_RM_AFTER_DD" ]] && continue ;;&
+                *) _RM_TARGET="$_arg"; break ;;
+            esac
+        done
+    fi
+    if [[ -n "$_RM_TARGET" ]]; then
+        _RM_TARGET="${_RM_TARGET#\"}" ; _RM_TARGET="${_RM_TARGET%\"}"
+        _RM_TARGET="${_RM_TARGET#\'}" ; _RM_TARGET="${_RM_TARGET%\'}"
+        # Resolve to real path for comparison (catch symlinks, relative paths)
+        _RM_REAL=$(_warden_realpath "$_RM_TARGET")
+        case "$_RM_REAL" in
+            /|/home|"$HOME"|/root|/etc|/var|/usr|/boot|/sys|/proc)
+                _warden_emit_block "destructive_cmd" 0
+                _warden_deny "Blocked: recursive delete on critical path ($_RM_REAL)" ;;
+        esac
+        if [[ -d "$_RM_TARGET" ]]; then
+            _FC=$(find -P "$_RM_TARGET" -maxdepth 3 -type f 2>/dev/null | head -11 | wc -l)
+            if (( _FC >= 10 )); then
+                _warden_emit_block "destructive_cmd" 0
+                _warden_deny "Blocked: rm -rf on directory with ${_FC}+ files"
+            fi
         fi
     fi
 fi
@@ -487,6 +507,18 @@ if [[ "$IS_SUBAGENT" == false ]]; then
     _HAS_RECURSIVE_GREP=false
     while IFS= read -r _stage; do
         _stage="${_stage#"${_stage%%[![:space:]]*}"}"
+        # Strip env assignments (VAR=val ...) and sudo/doas prefixes
+        while [[ "$_stage" =~ ^[A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+ ]]; do
+            _stage="${_stage#${BASH_REMATCH[0]}}"
+        done
+        # Strip sudo/doas and their flags (e.g. sudo -E grep -> grep)
+        if [[ "$_stage" =~ ^(sudo|doas)[[:space:]] ]]; then
+            _stage="${_stage#* }"  # Remove sudo/doas
+            while [[ "$_stage" =~ ^-[^[:space:]]*[[:space:]]+ ]]; do
+                _stage="${_stage#${BASH_REMATCH[0]}}"
+            done
+        fi
+        _stage="${_stage#"${_stage%%[![:space:]]*}"}"  # Re-trim after prefix strip
         _stage_cmd="${_stage%% *}"
         _stage_cmd="${_stage_cmd##*/}"  # basename for /usr/bin/grep
         if [[ "$_stage_cmd" == "grep" ]]; then

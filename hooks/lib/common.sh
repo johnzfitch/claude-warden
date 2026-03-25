@@ -69,7 +69,13 @@ _warden_realpath() {
     esac
     realpath -q "$path" 2>/dev/null \
         || readlink -f "$path" 2>/dev/null \
-        || (cd "$(dirname "$path")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$path")") \
+        || { \
+            if [[ -d "$path" ]]; then \
+                (cd "$path" 2>/dev/null && pwd -P); \
+            else \
+                (cd "$(dirname "$path")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$path")"); \
+            fi; \
+        } \
         || printf '%s' "$path"
 }
 
@@ -424,6 +430,17 @@ _warden_get_agent_type() {
     fi
 
     printf '%s' "$agent_type"
+}
+
+# Load subagent detection info into IS_SUBAGENT, AGENT_ID, AGENT_TYPE globals.
+# Requires TRANSCRIPT_PATH to be set (from hook JSON input).
+_warden_load_subagent_info() {
+    IS_SUBAGENT=false; AGENT_ID=""; AGENT_TYPE=""
+    if _warden_is_subagent "$TRANSCRIPT_PATH"; then
+        IS_SUBAGENT=true
+        AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
+        [[ -n "$AGENT_ID" ]] && AGENT_TYPE=$(_warden_get_agent_type "$AGENT_ID")
+    fi
 }
 
 # ==============================================================================

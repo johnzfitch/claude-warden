@@ -8,7 +8,9 @@
 [badge-platform]: https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey
 [releases]: https://github.com/johnzfitch/claude-warden/releases
 [license-file]: https://github.com/johnzfitch/claude-warden/blob/master/LICENSE
-![claude-warden](https://github.com/user-attachments/assets/f801bd2f-8945-4ba1-9e5d-ff2174cc3a83)
+<table align="center" bgcolor="#0d1117"><tr><td>
+<img alt="claude-warden" src="https://github.com/user-attachments/assets/f801bd2f-8945-4ba1-9e5d-ff2174cc3a83">
+</td></tr></table>
 # claude-warden
 
 [![version][badge-version]][releases] [![license][badge-license]][license-file] [![platform][badge-platform]][repo]
@@ -40,12 +42,16 @@ claude-warden installs shell hooks that intercept every Claude Code tool call. E
 
 <img alt="Guard catalog — 15 hooks organized by lifecycle phase: pre-execution, post-execution, lifecycle, and observation" src="assets/guard-catalog.svg" width="840">
 
+<table bgcolor="#0d1117"><tr><td>
 <img alt="HookDimensions — 3D visualization of the hook enforcement layers" src="https://github.com/user-attachments/assets/d688ac7a-1e94-483e-af01-2dc08b15207e" width="840">
+</td></tr></table>
 
 ## <img src=".github/assets/icons/applications-stack-16x16.png" height="20" alt=""> Architecture
 
 <figure>
+  <table bgcolor="#0d1117"><tr><td>
   <img alt="WardenPipelineFlow — animated token savings walkthrough showing data flowing through all three layers" src="https://github.com/user-attachments/assets/7baf19c2-91f4-45e9-84fe-76120db9a49b" width="840">
+  </td></tr></table>
   <figcaption>Token savings pipeline &mdash; tool calls enter the hook membrane, get silenced/compressed/blocked, and exit with fewer tokens.</figcaption>
 </figure>
 

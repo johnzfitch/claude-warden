@@ -49,7 +49,8 @@ fi
 
 # === SAFE PIPE TARGETS ===
 # curl | jq, curl | head, curl | grep, etc. are not RCE -- only curl | bash/sh is dangerous.
-if [[ "$NORM_CMD" =~ curl[[:space:]] ]] && [[ "$NORM_CMD" =~ \| ]]; then
+# Do NOT auto-allow if chained commands (&&, ;) follow the pipe — they can execute payloads.
+if [[ "$NORM_CMD" =~ curl[[:space:]] ]] && [[ "$NORM_CMD" =~ \| ]] && [[ ! "$NORM_CMD" =~ \|.*(\&\&|\;) ]]; then
     # Extract first word of each pipe stage (POSIX awk, no grep -P dependency)
     _PIPE_TARGETS=$(printf '%s' "$NORM_CMD" | awk -F'|' '{
         for(i=2;i<=NF;i++){
@@ -73,10 +74,42 @@ if [[ "$NORM_CMD" =~ curl[[:space:]] ]] && [[ "$NORM_CMD" =~ \| ]]; then
 fi
 
 # === FILTERED ENV ===
-# env | grep PATTERN is safe -- only full env dumps leak secrets.
-if [[ "$NORM_CMD" =~ ^env[[:space:]]*\| ]] || [[ "$NORM_CMD" =~ ^printenv[[:space:]]*\| ]]; then
-    printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
-    exit 0
+# Only auto-allow env piped to grep with a specific pattern (not wildcard/dot).
+# Bare `env | grep .` or `env | cat` would expose full environment including secrets.
+if [[ "$NORM_CMD" =~ ^(env|printenv)[[:space:]]*\|[[:space:]]*grep[[:space:]] ]]; then
+    # Extract grep args after "grep "
+    _ENV_GREP_ARGS="${NORM_CMD#*grep }"
+    _ENV_PATTERN=""
+    _ENV_GREP_HAS_FILE=false
+    _ENV_AFTER_DASHDASH=false
+    # Detect -f/--file (pattern from file — cannot validate content)
+    for _ga in $_ENV_GREP_ARGS; do
+        case "$_ga" in -f|--file|-f*|--file=*) _ENV_GREP_HAS_FILE=true; break ;; esac
+    done
+    if [[ "$_ENV_GREP_HAS_FILE" == "false" ]]; then
+        # Extract grep pattern: last non-flag positional arg (handles -e '.*' after a real pattern)
+        for _ga in $_ENV_GREP_ARGS; do
+            if [[ "$_ENV_AFTER_DASHDASH" == "false" ]]; then
+                case "$_ga" in
+                    --) _ENV_AFTER_DASHDASH=true; continue ;;
+                    -*) continue ;;
+                    *) _ENV_PATTERN="$_ga" ;;
+                esac
+            else
+                # After --, all tokens are positional; last one wins
+                _ENV_PATTERN="$_ga"
+            fi
+        done
+        # Strip surrounding quotes before checking
+        _ENV_PATTERN="${_ENV_PATTERN#\"}" ; _ENV_PATTERN="${_ENV_PATTERN%\"}"
+        _ENV_PATTERN="${_ENV_PATTERN#\'}" ; _ENV_PATTERN="${_ENV_PATTERN%\'}"
+        # Block trivial patterns that match everything
+        case "$_ENV_PATTERN" in
+            ""|"."|".*"|"^"|"^."|"^.*") : ;;  # Fall through to permission dialog
+            *) printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+               exit 0 ;;
+        esac
+    fi
 fi
 
 # Special-case echo: allow only constant literals (no expansion, no shell metacharacters).
