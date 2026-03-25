@@ -90,17 +90,11 @@ fi
 # unbounded file accumulation (previously missed .tool-start-*, .quiet-override-*,
 # clears-*, peak-*, .session_start-*).
 if [[ -d "$WARDEN_STATE_DIR" ]]; then
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-count-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'tool-top-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'session-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'state-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.tool-start-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.quiet-override-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'clears-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'peak-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '.session_start-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'startup-model-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
-    find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name 'subagent-count-*' -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    for _pat in 'tool-count-*' 'tool-top-*' 'session-*' 'state-*' '.tool-start-*' \
+                '.quiet-override-*' 'clears-*' 'peak-*' '.session_start-*' \
+                'startup-model-*' 'subagent-count-*'; do
+        find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name "$_pat" -mtime +0 -exec rm -f {} + 2>/dev/null || true
+    done
     # Stale locks: flock files + legacy mkdir lock dirs
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type f -name '*.lock' -mmin +60 -exec rm -f {} + 2>/dev/null || true
     find "$WARDEN_STATE_DIR" -maxdepth 1 -type d -name '*.lock.d' -mmin +60 -exec rm -rf {} + 2>/dev/null || true

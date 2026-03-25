@@ -432,6 +432,17 @@ _warden_get_agent_type() {
     printf '%s' "$agent_type"
 }
 
+# Load subagent detection info into IS_SUBAGENT, AGENT_ID, AGENT_TYPE globals.
+# Requires TRANSCRIPT_PATH to be set (from hook JSON input).
+_warden_load_subagent_info() {
+    IS_SUBAGENT=false; AGENT_ID=""; AGENT_TYPE=""
+    if _warden_is_subagent "$TRANSCRIPT_PATH"; then
+        IS_SUBAGENT=true
+        AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
+        [[ -n "$AGENT_ID" ]] && AGENT_TYPE=$(_warden_get_agent_type "$AGENT_ID")
+    fi
+}
+
 # ==============================================================================
 # EVENT EMISSION
 # ==============================================================================

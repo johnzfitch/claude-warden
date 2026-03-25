@@ -66,13 +66,7 @@ fi
 
 # === SUBAGENT DETECTION + CUMULATIVE BYTE TRACKING ===
 TRANSCRIPT_PATH=$(_warden_parse_transcript_path)
-IS_SUBAGENT=false
-AGENT_ID=""
-
-if _warden_is_subagent "$TRANSCRIPT_PATH"; then
-    IS_SUBAGENT=true
-    AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
-fi
+_warden_load_subagent_info
 
 # POST output bytes to collector for budget tracking (async, fire-and-forget).
 # The collector writes deny files when budget is exceeded.

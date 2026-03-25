@@ -53,17 +53,7 @@ if [[ "$TOOL_NAME" == mcp__* ]]; then
 fi
 
 # === SUBAGENT DETECTION (applies to ALL tools) ===
-IS_SUBAGENT=false
-AGENT_TYPE=""
-AGENT_ID=""
-
-if _warden_is_subagent "$TRANSCRIPT_PATH"; then
-    IS_SUBAGENT=true
-    AGENT_ID=$(_warden_get_agent_id "$TRANSCRIPT_PATH")
-    if [[ -n "$AGENT_ID" ]]; then
-        AGENT_TYPE=$(_warden_get_agent_type "$AGENT_ID")
-    fi
-fi
+_warden_load_subagent_info
 
 # === SUBAGENT BUDGET ENFORCEMENT (applies to ALL tools) ===
 # Deny-file pattern: collector writes budget-deny-{agent_id} when exceeded.
