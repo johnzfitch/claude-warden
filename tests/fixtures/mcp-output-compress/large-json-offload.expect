@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "jq": [".modifyOutput", ".hookSpecificOutput.additionalContext"],
+    "contains": ["MCP output offloaded", "offloaded file"]
+  }
+}

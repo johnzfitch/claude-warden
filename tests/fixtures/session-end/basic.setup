@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+mkdir -p "$HOME/.claude/.session-times"
+date +%s > "$HOME/.claude/.session-times/fixture-session.start"

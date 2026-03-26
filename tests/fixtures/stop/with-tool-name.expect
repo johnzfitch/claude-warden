@@ -1,0 +1,6 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "jq": [".stop_hook_summary | test(\"Session:\")"]
+  }
+}

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Generate a 400-line Python file (above 350 line threshold for main agent)
+{
+  echo "import os"
+  echo "import sys"
+  echo "import json"
+  echo "from pathlib import Path"
+  echo ""
+  echo "class MyClass:"
+  for i in $(seq 1 50); do
+    echo "    def method_${i}(self):"
+    echo "        # implementation"
+    echo "        x = $i * 2"
+    echo "        return x"
+    echo ""
+    echo "    def _private_${i}(self):"
+    echo "        pass"
+    echo ""
+  done
+  echo "def standalone_func():"
+  echo "    pass"
+  echo ""
+  echo "async def async_func():"
+  echo "    pass"
+} | jq -Rs --arg fp "src/big.py" \
+  '{"tool_name":"Read","tool_input":{"file_path":$fp},"tool_response":{"content":[{"type":"text","text":.}]},"session_id":"test-session","transcript_path":"/tmp/main.jsonl"}'

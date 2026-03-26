@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+TEXT="$(printf 'Switched to branch main\nhint: You have diverged from remote.\nhint: Run git pull to reconcile.\nhint: See git help for more info.\nYour branch is up to date.\n')"
+jq -n --arg txt "$TEXT" '{
+  tool_name:"Bash", session_id:"test-session",
+  tool_input:{command:"git checkout main"},
+  tool_response:{content:[{type:"text",text:$txt}]}
+}'

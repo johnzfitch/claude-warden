@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+tmpfile="$(mktemp)"
+echo '{"disableAllHooks": false}' > "$tmpfile"
+jq -n --arg fp "$tmpfile" '{"source":"project_settings","file_path":$fp,"session_id":"test-session"}'

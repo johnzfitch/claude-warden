@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": { "empty": true },
+  "stderr": { "contains": ["Hint:", "sudo"] }
+}

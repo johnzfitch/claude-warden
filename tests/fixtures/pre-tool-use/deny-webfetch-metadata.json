@@ -1,0 +1,8 @@
+{
+  "tool_input": {
+    "url": "http://169.254.169.254/latest/meta-data/"
+  },
+  "tool_name": "WebFetch",
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

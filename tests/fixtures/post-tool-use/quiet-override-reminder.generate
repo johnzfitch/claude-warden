@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Simulate quiet override state from pre-tool-use
+CMD="npm install --silent express"
+CMD_HASH=$(printf '%s' "$CMD" | { md5sum 2>/dev/null || md5 -q 2>/dev/null || openssl md5 -r; } | awk '{print $1}')
+STATE_DIR="${WARDEN_STATE_DIR:-$HOME/.claude/.statusline}"
+mkdir -p "$STATE_DIR"
+printf '%s' "npm_quiet_override" > "$STATE_DIR/.quiet-override-Bash-test-session-${CMD_HASH}-fixture"
+jq -n --arg cmd "$CMD" '{
+  tool_name:"Bash", session_id:"test-session",
+  tool_input:{command:$cmd},
+  tool_response:{content:[{type:"text",text:"added 1 package"}]}
+}'

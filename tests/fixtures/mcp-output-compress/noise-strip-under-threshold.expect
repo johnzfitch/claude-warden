@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "jq": [".modifyOutput"],
+    "not_contains": ["offloaded"]
+  }
+}

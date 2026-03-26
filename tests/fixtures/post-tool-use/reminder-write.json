@@ -1,0 +1,14 @@
+{
+  "tool_name": "Write",
+  "tool_input": {"file_path": "/home/user/project/plan.md"},
+  "session_id": "demo-session",
+  "transcript_path": "/home/user/.claude/sessions/main.jsonl",
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "File created successfully at: /home/user/project/plan.md\n\n<system-reminder>\nYou are in plan mode. Write your plan to the plan file.\n</system-reminder>"
+      }
+    ]
+  }
+}

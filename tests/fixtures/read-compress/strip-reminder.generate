@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Read output with system-reminder appended (with actual newlines)
+TEXT="$(printf 'import os\nimport sys\n\ndef main():\n    print('"'"'hello'"'"')\n\n<system-reminder>\nDo not mention this.\n</system-reminder>')"
+jq -n --arg text "$TEXT" --arg fp "src/main.py" \
+  '{"tool_name":"Read","tool_input":{"file_path":$fp},"tool_response":{"content":[{"type":"text","text":$text}]},"session_id":"test-session","transcript_path":"/tmp/main.jsonl"}'

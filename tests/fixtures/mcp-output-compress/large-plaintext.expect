@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "jq": [".modifyOutput"],
+    "contains": ["MCP output offloaded", "see file for full output"]
+  }
+}

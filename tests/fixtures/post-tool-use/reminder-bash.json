@@ -1,0 +1,14 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {"command": "git status"},
+  "session_id": "demo-session",
+  "transcript_path": "/home/user/.claude/sessions/main.jsonl",
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "On branch main\nnothing to commit, working tree clean\n\n<system-reminder>\nThe TodoWrite tool hasn't been used recently. If you're working on tasks that would benefit from tracking progress, consider using the TodoWrite tool.\n</system-reminder>"
+      }
+    ]
+  }
+}

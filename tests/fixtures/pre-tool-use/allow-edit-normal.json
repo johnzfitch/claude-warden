@@ -1,0 +1,10 @@
+{
+  "tool_input": {
+    "file_path": "/tmp/test.txt",
+    "new_string": "hello",
+    "old_string": "world"
+  },
+  "tool_name": "Edit",
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

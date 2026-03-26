@@ -1,0 +1,14 @@
+{
+  "tool_name": "Read",
+  "tool_input": {"file_path": "/home/user/project/src/app.ts"},
+  "session_id": "demo-session",
+  "transcript_path": "/home/user/.claude/sessions/main.jsonl",
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "     1\timport express from 'express';\n     2\timport { router } from './routes';\n     3\t\n     4\tconst app = express();\n     5\tapp.use(router);\n     6\tapp.listen(3000);"
+      }
+    ]
+  }
+}

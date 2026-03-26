@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Generate a 400-line JSON file
+{
+  echo "{"
+  for i in $(seq 1 395); do
+    echo "    \"key_${i}\": \"value_${i}\","
+  done
+  echo "    \"last_key\": \"last_value\""
+  echo "}"
+} | jq -Rs --arg fp "config.json" \
+  '{"tool_name":"Read","tool_input":{"file_path":$fp},"tool_response":{"content":[{"type":"text","text":.}]},"session_id":"test-session","transcript_path":"/tmp/main.jsonl"}'

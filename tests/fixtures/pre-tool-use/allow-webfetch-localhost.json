@@ -1,0 +1,8 @@
+{
+  "tool_input": {
+    "url": "http://localhost:3000/api/health"
+  },
+  "tool_name": "WebFetch",
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

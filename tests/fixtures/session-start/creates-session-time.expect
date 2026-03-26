@@ -1,0 +1,6 @@
+{
+  "exit_code": 0,
+  "files": {
+    "exist": ["$HOME/.claude/.session-times/time-test-session.start"]
+  }
+}

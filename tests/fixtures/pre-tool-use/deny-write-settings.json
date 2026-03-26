@@ -1,0 +1,9 @@
+{
+  "tool_input": {
+    "file_path": "/home/user/.claude/settings.json",
+    "content": "{}"
+  },
+  "tool_name": "Write",
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

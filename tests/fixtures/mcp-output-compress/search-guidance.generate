@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Generate large search result to test search-specific guidance
+python3 -c "
+import json
+results = []
+for i in range(60):
+    results.append({
+        'path': f'src/mod_{i}/index.ts',
+        'content': f'export const val_{i} = {i};' + ' // filler' * 25,
+        'score': 0.99 - i * 0.01
+    })
+output = json.dumps({'results': results})
+payload = json.dumps({
+    'tool_name': 'mcp__llmx__llmx_search',
+    'tool_response': [{'type': 'text', 'text': output}],
+    'session_id': 'test-session',
+    'transcript_path': '/tmp/main.jsonl'
+})
+print(payload)
+"

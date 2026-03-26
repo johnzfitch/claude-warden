@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Generate a >10500 char JSON MCP response
+python3 -c "
+import json
+results = []
+for i in range(50):
+    results.append({
+        'path': f'src/module_{i}/handler.ts',
+        'content': f'export function handle_{i}() {{ return {i}; }}' + ' // padding' * 20,
+        'score': 0.95 - i * 0.01,
+        'chunk_id': f'{i:064x}'
+    })
+output = json.dumps({'results': results})
+payload = json.dumps({
+    'tool_name': 'mcp__llmx__llmx_search',
+    'tool_response': [{'type': 'text', 'text': output}],
+    'session_id': 'test-session',
+    'transcript_path': '/tmp/main.jsonl'
+})
+print(payload)
+"
