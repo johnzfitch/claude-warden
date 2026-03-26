@@ -94,14 +94,14 @@ if (( OUTPUT_SIZE > 50 )); then
             if (( _STRIPPED > 0 )); then
                 _warden_emit_event "truncated" "$OUTPUT_SIZE" "$_CLEANED_SIZE" "system_reminder"
                 case "$TOOL_NAME" in
-                    Bash|Grep|Glob|Task|mcp__*)
-                        # Pre-clean for downstream truncation logic
+                    Bash|Grep|Glob|Task|Read|mcp__*)
+                        # Pre-clean for downstream truncation/compression logic
                         OUTPUT="$_CLEANED"
                         OUTPUT_SIZE="$_CLEANED_SIZE"
                         REMINDER_PRE_STRIPPED=true
                         ;;
                     *)
-                        # All other tools (Read/Write/Edit/etc): emit cleaned output, done
+                        # All other tools (Write/Edit/etc): emit cleaned output, done
                         jq -n --arg text "$_CLEANED" '{"modifyOutput":$text}'
                         exit 0
                         ;;

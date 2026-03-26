@@ -26,7 +26,7 @@ if [[ -z "$FILE_PATH" ]]; then
 fi
 
 # PHASE 3 OPTIMIZATION: Compile patterns into single regex (1 match instead of 17)
-BUNDLED_PATTERN_RE='(node_modules/|/dist/|/build/|\.min\.js$|\.bundle\.js$|expo-downloads/|\.chunk\.js$|/vendor/|/__generated__/|package-lock\.json$|yarn\.lock$|pnpm-lock\.yaml$|Cargo\.lock$|poetry\.lock$|composer\.lock$|Gemfile\.lock$|go\.sum$)'
+BUNDLED_PATTERN_RE='((^|/)node_modules/|(^|/)dist/|(^|/)build/|\.min\.js$|\.bundle\.js$|(^|/)expo-downloads/|\.chunk\.js$|(^|/)vendor/|(^|/)__generated__/|package-lock\.json$|yarn\.lock$|pnpm-lock\.yaml$|Cargo\.lock$|poetry\.lock$|composer\.lock$|Gemfile\.lock$|go\.sum$)'
 
 if [[ "$FILE_PATH" =~ $BUNDLED_PATTERN_RE ]]; then
     WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" _warden_emit_block "read_bundled" 8000

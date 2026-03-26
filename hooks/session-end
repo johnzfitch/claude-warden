@@ -14,12 +14,12 @@ SESSION_COST_LOG="$HOME/.claude/.monitoring/session-costs.csv"
 _warden_read_input || exit 0
 
 # === STOP EVENT HANDLING (merged from hooks/stop) ===
-# Detect Stop event by presence of stop_hook_active or tool_name fields.
-# SessionEnd payloads have only session_id + reason. Stop payloads have
-# stop_hook_active, tool_name, reason, session_id.
-_STOP_HOOK_ACTIVE=$(printf '%s' "$WARDEN_INPUT" | jq -r 'if has("stop_hook_active") then (.stop_hook_active | tostring) else "absent" end' 2>/dev/null)
-_STOP_TOOL_NAME=$(printf '%s' "$WARDEN_INPUT" | jq -r 'if has("tool_name") then .tool_name else "absent" end' 2>/dev/null)
-if [[ "$_STOP_HOOK_ACTIVE" != "absent" || "$_STOP_TOOL_NAME" != "absent" ]]; then
+# Detect Stop event by presence of stop_hook_active field (boolean).
+# SessionEnd payloads have only session_id + reason.
+# Stop payloads always include stop_hook_active (true or false).
+# Reject null/non-boolean to prevent malformed payloads from misrouting.
+_STOP_HOOK_ACTIVE=$(printf '%s' "$WARDEN_INPUT" | jq -r 'if has("stop_hook_active") and (.stop_hook_active | type == "boolean") then (.stop_hook_active | tostring) else "absent" end' 2>/dev/null)
+if [[ "$_STOP_HOOK_ACTIVE" != "absent" ]]; then
     # CRITICAL: Prevent infinite loops
     [[ "$_STOP_HOOK_ACTIVE" == "true" ]] && exit 0
 

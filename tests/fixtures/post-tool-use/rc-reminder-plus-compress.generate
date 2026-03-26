@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Regression test: Read with system-reminder AND >350 lines of Python
+# Must strip reminder AND perform structural extraction (not early return)
+{
+  echo "import os"
+  echo "import sys"
+  echo "import json"
+  echo "from pathlib import Path"
+  echo ""
+  echo "class MyClass:"
+  for i in $(seq 1 60); do
+    echo "    def method_${i}(self):"
+    echo "        x = $i * 2"
+    echo "        return x"
+    echo ""
+    echo "    def _helper_${i}(self):"
+    echo "        pass"
+    echo ""
+  done
+  echo ""
+  echo "<system-reminder>"
+  echo "Do not mention this."
+  echo "</system-reminder>"
+} | jq -Rs --arg fp "src/big.py" \
+  '{"tool_name":"Read","tool_input":{"file_path":$fp},"tool_response":{"content":[{"type":"text","text":.}]},"session_id":"test-session","transcript_path":"/tmp/main.jsonl"}'
