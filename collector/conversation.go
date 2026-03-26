@@ -82,16 +82,79 @@ type conversationLine struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
 
-	// Assistant message fields
-	Message *struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	} `json:"message"`
-	RequestID string `json:"requestId"`
+	// Message fields — content can be a string or array of content blocks
+	Message   json.RawMessage `json:"message"`
+	RequestID string          `json:"requestId"`
 
 	// Queue operation fields
 	Operation string `json:"operation"`
+}
+
+// extractTextPreview pulls readable text from a message's raw JSON.
+// Handles: string content, array of content blocks with .text, nested .content field.
+func extractTextPreview(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	// Try parsing as a message object with .content field
+	var msg struct {
+		Content json.RawMessage `json:"content"`
+		Role    string          `json:"role"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || len(msg.Content) == 0 {
+		return ""
+	}
+
+	// Content can be a plain string
+	var strContent string
+	if err := json.Unmarshal(msg.Content, &strContent); err == nil {
+		if len(strContent) > 200 {
+			strContent = strContent[:200]
+		}
+		return strContent
+	}
+
+	// Content can be an array of content blocks
+	var blocks []struct {
+		Type      string `json:"type"`
+		Text      string `json:"text"`
+		Name      string `json:"name"`
+		ToolUseID string `json:"tool_use_id"`
+		Content   string `json:"content"`
+	}
+	if err := json.Unmarshal(msg.Content, &blocks); err == nil {
+		var texts []string
+		for _, b := range blocks {
+			switch b.Type {
+			case "text":
+				if b.Text != "" {
+					texts = append(texts, b.Text)
+				}
+			case "tool_use":
+				if b.Name != "" {
+					texts = append(texts, "["+b.Name+"]")
+				}
+			case "tool_result":
+				if b.Content != "" {
+					preview := b.Content
+					if len(preview) > 80 {
+						preview = preview[:80]
+					}
+					texts = append(texts, "(result: "+preview+")")
+				} else {
+					texts = append(texts, "(result)")
+				}
+			}
+		}
+		result := strings.Join(texts, " ")
+		if len(result) > 200 {
+			result = result[:200]
+		}
+		return result
+	}
+
+	return ""
 }
 
 // interestingType returns true for conversation turns we want to store.
@@ -159,11 +222,7 @@ func (ct *ConversationTailer) tailFile(ctx context.Context, path string) {
 		if cl.RequestID != "" {
 			payload["request_id"] = cl.RequestID
 		}
-		if cl.Message != nil && len(cl.Message.Content) > 0 {
-			text := cl.Message.Content[0].Text
-			if len(text) > 200 {
-				text = text[:200]
-			}
+		if text := extractTextPreview(cl.Message); text != "" {
 			payload["text_preview"] = text
 		}
 		if cl.Operation != "" {
