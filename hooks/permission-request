@@ -87,11 +87,21 @@ if [[ "$NORM_CMD" =~ ^(env|printenv)[[:space:]]*\|[[:space:]]*grep[[:space:]] ]]
         case "$_ga" in -f|--file|-f*|--file=*) _ENV_GREP_HAS_FILE=true; break ;; esac
     done
     if [[ "$_ENV_GREP_HAS_FILE" == "false" ]]; then
-        # Extract grep pattern: last non-flag positional arg (handles -e '.*' after a real pattern)
+        # Extract grep pattern: first non-flag positional arg.
+        # Flags that take an argument (-m, -e, -A, -B, -C, -D) must consume
+        # the next token to avoid misidentifying it as the pattern.
+        _ENV_SKIP_NEXT=false
         for _ga in $_ENV_GREP_ARGS; do
+            if [[ "$_ENV_SKIP_NEXT" == true ]]; then _ENV_SKIP_NEXT=false; continue; fi
             if [[ "$_ENV_AFTER_DASHDASH" == "false" ]]; then
                 case "$_ga" in
                     --) _ENV_AFTER_DASHDASH=true; continue ;;
+                    # Bare short flags whose argument is the next token
+                    -[meABCD]) _ENV_SKIP_NEXT=true; continue ;;
+                    # Long flags whose argument is the next token
+                    --max-count|--regexp|--after-context|--before-context|--context|--devices)
+                        _ENV_SKIP_NEXT=true; continue ;;
+                    # Any other flag (including -m1, -A3 with attached value)
                     -*) continue ;;
                     *) _ENV_PATTERN="$_ga" ;;
                 esac
