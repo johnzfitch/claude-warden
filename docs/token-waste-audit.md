@@ -35,7 +35,7 @@ concrete hook patch or CLAUDE.md enforcement.
 - Worst offenders: `.rs` files (8 reads >56KB), `.js` files (6 reads >50KB)
 - Same file read multiple times: `mcp/tools.rs` read 8 times at 87KB each
 
-**Patch**: Lower `read-compress` threshold to 300 lines for main agent.
+**Patch**: Lower `read-compress` threshold to 350 lines for main agent.
 Add head+tail truncation (8KB head + 2KB tail) for non-code files >15KB.
 Add file-level dedup cache (hash file path, skip if read within last 5 turns).
 
@@ -93,10 +93,10 @@ Top patterns:
 - `git diff HEAD~1..HEAD` — entire last commit (22 KB)
 - `git diff <file>` — single file diffs (14-18 KB)
 
-**Patch**: In `pre-tool-use`, for `git diff` commands without `--stat`:
-append `| head -c 12288` and inject a note.
-Better: rewrite to `git diff --stat && git diff | head -200` so model gets
-both summary and partial content.
+**Patch**: In `pre-tool-use`, for standalone `git diff` commands without `--stat`,
+pipe, redirect, or compound operators: append `--no-color | head -200` to cap
+output at ~200 lines. Only applies to simple invocations — chained commands
+(`&&`, `||`, `;`) and redirects are left untouched to avoid misapplying the pipe.
 
 ---
 

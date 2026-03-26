@@ -84,7 +84,7 @@ ${_TAIL}"
 esac
 
 # BUG FIX #2: Removed dead if/else (both branches identical)
-# Threshold: subagent=300, main=500
+# Threshold: subagent=300, main=350
 if [[ "$IS_SUBAGENT" == true ]]; then
     (( LINES <= 300 )) && _exit_maybe_stripped
 else

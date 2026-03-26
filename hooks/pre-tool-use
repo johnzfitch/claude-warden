@@ -409,7 +409,9 @@ fi
 # === GH RUN VIEW --LOG-FAILED QUIET OVERRIDE ===
 # Base64 cert/sigstore lines in attestation logs can be thousands of chars.
 # Strip lines >400 chars before tailing so actual error messages surface.
-if [[ "$COMMAND" =~ gh[[:space:]]+run[[:space:]]+view ]] && [[ "$COMMAND" =~ --log-failed ]] && [[ ! "$COMMAND" =~ 'length <' ]]; then
+# Must be a standalone command — chained commands (&&, ||, ;) would misapply the pipeline.
+if [[ "$COMMAND" =~ gh[[:space:]]+run[[:space:]]+view ]] && [[ "$COMMAND" =~ --log-failed ]] && \
+   [[ ! "$COMMAND" =~ 'length <' ]] && [[ ! "$COMMAND" =~ (&&|\|\||[;\<\>]) ]]; then
     _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E "s/[[:space:]]*2>&1[[:space:]]*\|[[:space:]]*tail[[:space:]]+-[0-9]+//")
     _QUIET_CMD="${_QUIET_CMD} 2>&1 | awk 'length < 400' | tail -25"
     _warden_quiet_override "gh_run_view_log_filter" "$_QUIET_CMD"
@@ -437,9 +439,10 @@ if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+log ]] && [[ ! "$COMMAND" =~ (-n
 fi
 
 # === GIT DIFF BOUNDS ===
-# Bare git diff without --stat or pipe -> strip color + append | head -200
+# Bare git diff without --stat, pipe, redirect, or compound operators -> strip color + append | head -200
+# Must be a simple standalone git diff — chained commands (&&, ||, ;) would misapply the pipe.
 if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+diff ]] && \
-   [[ ! "$COMMAND" =~ (--stat|--name-only|--name-status|--shortstat|--numstat|--no-color|\|) ]]; then
+   [[ ! "$COMMAND" =~ (--stat|--name-only|--name-status|--shortstat|--numstat|--no-color|\||&&|\|\||[;\<\>]) ]]; then
     _QUIET_CMD="${COMMAND} --no-color | head -200"
     _warden_quiet_override "git_diff_bounded" "$_QUIET_CMD"
 fi
@@ -465,7 +468,7 @@ if [[ "$COMMAND" =~ ^[[:space:]]*cat[[:space:]] ]] && \
     if [[ "$_CAT_NFILES" -eq 1 ]] && [[ -n "$_CAT_FILE" ]]; then
         _CAT_EXPANDED="${_CAT_FILE/#\~/$HOME}"
         if [[ -f "$_CAT_EXPANDED" ]]; then
-            _CAT_SIZE=$(stat -c%s "$_CAT_EXPANDED" 2>/dev/null || echo 0)
+            _CAT_SIZE=$(stat -c%s "$_CAT_EXPANDED" 2>/dev/null || stat -f%z "$_CAT_EXPANDED" 2>/dev/null || echo 0)
             if (( _CAT_SIZE > 8192 )); then
                 _QUIET_CMD="head -c 8192 \"$_CAT_FILE\" && echo '
 [warden: cat -> head -c 8192 ($(((_CAT_SIZE)/1024))KB file). Use Read with offset/limit for full content.]'"

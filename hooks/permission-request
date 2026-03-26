@@ -49,8 +49,10 @@ fi
 
 # === SAFE PIPE TARGETS ===
 # curl | jq, curl | head, curl | grep, etc. are not RCE -- only curl | bash/sh is dangerous.
-# Do NOT auto-allow if chained commands (&&, ;) follow the pipe — they can execute payloads.
-if [[ "$NORM_CMD" =~ curl[[:space:]] ]] && [[ "$NORM_CMD" =~ \| ]] && [[ ! "$NORM_CMD" =~ \|.*(\&\&|\;) ]]; then
+# Do NOT auto-allow if chained commands (&&, ||, ;, &) follow the pipe — they can execute payloads.
+# Single & backgrounds the pipeline and runs the next command in foreground.
+# \&[^&] catches lone & with or without space (but not &&, which is caught by \&\&).
+if [[ "$NORM_CMD" =~ curl[[:space:]] ]] && [[ "$NORM_CMD" =~ \| ]] && [[ ! "$NORM_CMD" =~ \|.*(\&\&|\|\||\;|\&[^&]) ]]; then
     # Extract first word of each pipe stage (POSIX awk, no grep -P dependency)
     _PIPE_TARGETS=$(printf '%s' "$NORM_CMD" | awk -F'|' '{
         for(i=2;i<=NF;i++){

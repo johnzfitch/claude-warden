@@ -87,7 +87,7 @@ if (( OUTPUT_SIZE > 50 )); then
             if (( _STRIPPED > 0 )); then
                 _warden_emit_event "truncated" "$OUTPUT_SIZE" "$_CLEANED_SIZE" "system_reminder"
                 case "$TOOL_NAME" in
-                    Bash|Grep|Glob|Task)
+                    Bash|Grep|Glob|Task|mcp__*)
                         # Pre-clean for downstream truncation logic
                         OUTPUT="$_CLEANED"
                         OUTPUT_SIZE="$_CLEANED_SIZE"
@@ -250,7 +250,11 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
             ffmpeg_quiet_override)
                 _QUIET_REMINDER="[warden: ran with -nostats -loglevel error — next time include these flags yourself]" ;;
             curl_to_aurl)
-                _QUIET_REMINDER="[warden: curl routed through aurl (safe wrapper) — localhost allowed, remote POST blocked]" ;;
+                _QUIET_REMINDER="[warden: curl routed through aurl (safe wrapper) — localhost allowed, remote POST/PUT/PATCH/DELETE blocked]" ;;
+            git_diff_bounded)
+                _QUIET_REMINDER="[warden: git diff piped through head -200 — use --stat for summary or specify file paths to narrow output]" ;;
+            cat_to_head)
+                _QUIET_REMINDER="[warden: cat -> head -c 8192 (file too large) — use Read tool with offset/limit for full content]" ;;
         esac
     fi
     if [[ -n "$_QUIET_REMINDER" ]]; then
@@ -260,10 +264,11 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
     fi
 fi
 
-# Truncate large outputs from Bash, Grep, Glob, Task (Read handled by read-compress)
+# Truncate large outputs from Bash, Grep, Glob, Task, MCP (Read handled by read-compress)
 # Subagent Reads also fall through: safety net when read-compress fails
 case "$TOOL_NAME" in
     Bash|Grep|Glob|Task) ;;
+    mcp__*) ;;  # MCP tools: fall through to truncation logic
     Read)
         if [[ "$IS_SUBAGENT" != true ]]; then
             _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _warden_suppress_ok
@@ -310,6 +315,29 @@ if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
         fi
     fi
     # Fall through to generic truncation if structured extraction yielded too little
+fi
+
+# Grep-specific: tighter 4KB threshold since grep output is line-oriented
+# and models rarely need the middle of a large search result
+if [[ "$TOOL_NAME" == "Bash" ]] && [[ "$COMMAND" =~ (^|[[:space:]\;|&])(grep|rg|ripgrep)[[:space:]] ]]; then
+    if (( OUTPUT_SIZE > 4096 )); then
+        if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
+            OUTPUT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null)
+            OUTPUT_SIZE=${#OUTPUT}
+            REMINDER_PRE_STRIPPED=true
+        fi
+        if (( OUTPUT_SIZE > 4096 )); then
+            _GREP_HEAD="${OUTPUT:0:4000}"
+            _GREP_TAIL="${OUTPUT: -1000}"
+            _GREP_FINAL="${_GREP_HEAD}
+... [$((OUTPUT_SIZE/1024))KB grep output truncated to 5KB] ...
+${_GREP_TAIL}"
+            _WARDEN_FINAL_SIZE=${#_GREP_FINAL}
+            _warden_emit_event "truncated" "$OUTPUT_SIZE" "$_WARDEN_FINAL_SIZE" "grep_truncated"
+            jq -n --arg text "$_GREP_FINAL" '{"modifyOutput":$text}'
+            exit 0
+        fi
+    fi
 fi
 
 # Fast path: small outputs (subagent Reads use tighter 10KB threshold)
