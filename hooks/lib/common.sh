@@ -204,7 +204,7 @@ if [[ -f "$_WARDEN_CONFIG_ENV" ]]; then
 fi
 
 # Truncation thresholds (warden.env overrides, or fallback defaults)
-export WARDEN_TRUNCATE_BYTES=${WARDEN_TRUNCATE_BYTES:-20480}           # 20KB generic
+export WARDEN_TRUNCATE_BYTES=${WARDEN_TRUNCATE_BYTES:-12288}           # 12KB generic
 export WARDEN_SUBAGENT_READ_BYTES=${WARDEN_SUBAGENT_READ_BYTES:-10240} # 10KB subagent
 export WARDEN_SUPPRESS_BYTES=${WARDEN_SUPPRESS_BYTES:-524288}          # 500KB suppress
 export WARDEN_READ_GUARD_MAX_MB=${WARDEN_READ_GUARD_MAX_MB:-2}

@@ -65,10 +65,21 @@ _exit_maybe_stripped() {
     exit 0
 }
 
-# Skip compression entirely for non-code files (structural extraction is meaningless)
+# Non-code files: structural extraction is meaningless, but giant ones still waste tokens
 FILE_EXT="${FILE_PATH##*.}"
 case "$FILE_EXT" in
     txt|md|markdown|rst|log|csv|tsv|env|conf|gitignore|dockerignore)
+        if (( ${#CONTENT} > 15360 )); then
+            _HEAD="${CONTENT:0:8000}"
+            _TAIL="${CONTENT: -2000}"
+            CONTENT="${_HEAD}
+... [${LINES} lines / $((${#CONTENT}/1024))KB truncated to 10KB — use Read with offset/limit for full content]
+${_TAIL}"
+            WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
+            _warden_emit_event "truncated" "$ORIGINAL_SIZE" "${#CONTENT}" "read_compress_noncode"
+            jq -n --arg text "$CONTENT" '{"modifyOutput":$text}'
+            exit 0
+        fi
         _exit_maybe_stripped ;;
 esac
 
@@ -77,7 +88,7 @@ esac
 if [[ "$IS_SUBAGENT" == true ]]; then
     (( LINES <= 300 )) && _exit_maybe_stripped
 else
-    (( LINES <= 500 )) && _exit_maybe_stripped
+    (( LINES <= 350 )) && _exit_maybe_stripped
 fi
 
 # Config/data file extraction (by extension, before code extraction)

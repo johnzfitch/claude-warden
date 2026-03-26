@@ -21,7 +21,7 @@
     "deny": []
   },
   "warden": {
-    "truncate_bytes": 20480,
+    "truncate_bytes": 12288,
     "subagent_read_bytes": 10240,
     "suppress_bytes": 524288,
     "read_guard_max_mb": 2,
