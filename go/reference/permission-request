@@ -47,6 +47,80 @@ case "$COMMAND" in
         exit 0 ;;
 esac
 
+# === CURL/WGET TO LOCALHOST ===
+# The user's own machine is not an SSRF target. Auto-allow localhost access.
+_CMD_LOWER=$(printf '%s' "$COMMAND" | tr '[:upper:]' '[:lower:]')
+if [[ "$_CMD_LOWER" =~ (curl|wget)[[:space:]].*https?://(localhost|127\.[0-9]|0\.0\.0\.0|\[::1\])(:[0-9]+)? ]]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+    exit 0
+fi
+
+# === SAFE PIPE TARGETS ===
+# curl | jq, curl | head, curl | grep, etc. are not RCE -- only curl | bash/sh is dangerous.
+# Do NOT auto-allow if chained commands (&&, ||, ;, &) follow the pipe — they can execute payloads.
+# Single & backgrounds the pipeline and runs the next command in foreground.
+# \&[^&] catches lone & with or without space (but not &&, which is caught by \&\&).
+if [[ "$NORM_CMD" =~ curl[[:space:]] ]] && [[ "$NORM_CMD" =~ \| ]] && [[ ! "$NORM_CMD" =~ \|.*(\&\&|\|\||\;|\&[^&]) ]]; then
+    # Extract first word of each pipe stage (POSIX awk, no grep -P dependency)
+    _PIPE_TARGETS=$(printf '%s' "$NORM_CMD" | awk -F'|' '{
+        for(i=2;i<=NF;i++){
+            gsub(/^[[:space:]]+/,"",$i)
+            split($i,a," ")
+            if(a[1]!="") print a[1]
+        }
+    }')
+    _HAS_UNSAFE=false
+    for _target in $_PIPE_TARGETS; do
+        _target="${_target##*/}"  # basename: /bin/bash -> bash
+        case "$_target" in
+            bash|sh|zsh|dash|fish|python|python3|node|ruby|perl|eval|exec|source)
+                _HAS_UNSAFE=true; break ;;
+        esac
+    done
+    if [[ "$_HAS_UNSAFE" == "false" ]]; then
+        printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+        exit 0
+    fi
+fi
+
+# === FILTERED ENV ===
+# Only auto-allow env piped to grep with a specific pattern (not wildcard/dot).
+# Bare `env | grep .` or `env | cat` would expose full environment including secrets.
+if [[ "$NORM_CMD" =~ ^(env|printenv)[[:space:]]*\|[[:space:]]*grep[[:space:]] ]]; then
+    _ENV_GREP_ARGS="${NORM_CMD#*grep }"
+    _ENV_PATTERN=""
+    _ENV_GREP_HAS_FILE=false
+    _ENV_AFTER_DASHDASH=false
+    for _ga in $_ENV_GREP_ARGS; do
+        case "$_ga" in -f|--file|-f*|--file=*) _ENV_GREP_HAS_FILE=true; break ;; esac
+    done
+    if [[ "$_ENV_GREP_HAS_FILE" == "false" ]]; then
+        _ENV_SKIP_NEXT=false
+        for _ga in $_ENV_GREP_ARGS; do
+            if [[ "$_ENV_SKIP_NEXT" == true ]]; then _ENV_SKIP_NEXT=false; continue; fi
+            if [[ "$_ENV_AFTER_DASHDASH" == "false" ]]; then
+                case "$_ga" in
+                    --) _ENV_AFTER_DASHDASH=true; continue ;;
+                    -[meABCD]) _ENV_SKIP_NEXT=true; continue ;;
+                    --max-count|--regexp|--after-context|--before-context|--context|--devices)
+                        _ENV_SKIP_NEXT=true; continue ;;
+                    -*) continue ;;
+                    *) _ENV_PATTERN="$_ga" ;;
+                esac
+            else
+                _ENV_PATTERN="$_ga"
+            fi
+        done
+        _ENV_PATTERN="${_ENV_PATTERN#\"}" ; _ENV_PATTERN="${_ENV_PATTERN%\"}"
+        _ENV_PATTERN="${_ENV_PATTERN#\'}" ; _ENV_PATTERN="${_ENV_PATTERN%\'}"
+        case "$_ENV_PATTERN" in
+            ""|"."|".*"|"^"|"^."|"^.*") : ;;
+            *) printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+               exit 0 ;;
+        esac
+    fi
+fi
+
 # Special-case echo: allow only constant literals (no expansion, no shell metacharacters).
 # This prevents `echo $SECRET` / `echo "$(cmd)"` from being auto-approved.
 if [[ "$NORM_CMD" == "echo" || "$NORM_CMD" == "echo -n" || "$NORM_CMD" == echo\ * || "$NORM_CMD" == "echo -n "* ]]; then

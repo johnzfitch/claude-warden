@@ -31,14 +31,31 @@ Path: `go/reference/permission-request`
 ### Auto-allow (safe commands)
 4. `whoami`, `hostname`, `type ...`, `man ...`, `locale` → auto-allow.
 
+### Localhost curl/wget
+5. If command contains `curl` or `wget` targeting `localhost`, `127.*`, `0.0.0.0`, or `[::1]` → auto-allow. The user's own machine is not an SSRF target.
+
+### Safe pipe targets
+6. If command contains `curl ` AND `|` AND no compound operators (`&&`, `||`, `;`, or lone `&`):
+   - Extract the first word of each pipe stage after the first (using `|` as delimiter).
+   - If any stage starts with an unsafe interpreter (`bash`, `sh`, `zsh`, `dash`, `fish`, `python`, `python3`, `node`, `ruby`, `perl`, `eval`, `exec`, `source`) → pass through.
+   - Otherwise → auto-allow. (`curl | jq`, `curl | head`, `curl | grep` are safe).
+   - **Compound operator guard**: `\&[^&]` catches lone `&` (background operator) with or without trailing space. `&&` is caught by the `\&\&` branch. This prevents `curl | jq & bash` from being auto-allowed.
+
+### Filtered env/printenv
+7. If command matches `^(env|printenv)\s*\|\s*grep\s`:
+   - Parse the grep pattern (first non-flag positional arg, respecting `-m`, `-e`, `-A`, `-B`, `-C`, `-D` and `--` separator).
+   - Block trivial patterns that match everything: `""`, `.`, `.*`, `^`, `^.`, `^.*` → pass through.
+   - Block `-f`/`--file` (pattern from file, cannot validate) → pass through.
+   - Specific patterns like `PATH`, `HOME`, `LANG` → auto-allow.
+
 ### Echo literal check
-5. If command starts with `echo` or `echo -n`:
+8. If command starts with `echo` or `echo -n`:
    - Strip the echo prefix.
    - If remaining payload contains ANY of: `$`, backtick, `\`, `(`, `)`, `{`, `}`, `[`, `]`, `*`, `?`, `;`, `|`, `&`, `<`, `>` → pass through (could expand secrets).
    - If payload is pure literal text → auto-allow.
 
 ### Default
-6. Pass through: `{"suppressOutput":true}` (Claude Code shows normal permission dialog).
+9. Pass through: `{"suppressOutput":true}` (Claude Code shows normal permission dialog).
 
 ## Test cases
 
@@ -54,6 +71,11 @@ Path: `go/reference/permission-request`
 - `echo "hello world"` → allow
 - `echo 'test string'` → allow
 - `echo -n "literal"` → allow
+- `curl -s https://api.example.com/data | jq .` → allow (safe pipe)
+- `curl -s https://api.example.com/data | head -20` → allow (safe pipe)
+- `curl -s http://localhost:8080/api` → allow (localhost)
+- `env | grep PATH` → allow (specific pattern)
+- `printenv | grep HOME` → allow (specific pattern)
 
 ### Must-pass-through (show dialog)
 - `echo $SECRET` → pass through (contains $)
@@ -61,6 +83,13 @@ Path: `go/reference/permission-request`
 - `npm install express` → pass through (not in auto-allow list)
 - `cat /etc/passwd` → pass through
 - `curl http://example.com` → pass through (not piped to interpreter)
+- `curl -s https://api.example.com | jq . && bash` → pass through (chained)
+- `curl -s https://api.example.com | jq . ; bash` → pass through (chained)
+- `curl -s https://api.example.com | jq . & bash` → pass through (background + exec)
+- `curl -s https://api.example.com | jq .&bash` → pass through (no-space &)
+- `curl -s https://api.example.com | jq . || bash` → pass through (||)
+- `env | grep .` → pass through (wildcard exposes all vars)
+- `env | grep '.*'` → pass through (regex wildcard)
 
 ### Edge cases
 - Empty command → pass through

@@ -69,21 +69,27 @@ Read this file completely. Every behavior must be ported.
     - `wget_quiet_override` → `[warden: ran as wget -q ...]`
     - `docker_quiet_override` → `[warden: ran with -q ...]`
     - `ffmpeg_quiet_override` → `[warden: ran with -nostats -loglevel error ...]`
-    - `curl_to_aurl` → `[warden: curl routed through aurl (safe wrapper) — localhost allowed, remote POST blocked]`
+    - `curl_to_aurl` → `[warden: curl routed through aurl (safe wrapper) — localhost allowed, remote POST/PUT/PATCH/DELETE blocked]`
+    - `git_diff_bounded` → `[warden: git diff piped through head -200 — use --stat for summary or specify file paths to narrow output]`
+    - `cat_to_head` → `[warden: cat -> head -c 8192 (file too large) — use Read tool with offset/limit for full content]`
 17. If reminder found, return it and exit (skip truncation).
 
 ### Phase 7: Tool routing
 18. Bash/Grep/Glob/Task: continue to truncation.
-19. Read (non-subagent): emit allowed event, pass through.
-20. Read (subagent): continue to truncation (safety net).
-21. All other tools: emit allowed event, pass through.
+19. **mcp__\***: continue to truncation (MCP tools fall through). **Important**: the system-reminder stripping (Phase 3) must also continue processing for `mcp__*` tools, not early-exit via the catch-all branch.
+20. Read (non-subagent): emit allowed event, pass through.
+21. Read (subagent): continue to truncation (safety net).
+22. All other tools: emit allowed event, pass through.
 
 ### Phase 8: Task structured extraction
-22. If tool_name == "Task" and output > 6144 bytes: extract bullet points, numbered items, headers, table rows, file:line references via line-pattern matching. If extraction yields 200+ chars and less than original, emit compressed output.
+23. If tool_name == "Task" and output > 6144 bytes: extract bullet points, numbered items, headers, table rows, file:line references via line-pattern matching. If extraction yields 200+ chars and less than original, emit compressed output.
+
+### Phase 8a: Grep-specific truncation
+24. If tool_name == "Bash" and command matches `grep|rg|ripgrep` at command position, and output > 4096 bytes: truncate to 4KB head + 1KB tail with notice `[{KB}KB grep output truncated to 5KB]`. This is tighter than the generic threshold because grep output is line-oriented and models rarely need the middle of a large search result.
 
 ### Phase 9: Truncation threshold
-23. Threshold = WARDEN_TRUNCATE_BYTES (default 20480). For subagent Reads, use WARDEN_SUBAGENT_READ_BYTES (default 10240). Clamp to WARDEN_SUPPRESS_BYTES.
-24. If output <= threshold, pass through (with any reminder-stripped content).
+25. Threshold = WARDEN_TRUNCATE_BYTES (default 12288). For subagent Reads, use WARDEN_SUBAGENT_READ_BYTES (default 10240). Clamp to WARDEN_SUPPRESS_BYTES.
+26. If output <= threshold, pass through (with any reminder-stripped content).
 
 ### Phase 10: Binary detection
 25. Check for null bytes in output (portable: scan for 0x00). If binary, emit `[Binary output: {KB}KB. Use 'file' or redirect.]`.

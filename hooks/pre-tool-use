@@ -151,28 +151,15 @@ if [[ "$NORM_CMD" =~ (^|[;\&\|])[[:space:]]*rm[[:space:]]+-[rf]+[[:space:]]+(.*)
         _warden_deny "Blocked: rm --no-preserve-root"
     }
     # Skip flags (--foo, -x) to find the actual filesystem path target.
-    # Use xargs to properly handle quoted paths with spaces.
     _RM_TARGET=""
     _RM_AFTER_DD=""
-    while IFS= read -r _arg; do
+    for _arg in $_RM_ARGS; do
         case "$_arg" in
-            "") continue ;;
             --) _RM_AFTER_DD=1; continue ;;
             -*) [[ -z "$_RM_AFTER_DD" ]] && continue ;;&
             *) _RM_TARGET="$_arg"; break ;;
         esac
-    done < <(printf '%s\n' "$_RM_ARGS" | xargs -n1 printf '%s\n' 2>/dev/null)
-    # Fallback: if xargs parsing failed, use simple word splitting
-    if [[ -z "$_RM_TARGET" ]]; then
-        _RM_AFTER_DD=""
-        for _arg in $_RM_ARGS; do
-            case "$_arg" in
-                --) _RM_AFTER_DD=1; continue ;;
-                -*) [[ -z "$_RM_AFTER_DD" ]] && continue ;;&
-                *) _RM_TARGET="$_arg"; break ;;
-            esac
-        done
-    fi
+    done
     if [[ -n "$_RM_TARGET" ]]; then
         _RM_TARGET="${_RM_TARGET#\"}" ; _RM_TARGET="${_RM_TARGET%\"}"
         _RM_TARGET="${_RM_TARGET#\'}" ; _RM_TARGET="${_RM_TARGET%\'}"
@@ -310,10 +297,13 @@ if [[ "$COMMAND" =~ (^|[;&|[:space:]])curl[[:space:]] ]]; then
         _warden_emit_block "curl_write_method" 0
         _warden_deny "Write method blocked: '${COMMAND:0:120}' uses ${_CURL_WRITE_METHOD} to a remote server. Explicit write methods (POST/PUT/PATCH/DELETE) to remote servers are not allowed. Ask the user to run this manually."
     fi
-    _AURL_BIN="$(cd "${BASH_SOURCE[0]%/*}/bin" 2>/dev/null && pwd)/aurl"
-    if [[ -x "$_AURL_BIN" ]]; then
-        _QUIET_CMD="${COMMAND/"${_CURL_PREFIX}curl "/"${_CURL_PREFIX}${_AURL_BIN} "}"
-        _warden_quiet_override "curl_to_aurl" "$_QUIET_CMD"
+    # Skip aurl rewrite when curl runs on a remote host (inside ssh)
+    if [[ ! "$COMMAND" =~ ^ssh[[:space:]] ]]; then
+        _AURL_BIN="$(cd "${BASH_SOURCE[0]%/*}/bin" 2>/dev/null && pwd)/aurl"
+        if [[ -x "$_AURL_BIN" ]]; then
+            _QUIET_CMD="${COMMAND/"${_CURL_PREFIX}curl "/"${_CURL_PREFIX}${_AURL_BIN} "}"
+            _warden_quiet_override "curl_to_aurl" "$_QUIET_CMD"
+        fi
     fi
 fi
 if [[ "$COMMAND" =~ (^|[;&|[:space:]])wget[[:space:]] ]] && [[ "$COMMAND" =~ --post-data|--post-file ]]; then
@@ -419,7 +409,9 @@ fi
 # === GH RUN VIEW --LOG-FAILED QUIET OVERRIDE ===
 # Base64 cert/sigstore lines in attestation logs can be thousands of chars.
 # Strip lines >400 chars before tailing so actual error messages surface.
-if [[ "$COMMAND" =~ gh[[:space:]]+run[[:space:]]+view ]] && [[ "$COMMAND" =~ --log-failed ]] && [[ ! "$COMMAND" =~ 'length <' ]]; then
+# Must be a standalone command — chained commands (&&, ||, ;) would misapply the pipeline.
+if [[ "$COMMAND" =~ gh[[:space:]]+run[[:space:]]+view ]] && [[ "$COMMAND" =~ --log-failed ]] && \
+   [[ ! "$COMMAND" =~ 'length <' ]] && [[ ! "$COMMAND" =~ (&&|\|\||[;\<\>]) ]]; then
     _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E "s/[[:space:]]*2>&1[[:space:]]*\|[[:space:]]*tail[[:space:]]+-[0-9]+//")
     _QUIET_CMD="${_QUIET_CMD} 2>&1 | awk 'length < 400' | tail -25"
     _warden_quiet_override "gh_run_view_log_filter" "$_QUIET_CMD"
@@ -444,6 +436,46 @@ fi
 # === GIT LOG (unbounded dumps entire history) ===
 if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+log ]] && [[ ! "$COMMAND" =~ (-n[[:space:]]*[0-9]+|-[0-9]+|--oneline|--format|--pretty|--since|--after|\|[[:space:]]*(head|tail)) ]]; then
     _warden_emit_block "git_log_unbounded" 10000; _warden_deny "git log needs -n, --oneline, or pipe"
+fi
+
+# === GIT DIFF BOUNDS ===
+# Bare git diff without --stat, pipe, redirect, or compound operators -> strip color + append | head -200
+# Must be a simple standalone git diff — chained commands (&&, ||, ;) would misapply the pipe.
+if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+diff ]] && \
+   [[ ! "$COMMAND" =~ (--stat|--name-only|--name-status|--shortstat|--numstat|--no-color|\||&&|\|\||[;\<\>]) ]]; then
+    _QUIET_CMD="${COMMAND} --no-color | head -200"
+    _warden_quiet_override "git_diff_bounded" "$_QUIET_CMD"
+fi
+
+# === BARE CAT REWRITE ===
+# Single-file cat with no pipe/redirect -> head -c 8192 <file>
+# Skips: cat > file (redirect), cat file | pipeline (piped), cat << heredoc,
+#        cat file1 file2 (multi-file), subagent context
+if [[ "$COMMAND" =~ ^[[:space:]]*cat[[:space:]] ]] && \
+   [[ ! "$COMMAND" =~ [\|'>''<'] ]] && \
+   [[ "$IS_SUBAGENT" == false ]]; then
+    _CAT_ARGS="${COMMAND#*cat }"
+    _CAT_FILE=""
+    _CAT_NFILES=0
+    for _w in $_CAT_ARGS; do
+        case "$_w" in -*) continue ;; *)
+            ((_CAT_NFILES++))
+            [[ -z "$_CAT_FILE" ]] && _CAT_FILE="$_w"
+            ;;
+        esac
+    done
+    # Only rewrite single-file cat
+    if [[ "$_CAT_NFILES" -eq 1 ]] && [[ -n "$_CAT_FILE" ]]; then
+        _CAT_EXPANDED="${_CAT_FILE/#\~/$HOME}"
+        if [[ -f "$_CAT_EXPANDED" ]]; then
+            _CAT_SIZE=$(stat -c%s "$_CAT_EXPANDED" 2>/dev/null || stat -f%z "$_CAT_EXPANDED" 2>/dev/null || echo 0)
+            if (( _CAT_SIZE > 8192 )); then
+                _QUIET_CMD="head -c 8192 \"$_CAT_FILE\" && echo '
+[warden: cat -> head -c 8192 ($(((_CAT_SIZE)/1024))KB file). Use Read with offset/limit for full content.]'"
+                _warden_quiet_override "cat_to_head" "$_QUIET_CMD"
+            fi
+        fi
+    fi
 fi
 
 # === GIT QUIET OVERRIDE (commit/clone/fetch/pull) ===
@@ -511,11 +543,19 @@ if [[ "$IS_SUBAGENT" == false ]]; then
         while [[ "$_stage" =~ ^[A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+ ]]; do
             _stage="${_stage#${BASH_REMATCH[0]}}"
         done
-        # Strip sudo/doas and their flags (e.g. sudo -E grep -> grep)
+        # Strip sudo/doas and their flags (e.g. sudo -u root grep -> grep)
         if [[ "$_stage" =~ ^(sudo|doas)[[:space:]] ]]; then
             _stage="${_stage#* }"  # Remove sudo/doas
             while [[ "$_stage" =~ ^-[^[:space:]]*[[:space:]]+ ]]; do
+                _sudo_flag="${_stage%% *}"
                 _stage="${_stage#${BASH_REMATCH[0]}}"
+                # Flags that take an argument: consume the next token too
+                case "$_sudo_flag" in
+                    -[ugCDrT]|--user|--group|--close-from|--chdir|--role|--type)
+                        _stage="${_stage#"${_stage%%[![:space:]]*}"}"
+                        [[ "$_stage" =~ ^[^[:space:]]+[[:space:]]* ]] && _stage="${_stage#${BASH_REMATCH[0]}}"
+                        ;;
+                esac
             done
         fi
         _stage="${_stage#"${_stage%%[![:space:]]*}"}"  # Re-trim after prefix strip

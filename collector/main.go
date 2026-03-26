@@ -141,12 +141,6 @@ func main() {
 		}
 	}()
 
-	// Start conversation JSONL tailer (polls ~/.claude/projects/*/  for new turns)
-	convTailer := NewConversationTailer(store)
-	convCtx, convCancel := context.WithCancel(context.Background())
-	defer convCancel()
-	go convTailer.Run(convCtx)
-
 	// Start viewer subprocess (opt-in via WARDEN_VIEWER_AUTOSTART=1)
 	var viewerCmd *exec.Cmd
 	if os.Getenv("WARDEN_VIEWER_AUTOSTART") == "1" {

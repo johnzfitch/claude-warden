@@ -113,18 +113,22 @@ Tool input varies by tool_name. Parse `tool_input` into the appropriate subtype.
 
 ### Phase 5j: Quiet overrides
 28. **ffmpeg**: If no `-nostats`, inject `-nostats -loglevel error` via quiet override.
-29. **gh run view --log-failed**: Inject `awk 'length < 400' | tail -25`.
+29. **gh run view --log-failed**: If standalone command (no `&&`, `||`, `;`, redirects), inject `awk 'length < 400' | tail -25`. Skip if chained — appended pipeline would bind to wrong command.
 30. **#FORCE_READ**: If command contains `# FORCE_READ`, allow immediately.
 31. **Metadata commands**: `wc/stat/file/du/md5sum/sha256sum` — allow immediately.
 32. **Piped output**: If not build artifact AND has pipe to `head/tail/wc/grep/awk/sed` — allow.
 33. **git log unbounded**: Block if no `-n`, `--oneline`, `--format`, etc.
-34. **git quiet**: `commit/clone/fetch/pull` without `-q` → inject `-q`.
-35. **npm install/ci**: Inject `--silent`.
-36. **cargo build**: Inject `-q`.
-37. **make**: Inject `-s`.
-38. **pip install/download**: Inject `-q`.
-39. **wget**: Inject `-q` (if not already quiet).
-40. **docker build/pull**: Inject `-q`.
+34. **git diff bounded**: If standalone `git diff` without `--stat`/`--name-only`/`--name-status`/`--shortstat`/`--numstat`/`--no-color`/pipe/redirect/compound operators (`&&`, `||`, `;`), append `--no-color | head -200` via quiet override. **Must not fire on chained commands** — the appended pipe would bind to the wrong command segment.
+35. **cat rewrite**: If bare `cat <single-file>` (no pipe/redirect/multi-file) and file exists and is >8KB, rewrite to `head -c 8192 <file>`. Skip for subagents. Use cross-platform stat (`stat -c%s` || `stat -f%z`).
+36. **git quiet**: `commit/clone/fetch/pull` without `-q` → inject `-q`.
+37. **npm install/ci**: Inject `--silent`.
+38. **cargo build**: Inject `-q`.
+39. **make**: Inject `-s`.
+40. **pip install/download**: Inject `-q`.
+41. **wget**: Inject `-q` (if not already quiet).
+42. **docker build/pull**: Inject `-q`.
+
+**Compound command safety rule**: Any quiet override that appends to `$COMMAND` (end-append pattern: `_QUIET_CMD="${COMMAND} <suffix>"`) must verify the command is a simple standalone invocation. Check for absence of `&&`, `||`, `;`, `<`, `>` in the command string. Overrides that use `sed` to inject at a matched position (e.g., `git commit` → `git commit -q`) are safe from this class of bug.
 
 ### Phase 5k: Build artifacts
 41. Block grep on minified files (unless piped to head/wc).
