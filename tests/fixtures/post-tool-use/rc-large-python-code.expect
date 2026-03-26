@@ -1,0 +1,8 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "jq": [".modifyOutput"],
+    "contains": ["Structure extracted", "signatures", "import os"],
+    "not_contains": ["x = "]
+  }
+}

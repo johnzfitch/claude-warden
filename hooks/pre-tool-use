@@ -94,6 +94,30 @@ case "$TOOL_NAME" in
         NEW_SOURCE=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.new_source // ""' 2>/dev/null)
         (( ${#NEW_SOURCE} > WARDEN_NOTEBOOK_MAX_BYTES )) && { _warden_emit_block "notebook_oversize" 12500 "NotebookEdit ${#NEW_SOURCE}B"; _warden_deny "NotebookEdit >${#NEW_SOURCE}B (>$((WARDEN_NOTEBOOK_MAX_BYTES/1024))KB)"; }
         _warden_suppress_ok ;;
+    Read)
+        # === READ GUARD (merged from hooks/read-guard) ===
+        # Block reads on bundled/generated files and oversized files
+        IFS=$'\t' read -r _RG_FILE_PATH < <(_warden_parse_tool_input file_path)
+        if [[ -n "$_RG_FILE_PATH" ]]; then
+            _RG_MAX_MB=${WARDEN_READ_GUARD_MAX_MB:-2}
+            _RG_MAX_BYTES=$((_RG_MAX_MB * 1024 * 1024))
+            _RG_BUNDLED_RE='(node_modules/|/dist/|/build/|\.min\.js$|\.bundle\.js$|expo-downloads/|\.chunk\.js$|/vendor/|/__generated__/|package-lock\.json$|yarn\.lock$|pnpm-lock\.yaml$|Cargo\.lock$|poetry\.lock$|composer\.lock$|Gemfile\.lock$|go\.sum$)'
+            if [[ "$_RG_FILE_PATH" =~ $_RG_BUNDLED_RE ]]; then
+                WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$_RG_FILE_PATH" _warden_emit_block "read_bundled" 8000
+                echo "Blocked: '$_RG_FILE_PATH' is a bundled/generated file; find the source" >&2
+                exit 2
+            fi
+            if [[ -f "$_RG_FILE_PATH" ]]; then
+                _RG_SIZE=$(stat -c%s "$_RG_FILE_PATH" 2>/dev/null || stat -f%z "$_RG_FILE_PATH" 2>/dev/null || echo "0")
+                if [[ "$_RG_SIZE" -gt "$_RG_MAX_BYTES" ]]; then
+                    _RG_SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $_RG_SIZE / 1024 / 1024 }" 2>/dev/null || echo "?")
+                    WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$_RG_FILE_PATH" _warden_emit_block "read_oversize" 25000
+                    echo "Blocked: '$_RG_FILE_PATH' is ${_RG_SIZE_MB}MB (max ${_RG_MAX_MB}MB)" >&2
+                    exit 2
+                fi
+            fi
+        fi
+        _warden_suppress_ok ;;
     Glob)
         read -r PATTERN GLOB_PATH < <(printf '%s' "$WARDEN_INPUT" | jq -r '[.tool_input.pattern // "", .tool_input.path // ""] | @tsv' 2>/dev/null)
         HOME_DIR_RE='^(/home/[^/]+|~|/Users/[^/]+|/root)/?$'

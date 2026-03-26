@@ -10,16 +10,6 @@
             "timeout": 30
           }
         ]
-      },
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/read-guard",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -30,16 +20,6 @@
             "type": "command",
             "command": "$HOME/.claude/hooks/post-tool-use",
             "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/read-compress",
-            "timeout": 7
           }
         ]
       },
@@ -72,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/stop",
+            "command": "$HOME/.claude/hooks/session-end",
             "timeout": 10
           }
         ]
@@ -168,7 +148,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/elicitation",
+            "command": "$HOME/.claude/hooks/observe",
             "timeout": 10
           }
         ]
@@ -180,7 +160,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/elicitation-result",
+            "command": "$HOME/.claude/hooks/observe",
             "timeout": 10
           }
         ]
@@ -192,7 +172,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/instructions-loaded",
+            "command": "$HOME/.claude/hooks/observe",
             "timeout": 10
           }
         ]

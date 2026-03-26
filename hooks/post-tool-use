@@ -310,15 +310,153 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
     fi
 fi
 
-# Truncate large outputs from Bash, Grep, Glob, Task, MCP (Read handled by read-compress)
-# Subagent Reads also fall through: safety net when read-compress fails
+# Truncate large outputs from Bash, Grep, Glob, Task, MCP, Read
 case "$TOOL_NAME" in
     Bash|Grep|Glob|Task) ;;
     Read)
-        if [[ "$IS_SUBAGENT" != true ]]; then
-            _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _warden_suppress_ok
+        # === READ COMPRESS (merged from hooks/read-compress) ===
+        # Structural extraction for large file reads to reduce tokens
+        IFS=$'\t' read -r _RC_FILE_PATH < <(_warden_parse_tool_input file_path)
+
+        # Get content for analysis (may already be in OUTPUT from reminder strip)
+        if [[ "$REMINDER_PRE_STRIPPED" != true ]]; then
+            OUTPUT=$(_warden_extract_output)
+            OUTPUT_SIZE=${#OUTPUT}
         fi
-        ;;
+        [[ -z "$OUTPUT" || "$OUTPUT_SIZE" -eq 0 ]] && { _warden_emit_event "allowed" 0 0; _warden_suppress_ok; }
+
+        _RC_LINES=$(printf '%s' "$OUTPUT" | awk 'END{print NR}')
+        _RC_ORIGINAL_SIZE="$OUTPUT_SIZE"
+
+        # Non-code files: head+tail if >15KB
+        _RC_EXT="${_RC_FILE_PATH##*.}"
+        case "$_RC_EXT" in
+            txt|md|markdown|rst|log|csv|tsv|env|conf|gitignore|dockerignore)
+                if (( ${#OUTPUT} > 15360 )); then
+                    _HEAD="${OUTPUT:0:8000}"
+                    _TAIL="${OUTPUT: -2000}"
+                    OUTPUT="${_HEAD}
+... [${_RC_LINES} lines / $((${#OUTPUT}/1024))KB truncated to 10KB -- use Read with offset/limit for full content]
+${_TAIL}"
+                    _WARDEN_FINAL_SIZE=${#OUTPUT}
+                    _warden_emit_event "truncated" "$_RC_ORIGINAL_SIZE" "$_WARDEN_FINAL_SIZE" "read_compress_noncode"
+                    jq -n --arg text "$OUTPUT" '{"modifyOutput":$text}'
+                    exit 0
+                fi
+                _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"
+                if [[ "$REMINDER_PRE_STRIPPED" == true ]]; then
+                    jq -n --arg text "$OUTPUT" '{"modifyOutput":$text}'; exit 0
+                fi
+                _warden_suppress_ok ;;
+        esac
+
+        # Threshold: subagent=300, main=350
+        if [[ "$IS_SUBAGENT" == true ]]; then
+            if (( _RC_LINES <= 300 )); then
+                _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"
+                if [[ "$REMINDER_PRE_STRIPPED" == true ]]; then
+                    jq -n --arg text "$OUTPUT" '{"modifyOutput":$text}'; exit 0
+                fi
+                _warden_suppress_ok
+            fi
+        else
+            if (( _RC_LINES <= 350 )); then
+                _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"
+                if [[ "$REMINDER_PRE_STRIPPED" == true ]]; then
+                    jq -n --arg text "$OUTPUT" '{"modifyOutput":$text}'; exit 0
+                fi
+                _warden_suppress_ok
+            fi
+        fi
+
+        # Config/data file extraction (by extension)
+        _RC_SUMMARY=""
+        case "$_RC_EXT" in
+            json)
+                _RC_SUMMARY=$(printf '%s' "$OUTPUT" | awk '
+                    /^[[:space:]]{0,4}"[^"]+":/ { print }
+                ' | head -150) ;;
+            yml|yaml)
+                _RC_SUMMARY=$(printf '%s' "$OUTPUT" | awk '
+                    /^---/ { print; next }
+                    /^[a-zA-Z_][a-zA-Z0-9_-]*:/ { print; next }
+                    /^- [a-zA-Z]/ { print }
+                ' | head -150) ;;
+            toml|cfg|ini)
+                _RC_SUMMARY=$(printf '%s' "$OUTPUT" | awk '
+                    /^\[/ { print; next }
+                    /^[a-zA-Z_][a-zA-Z0-9_-]* *=/ { print }
+                ' | head -150) ;;
+            xml|svg|html)
+                _RC_SUMMARY=$(printf '%s' "$OUTPUT" | awk '
+                    /^[[:space:]]*<[a-zA-Z][^>]*>/ { print }
+                ' | head -100) ;;
+        esac
+
+        if [[ -n "$_RC_SUMMARY" ]]; then
+            _RC_SUM_LINES=$(printf '%s' "$_RC_SUMMARY" | awk 'END{print NR}')
+            if (( _RC_SUM_LINES < _RC_LINES )); then
+                _RC_FINAL="$_RC_SUMMARY
+
+[Structure extracted: $_RC_LINES lines -> $_RC_SUM_LINES keys/sections]
+[Use Read with offset/limit for full content]"
+                _WARDEN_FINAL_SIZE=${#_RC_FINAL}
+                _warden_emit_event "truncated" "$_RC_ORIGINAL_SIZE" "$_WARDEN_FINAL_SIZE" "read_compress_config"
+                jq -n --arg text "$_RC_FINAL" '{"modifyOutput":$text}'
+                exit 0
+            fi
+        fi
+
+        # Code structural extraction
+        _RC_SUMMARY=$(printf '%s' "$OUTPUT" | awk '
+            /^import [a-zA-Z]/ { print; next }
+            /^from [a-zA-Z].* import / { print; next }
+            /^class [a-zA-Z]/ { print; next }
+            /^def [a-zA-Z]/ { print; next }
+            /^async def [a-zA-Z]/ { print; next }
+            /^import .* from / { print; next }
+            /^export (default |const |let |function |class |interface |type |enum )/ { print; next }
+            /^const [a-zA-Z].*=/ { print; next }
+            /^function [a-zA-Z]/ { print; next }
+            /^async function [a-zA-Z]/ { print; next }
+            /^interface [a-zA-Z]/ { print; next }
+            /^type [a-zA-Z]/ { print; next }
+            /^use [a-zA-Z]/ { print; next }
+            /^pub (fn |struct |enum |trait |mod |type |use |const )/ { print; next }
+            /^fn [a-zA-Z]/ { print; next }
+            /^impl [a-zA-Z]/ { print; next }
+            /^struct [a-zA-Z]/ { print; next }
+            /^enum [a-zA-Z]/ { print; next }
+            /^trait [a-zA-Z]/ { print; next }
+            /^mod [a-zA-Z]/ { print; next }
+            /^package [a-zA-Z]/ { print; next }
+            /^import \(/ { print; next }
+            /^func [a-zA-Z\(]/ { print; next }
+            /^<\?php/ { print; next }
+            /^namespace [a-zA-Z]/ { print; next }
+            /^#{2,4} / { print; next }
+            /^[[:space:]]+(pub fn |async fn |def |async def |public function |private function |protected function )/ { print }
+            /^[[:space:]]+(public |private |protected )[a-zA-Z].*\(/ { print }
+        ' | head -200)
+
+        _RC_SUM_LINES=$(printf '%s' "$_RC_SUMMARY" | awk 'END{print NR}')
+        if (( _RC_SUM_LINES > 0 && _RC_SUM_LINES < _RC_LINES )); then
+            _RC_FINAL="$_RC_SUMMARY
+
+[Structure extracted: $_RC_LINES lines -> $_RC_SUM_LINES signatures]
+[Use Read with offset/limit for implementation details]"
+            _WARDEN_FINAL_SIZE=${#_RC_FINAL}
+            _warden_emit_event "truncated" "$_RC_ORIGINAL_SIZE" "$_WARDEN_FINAL_SIZE" "read_compress_code"
+            jq -n --arg text "$_RC_FINAL" '{"modifyOutput":$text}'
+            exit 0
+        fi
+
+        # No structural extraction possible — pass through
+        _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"
+        if [[ "$REMINDER_PRE_STRIPPED" == true ]]; then
+            jq -n --arg text "$OUTPUT" '{"modifyOutput":$text}'; exit 0
+        fi
+        _warden_suppress_ok ;;
     mcp__*) ;;  # MCP tools: fall through to truncation logic
     *) _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _warden_suppress_ok ;;
 esac
