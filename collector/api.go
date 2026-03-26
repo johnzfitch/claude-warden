@@ -127,6 +127,9 @@ func (a *APIHandler) HandleHookIngest(w http.ResponseWriter, r *http.Request) {
 		if err := a.store.EnsureSession(r.Context(), sessionID); err != nil {
 			slog.Warn("ensure session failed", "session_id", sessionID, "err", err)
 		}
+		if label, _ := evt["session_label"].(string); label != "" {
+			a.store.SetSessionLabel(r.Context(), sessionID, label)
+		}
 	}
 
 	// tool_count is incremented by AccumulateToolTokens on OTLP span ingest,

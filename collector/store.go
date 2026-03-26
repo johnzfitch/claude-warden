@@ -39,6 +39,7 @@ func OpenStore(dbPath string) (*Store, error) {
 	// Column migrations (SQLite has no ADD COLUMN IF NOT EXISTS)
 	for _, col := range []struct{ table, column, ddl string }{
 		{"sessions", "active_time_seconds", "ALTER TABLE sessions ADD COLUMN active_time_seconds REAL NOT NULL DEFAULT 0"},
+		{"sessions", "session_label", "ALTER TABLE sessions ADD COLUMN session_label TEXT NOT NULL DEFAULT ''"},
 	} {
 		var count int
 		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", col.table, col.column).Scan(&count); err != nil {
@@ -306,6 +307,13 @@ func (s *Store) EnsureSession(ctx context.Context, sessionID string) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO sessions (session_id, started_at_ns, updated_at_ns)
 		VALUES (?, ?, ?)`, sessionID, now, now)
+	return err
+}
+
+// SetSessionLabel updates the session_label for a session (extracted from session_start event).
+func (s *Store) SetSessionLabel(ctx context.Context, sessionID, label string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE sessions SET session_label = ? WHERE session_id = ?`, label, sessionID)
 	return err
 }
 

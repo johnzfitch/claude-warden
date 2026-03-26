@@ -326,19 +326,43 @@ html,body { background:var(--bg); color:var(--text); font:13px/1.5 var(--font);
   </div>
 
   <div class="toolbar">
-    <button hx-get="/view/context" hx-target="#content" class="active">Context</button>
-    <button hx-get="/view/waterfall" hx-target="#content">Waterfall</button>
-    <button hx-get="/view/events" hx-target="#content">Events</button>
-    <button hx-get="/view/cost" hx-target="#content">Cost</button>
-    <button hx-get="/view/tools" hx-target="#content">Top Tools</button>
-    <button hx-get="/view/trend" hx-target="#content">Trend</button>
-    <button hx-get="/view/conversation" hx-target="#content">Conv</button>
+    <button hx-get="/view/context" hx-target="#content" class="active" data-view="context" onclick="setView(this)">Context</button>
+    <button hx-get="/view/waterfall" hx-target="#content" data-view="waterfall" onclick="setView(this)">Waterfall</button>
+    <button hx-get="/view/events" hx-target="#content" data-view="events" onclick="setView(this)">Events</button>
+    <button hx-get="/view/cost" hx-target="#content" data-view="cost" onclick="setView(this)">Cost</button>
+    <button hx-get="/view/tools" hx-target="#content" data-view="tools" onclick="setView(this)">Top Tools</button>
+    <button hx-get="/view/trend" hx-target="#content" data-view="trend" onclick="setView(this)">Trend</button>
+    <button hx-get="/view/conversation" hx-target="#content" data-view="conversation" onclick="setView(this)">Conv</button>
     <div class="spacer"></div>
     <span class="db-info">DB: %(db_path)s</span>
   </div>
+  <script>
+  var activeView = 'context';
+  function setView(btn) {
+    activeView = btn.dataset.view;
+    document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    // Update sidebar poll URL to include current view
+    var sb = document.querySelector('.sidebar');
+    if (sb) sb.setAttribute('hx-get', '/sidebar?view=' + activeView);
+    htmx.process(sb);
+  }
+  // Override sidebar link clicks to use the active view tab
+  document.addEventListener('htmx:configRequest', function(e) {
+    var el = e.detail.elt;
+    if (el.closest && el.closest('.session-item')) {
+      var url = new URL(e.detail.path, location.origin);
+      // Rewrite view path to current active tab
+      if (url.pathname.startsWith('/view/')) {
+        url.pathname = '/view/' + activeView;
+        e.detail.path = url.pathname + url.search;
+      }
+    }
+  });
+  </script>
 
   <div class="main">
-    <div class="sidebar" hx-get="/sidebar" hx-trigger="load, every 5s" hx-swap="innerHTML">
+    <div class="sidebar" hx-get="/sidebar?view=context" hx-trigger="load, every 5s" hx-swap="innerHTML">
       <div class="empty-state">Loading sessions...</div>
     </div>
     <div id="content" class="content" hx-get="/view/context" hx-trigger="load" hx-swap="innerHTML">
@@ -358,12 +382,22 @@ html,body { background:var(--bg); color:var(--text); font:13px/1.5 var(--font);
 
 # ── View Rendering Functions ─────────────────────────────────────────
 
-def render_sidebar(db, active_session=None):
+def render_sidebar(db, active_session=None, active_view="context"):
     """Render session list sidebar."""
-    sessions = db.execute("""
+    # Check if session_label column exists (migration may not have run yet)
+    has_label = False
+    try:
+        db.execute("SELECT session_label FROM sessions LIMIT 0")
+        has_label = True
+    except Exception:
+        pass
+
+    label_col = ", session_label" if has_label else ""
+    sessions = db.execute(f"""
         SELECT session_id, model, context_window, input_tokens, output_tokens,
-               cache_read_tokens, cost_usd, tool_count, updated_at_ns
+               cache_read_tokens, cost_usd, tool_count, updated_at_ns{label_col}
         FROM sessions
+        WHERE tool_count > 0 OR updated_at_ns > (strftime('%s', 'now') - 3600) * 1000000000
         ORDER BY updated_at_ns DESC
         LIMIT 50
     """).fetchall()
@@ -373,8 +407,13 @@ def render_sidebar(db, active_session=None):
 
     html = '<div class="sidebar-section"><h3>Sessions</h3>'
     for row in sessions:
-        sid, model, ctx_win, inp, out, cache_read, cost, tools, updated = row
+        if has_label:
+            sid, model, ctx_win, inp, out, cache_read, cost, tools, updated, label = row
+        else:
+            sid, model, ctx_win, inp, out, cache_read, cost, tools, updated = row
+            label = ""
         sid_short = sid[-6:] if len(sid) > 6 else sid
+        display_name = label if label else sid_short
 
         active_class = " active" if sid == active_session else ""
         ctx_total = inp + out + cache_read
@@ -382,11 +421,11 @@ def render_sidebar(db, active_session=None):
 
         html += f'''
         <a href="?session={h(sid)}" class="session-item{active_class}"
-           hx-get="/view/context?session={h(sid)}" hx-target="#content">
-          <div class="session-id">{h(sid_short)}</div>
+           hx-get="/view/{h(active_view)}?session={h(sid)}" hx-target="#content">
+          <div class="session-id">{h(display_name)}</div>
           <div class="session-model">{h(model or "unknown")}</div>
           <div class="session-meta">
-            {ctx_pct}% · ${cost:.2f} · {tools} tools
+            {ctx_pct}% &middot; ${cost:.2f} &middot; {tools} tools
           </div>
         </a>
         '''
@@ -1037,7 +1076,8 @@ class WardenHandler(http.server.BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header('Content-type', 'text/html; charset=utf-8')
                 self.end_headers()
-                html = render_sidebar(db, session_id)
+                active_view = query.get('view', ['context'])[0]
+                html = render_sidebar(db, session_id, active_view)
                 self.wfile.write(html.encode())
 
             elif path == '/view/context':
