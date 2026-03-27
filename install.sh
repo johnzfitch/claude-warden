@@ -370,19 +370,11 @@ if [[ -d "$LIB_SRC" ]]; then
     fi
 fi
 
-# === Install bin directory (aurl, etc.) ===
-BIN_SRC="$WARDEN_DIR/hooks/bin"
+# === Clean up legacy bin directory (aurl removed) ===
 BIN_DST="$HOOKS_DIR/bin"
-if [[ -d "$BIN_SRC" ]]; then
-    info "Installing hooks/bin ($MODE mode)..."
-    [[ -e "$BIN_DST" || -L "$BIN_DST" ]] && run rm -rf "$BIN_DST"
-    if [[ "$MODE" == "symlink" ]]; then
-        run ln -s "$BIN_SRC" "$BIN_DST"
-        dim "bin/ -> $BIN_SRC"
-    else
-        run cp -a "$BIN_SRC" "$BIN_DST"
-        dim "bin/ (copied)"
-    fi
+if [[ -e "$BIN_DST" || -L "$BIN_DST" ]]; then
+    info "Removing legacy hooks/bin..."
+    run rm -rf "$BIN_DST"
 fi
 
 # === Install statusline ===
@@ -748,20 +740,11 @@ if ! $DRY_RUN; then
         done
     fi
 
-    # Validate bin scripts (aurl, etc.)
+    # Legacy bin directory should not exist
     if [[ -d "$HOOKS_DIR/bin" ]]; then
         for bin_script in "$HOOKS_DIR/bin"/*; do
             [[ -f "$bin_script" ]] || continue
-            BIN_TARGET="$bin_script"
-            if [[ -L "$bin_script" ]]; then
-                BIN_TARGET=$(readlink -f "$bin_script" 2>/dev/null || readlink "$bin_script")
-            fi
-            if bash -n "$BIN_TARGET" 2>/dev/null; then
-                dim "$(basename "$bin_script"): syntax OK"
-            else
-                error "$(basename "$bin_script"): syntax error!"
-                ERRORS=$((ERRORS + 1))
-            fi
+            warn "$(basename "$bin_script"): legacy bin script still present — run install.sh to clean up"
         done
     fi
 

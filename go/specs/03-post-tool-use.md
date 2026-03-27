@@ -69,7 +69,7 @@ Read this file completely. Every behavior must be ported.
     - `wget_quiet_override` → `[warden: ran as wget -q ...]`
     - `docker_quiet_override` → `[warden: ran with -q ...]`
     - `ffmpeg_quiet_override` → `[warden: ran with -nostats -loglevel error ...]`
-    - `curl_to_aurl` → `[warden: curl routed through aurl (safe wrapper) — localhost allowed, remote POST/PUT/PATCH/DELETE blocked]`
+    - `curl_sanitized` → `[warden: curl sanitized — added -sS/--max-time, stripped verbose flags]`
     - `git_diff_bounded` → `[warden: git diff piped through head -200 — use --stat for summary or specify file paths to narrow output]`
     - `cat_to_head` → `[warden: cat -> head -c 8192 (file too large) — use Read tool with offset/limit for full content]`
 17. If reminder found, return it and exit (skip truncation).

@@ -226,11 +226,11 @@ if [[ "$NORM_CMD" =~ :\(\)[[:space:]]*\{[[:space:]]*:\|:[[:space:]]*\&[[:space:]
     _warden_emit_block "fork_bomb" 0; _warden_deny "Blocked fork bomb"
 fi
 
-# RCE pipe detection: curl/wget/aurl piped to any interpreter
+# RCE pipe detection: curl/wget piped to any interpreter
 # Uses regex instead of case/glob to avoid substring false positives
 # (e.g. *"sh"* matching "should", "fresh", "hash")
 _RCE_INTERP='(bash|sh|zsh|dash|python[23]?|perl|ruby|node)'
-if [[ "$NORM_CMD" =~ (curl|wget|aurl) ]]; then
+if [[ "$NORM_CMD" =~ (curl|wget) ]]; then
     # Direct pipe: ... | interpreter ...
     if [[ "$NORM_CMD" =~ \|[[:space:]]*${_RCE_INTERP}([[:space:]\;]|$) ]]; then
         _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution"
@@ -239,26 +239,26 @@ if [[ "$NORM_CMD" =~ (curl|wget|aurl) ]]; then
     if [[ "$NORM_CMD" =~ \|[[:space:]]*/[^[:space:]]*/+${_RCE_INTERP}([[:space:]\;]|$) ]]; then
         _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution"
     fi
-    # Process substitution: interpreter <(curl/wget/aurl ...)
-    if [[ "$NORM_CMD" =~ ${_RCE_INTERP}[[:space:]]+\<\((curl|wget|aurl) ]]; then
+    # Process substitution: interpreter <(curl/wget ...)
+    if [[ "$NORM_CMD" =~ ${_RCE_INTERP}[[:space:]]+\<\((curl|wget) ]]; then
         _warden_emit_block "rce_pipe" 0; _warden_deny "Blocked remote code execution"
     fi
     # eval "$(curl ...)" or eval `curl ...`
-    if [[ "$NORM_CMD" =~ eval[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then
+    if [[ "$NORM_CMD" =~ eval[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget) ]]; then
         _warden_emit_block "rce_eval" 0; _warden_deny "Blocked remote code execution"
     fi
     # source <(curl ...) and . <(curl ...) — dot-sourcing
     # [.] avoids bash regex treating . as "any char" in extended regex
-    if [[ "$NORM_CMD" =~ (source|[.])[[:space:]]+\<\((curl|wget|aurl) ]]; then
+    if [[ "$NORM_CMD" =~ (source|[.])[[:space:]]+\<\((curl|wget) ]]; then
         _warden_emit_block "rce_source" 0; _warden_deny "Blocked remote code execution"
     fi
     # interpreter -c "$(curl ...)" — bare name or absolute path
     _RCE_INTERP_OR_PATH="(${_RCE_INTERP}|/[^[:space:]]*/+${_RCE_INTERP})"
-    if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+-c[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then
+    if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+-c[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget) ]]; then
         _warden_emit_block "rce_exec_c" 0; _warden_deny "Blocked remote code execution"
     fi
     # interpreter <<< "$(curl ...)" — herestring
-    if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+\<\<\<[[:space:]]*(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then
+    if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+\<\<\<[[:space:]]*(\"?\$\(|\'?\`).*(curl|wget) ]]; then
         _warden_emit_block "rce_herestring" 0; _warden_deny "Blocked remote code execution"
     fi
 fi
@@ -292,7 +292,7 @@ if [[ "$COMMAND" =~ /proc/(self|[0-9]+)/environ ]]; then
 fi
 
 # === CURL SAFETY ===
-# Check order: dangerous patterns blocked first, then rewrite safe commands through aurl.
+# Check order: dangerous patterns blocked first, then sanitize safe commands inline.
 if [[ "$COMMAND" =~ (^|[;&|[:space:]])curl[[:space:]] ]]; then
     _CURL_PREFIX="${BASH_REMATCH[1]}"
     _CMD_LOWER=$(printf '%s' "$COMMAND" | tr '[:upper:]' '[:lower:]')
@@ -321,12 +321,21 @@ if [[ "$COMMAND" =~ (^|[;&|[:space:]])curl[[:space:]] ]]; then
         _warden_emit_block "curl_write_method" 0
         _warden_deny "Write method blocked: '${COMMAND:0:120}' uses ${_CURL_WRITE_METHOD} to a remote server. Explicit write methods (POST/PUT/PATCH/DELETE) to remote servers are not allowed. Ask the user to run this manually."
     fi
-    # Skip aurl rewrite when curl runs on a remote host (inside ssh)
+    # Sanitize curl flags inline (skip when curl runs on a remote host via ssh)
     if [[ ! "$COMMAND" =~ ^ssh[[:space:]] ]]; then
-        _AURL_BIN="$(cd "${BASH_SOURCE[0]%/*}/bin" 2>/dev/null && pwd)/aurl"
-        if [[ -x "$_AURL_BIN" ]]; then
-            _QUIET_CMD="${COMMAND/"${_CURL_PREFIX}curl "/"${_CURL_PREFIX}${_AURL_BIN} "}"
-            _warden_quiet_override "curl_to_aurl" "$_QUIET_CMD"
+        _CURL_CLEAN="$COMMAND"
+        # Strip verbose flags (-v, --verbose) to save tokens
+        _CURL_CLEAN=$(printf '%s' "$_CURL_CLEAN" | sed -E 's/(^|[[:space:]])(--verbose|-v)([[:space:]]|$)/\1\3/g')
+        # Add -s (silent) if not present
+        if [[ ! "$_CURL_CLEAN" =~ (^|[[:space:]])(-s|--silent|-sS|-Ss)([[:space:]]|$) ]]; then
+            _CURL_CLEAN="${_CURL_CLEAN/"${_CURL_PREFIX}curl "/"${_CURL_PREFIX}curl -sS "}"
+        fi
+        # Add --max-time 30 if no timeout set
+        if [[ ! "$_CURL_CLEAN" =~ (-m[[:space:]]|--max-time[[:space:]]|--connect-timeout[[:space:]]) ]]; then
+            _CURL_CLEAN="${_CURL_CLEAN/"${_CURL_PREFIX}curl "/"${_CURL_PREFIX}curl --max-time 30 "}"
+        fi
+        if [[ "$_CURL_CLEAN" != "$COMMAND" ]]; then
+            _warden_quiet_override "curl_sanitized" "$_CURL_CLEAN"
         fi
     fi
 fi
@@ -534,7 +543,7 @@ if [[ "$COMMAND" =~ (^|python3?[[:space:]]+-m[[:space:]]+)pip3?[[:space:]]+(inst
     _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/(pip3?[[:space:]]+(install|download))/\1 -q/')
     _warden_quiet_override "pip_quiet_override" "$_QUIET_CMD"
 fi
-# curl verbose: handled by aurl rewrite above (auto-adds -s)
+# curl verbose: handled by curl sanitization above (strips -v, adds -sS)
 # wget
 if [[ "$COMMAND" =~ ^wget[[:space:]] ]] && [[ ! "$COMMAND" =~ (-q|--quiet|-O) ]]; then
     _QUIET_CMD=$(printf '%s' "$COMMAND" | sed -E 's/^wget/wget -q/')

@@ -526,15 +526,6 @@ assert_stdout_json_has "$out" '.hookSpecificOutput.additionalContext | test("npm
   "post-tool-use quiet override"
 rm -f "$QUIET_FIXTURE"
 
-echo "[tests] aurl (localhost failures keep curl diagnostics)"
-AURL_STDERR="$(mktemp)"
-set +e
-"$ROOT_DIR/hooks/bin/aurl" "http://127.0.0.1:1" >/dev/null 2>"$AURL_STDERR"
-rc=$?
-set -e
-[[ "$rc" -ne 0 ]] || fail "aurl diagnostics: expected non-zero exit for refused localhost port"
-[[ -s "$AURL_STDERR" ]] || fail "aurl diagnostics: expected stderr output for refused localhost port"
-rm -f "$AURL_STDERR"
 
 echo "[tests] permission-request (echo policy)"
 perm_fixture="$(mktemp)"

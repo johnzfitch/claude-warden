@@ -249,8 +249,8 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
                 _QUIET_REMINDER="[warden: ran with -q — next time use docker ${BASH_REMATCH[1]} -q]" ;;
             ffmpeg_quiet_override)
                 _QUIET_REMINDER="[warden: ran with -nostats -loglevel error — next time include these flags yourself]" ;;
-            curl_to_aurl)
-                _QUIET_REMINDER="[warden: curl routed through aurl (safe wrapper) — localhost allowed, remote POST/PUT/PATCH/DELETE blocked]" ;;
+            curl_sanitized)
+                _QUIET_REMINDER="[warden: curl sanitized — added -sS/--max-time, stripped verbose flags]" ;;
             git_diff_bounded)
                 _QUIET_REMINDER="[warden: git diff piped through head -200 — use --stat for summary or specify file paths to narrow output]" ;;
             cat_to_head)
