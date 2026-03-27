@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "jq": [".modifyOutput"],
+    "contains": ["Structure extracted", "keys/sections"]
+  }
+}

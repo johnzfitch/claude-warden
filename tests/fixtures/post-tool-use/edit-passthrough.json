@@ -1,0 +1,15 @@
+{
+  "tool_name": "Edit",
+  "session_id": "test-session",
+  "tool_input": {
+    "file_path": "src/main.ts"
+  },
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "File edited"
+      }
+    ]
+  }
+}

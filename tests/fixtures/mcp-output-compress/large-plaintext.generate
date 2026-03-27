@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Generate a >10500 char plain text MCP response (not JSON)
+python3 -c "
+import json
+text = '\n'.join(f'Line {i}: ' + 'data content here ' * 10 for i in range(200))
+payload = json.dumps({
+    'tool_name': 'mcp__custom__export',
+    'tool_response': [{'type': 'text', 'text': text}],
+    'session_id': 'test-session',
+    'transcript_path': '/tmp/main.jsonl'
+})
+print(payload)
+"

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+tmpfile="$(mktemp)"
+echo '{"model": "claude-sonnet-4-6"}' > "$tmpfile"
+jq -n --arg fp "$tmpfile" '{"source":"project_settings","file_path":$fp,"session_id":"test-session"}'

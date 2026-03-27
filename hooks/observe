@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# observe: Consolidated observer for elicitation, elicitation-result, instructions-loaded
+# All three events are purely observational (exit 0, no hookSpecificOutput).
+# Dispatches by field presence in input JSON.
+set -euo pipefail
+
+source "${BASH_SOURCE[0]%/*}/lib/common.sh"
+
+_warden_read_input || exit 0
+
+# Detect event type by field presence (single jq call)
+IFS=$'\t' read -r HAS_MESSAGE HAS_ACTION HAS_FILE_PATH HAS_MEMORY_TYPE < <(
+    printf '%s' "$WARDEN_INPUT" | jq -r '[
+        (if .message != null or .elicitation_id != null then "1" else "0" end),
+        (if .action != null then "1" else "0" end),
+        (if .file_path != null then "1" else "0" end),
+        (if .memory_type != null then "1" else "0" end)
+    ] | @tsv' 2>/dev/null
+) || exit 0
+
+# === ELICITATION RESULT (check before elicitation — both have elicitation_id) ===
+if [[ "$HAS_ACTION" == "1" ]]; then
+    IFS=$'\t' read -r MCP_SERVER ELICITATION_ID ACTION MODE < <(
+        printf '%s' "$WARDEN_INPUT" | jq -r '[
+            .mcp_server_name // "unknown",
+            .elicitation_id // "",
+            .action // "unknown",
+            .mode // "form"
+        ] | @tsv' 2>/dev/null
+    ) || exit 0
+
+    MCP_SERVER=$(_warden_sanitize_id "$MCP_SERVER")
+    _warden_json_escape ELICITATION_ID
+    _warden_json_escape ACTION
+    _warden_json_escape MODE
+
+    CONTENT_FIELDS=0
+    if printf '%s' "$WARDEN_INPUT" | jq -e '.content | type == "object"' &>/dev/null; then
+        CONTENT_FIELDS=$(printf '%s' "$WARDEN_INPUT" | jq '.content | length' 2>/dev/null || echo 0)
+    fi
+
+    _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+    printf -v _evt '{"timestamp":%d,"event_type":"elicitation_result","tool":"ElicitationResult","mcp_server":"%s","elicitation_id":"%s","action":"%s","mode":"%s","content_fields":%d}' \
+        "$_TS" "$MCP_SERVER" "$ELICITATION_ID" "$ACTION" "$MODE" "$CONTENT_FIELDS"
+    _warden_post_to_collector "$_evt"
+    exit 0
+fi
+
+# === ELICITATION ===
+if [[ "$HAS_MESSAGE" == "1" ]]; then
+    IFS=$'\t' read -r MCP_SERVER MODE ELICITATION_ID MESSAGE < <(
+        printf '%s' "$WARDEN_INPUT" | jq -r '[
+            .mcp_server_name // "unknown",
+            .mode // "form",
+            .elicitation_id // "",
+            .message // ""
+        ] | @tsv' 2>/dev/null
+    ) || exit 0
+
+    MCP_SERVER=$(_warden_sanitize_id "$MCP_SERVER")
+    _warden_json_escape MODE
+    _warden_json_escape ELICITATION_ID
+    _warden_json_escape MESSAGE
+    _warden_maybe_scrub MESSAGE
+
+    _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+    printf -v _evt '{"timestamp":%d,"event_type":"elicitation","tool":"Elicitation","mcp_server":"%s","mode":"%s","elicitation_id":"%s","message":"%s"}' \
+        "$_TS" "$MCP_SERVER" "$MODE" "$ELICITATION_ID" "$MESSAGE"
+    _warden_post_to_collector "$_evt"
+    exit 0
+fi
+
+# === INSTRUCTIONS LOADED ===
+if [[ "$HAS_FILE_PATH" == "1" && "$HAS_MEMORY_TYPE" == "1" ]]; then
+    IFS=$'\t' read -r FILE_PATH MEMORY_TYPE LOAD_REASON < <(
+        printf '%s' "$WARDEN_INPUT" | jq -r '[
+            .file_path // "unknown",
+            .memory_type // "unknown",
+            .load_reason // "unknown"
+        ] | @tsv' 2>/dev/null
+    ) || exit 0
+
+    _warden_json_escape FILE_PATH
+    _warden_json_escape MEMORY_TYPE
+    _warden_json_escape LOAD_REASON
+
+    GLOB_COUNT=0
+    if printf '%s' "$WARDEN_INPUT" | jq -e '.globs | type == "array"' &>/dev/null; then
+        GLOB_COUNT=$(printf '%s' "$WARDEN_INPUT" | jq '.globs | length' 2>/dev/null || echo 0)
+    fi
+
+    _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+    printf -v _evt '{"timestamp":%d,"event_type":"instructions_loaded","tool":"InstructionsLoaded","file_path":"%s","memory_type":"%s","load_reason":"%s","glob_count":%d}' \
+        "$_TS" "$FILE_PATH" "$MEMORY_TYPE" "$LOAD_REASON" "$GLOB_COUNT"
+    _warden_post_to_collector "$_evt"
+    exit 0
+fi
+
+# Unknown event type — pass through silently
+exit 0

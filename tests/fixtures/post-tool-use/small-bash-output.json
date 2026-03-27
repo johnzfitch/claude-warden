@@ -1,0 +1,15 @@
+{
+  "tool_name": "Bash",
+  "session_id": "test-session",
+  "tool_input": {
+    "command": "echo hello"
+  },
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "hello\n"
+      }
+    ]
+  }
+}

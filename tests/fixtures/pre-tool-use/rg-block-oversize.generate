@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Create a 3MB file and point the fixture at it
+bigfile="$(mktemp)"
+head -c 3145728 < /dev/zero > "$bigfile"
+jq -n --arg fp "$bigfile" '{"tool_name":"Read","tool_input":{"file_path":$fp},"session_id":"test-session","transcript_path":"/tmp/main.jsonl"}'

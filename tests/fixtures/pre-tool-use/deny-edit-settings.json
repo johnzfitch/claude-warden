@@ -1,0 +1,10 @@
+{
+  "tool_input": {
+    "file_path": "/home/user/.claude/hooks/pre-tool-use",
+    "new_string": "exit 0",
+    "old_string": "exit 0"
+  },
+  "tool_name": "Edit",
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+TEXT=$(python3 -c "print('\n'.join(f'line {i:07d}: ' + 'x'*90 for i in range(600)))")
+jq -n --arg txt "$TEXT" '{
+  tool_name:"Bash", session_id:"test-session",
+  tool_input:{command:"find / -name \"*.log\""},
+  tool_response:{content:[{type:"text",text:$txt}]}
+}'

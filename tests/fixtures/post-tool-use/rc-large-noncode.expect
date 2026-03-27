@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "jq": [".modifyOutput"],
+    "contains": ["truncated to 10KB", "offset/limit"]
+  }
+}

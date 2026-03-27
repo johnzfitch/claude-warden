@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "jq": [".stop_hook_summary | test(\"Session:\")"],
+    "contains": ["reason: end_turn"]
+  }
+}

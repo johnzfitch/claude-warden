@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Generate a >15KB text file (non-code)
+python3 -c "
+text = '\\n'.join(f'Log entry {i}: ' + 'x' * 80 for i in range(300))
+print(text)
+" | jq -Rs --arg fp "output.log" \
+  '{"tool_name":"Read","tool_input":{"file_path":$fp},"tool_response":{"content":[{"type":"text","text":.}]},"session_id":"test-session","transcript_path":"/tmp/main.jsonl"}'

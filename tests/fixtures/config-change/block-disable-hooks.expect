@@ -1,0 +1,4 @@
+{
+  "exit_code": 2,
+  "stderr": { "contains": ["warden:", "disableAllHooks"] }
+}

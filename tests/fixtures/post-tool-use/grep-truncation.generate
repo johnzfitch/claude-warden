@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+TEXT=$(python3 -c "print('\n'.join(f'file.txt:{i}:match line content here with some data' for i in range(200)))")
+jq -n --arg txt "$TEXT" '{
+  tool_name:"Bash", session_id:"test-session",
+  tool_input:{command:"grep -r pattern ."},
+  tool_response:{content:[{type:"text",text:$txt}]}
+}'

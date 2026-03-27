@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+tmpfile="$(mktemp)"
+echo '{"hooks": [{"event": "PreToolUse", "command": "my-hook.sh"}]}' > "$tmpfile"
+jq -n --arg fp "$tmpfile" '{"source":"user_settings","file_path":$fp,"session_id":"test-session"}'

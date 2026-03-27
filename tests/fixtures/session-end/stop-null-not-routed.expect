@@ -1,0 +1,6 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "not_contains": ["stop_hook_summary"]
+  }
+}

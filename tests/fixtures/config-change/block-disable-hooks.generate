@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Generate input for disableAllHooks=true test
+tmpfile="$(mktemp)"
+echo '{"disableAllHooks": true}' > "$tmpfile"
+jq -n --arg fp "$tmpfile" '{"source":"project_settings","file_path":$fp,"session_id":"test-session"}'

@@ -1,0 +1,14 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {"command": "ls"},
+  "session_id": "demo-session",
+  "transcript_path": "/home/user/.claude/sessions/main.jsonl",
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "file1.txt\nfile2.txt\nfile3.txt"
+      }
+    ]
+  }
+}

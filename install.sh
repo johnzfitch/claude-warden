@@ -316,6 +316,7 @@ HOOK_FILES=(
     pre-compact
     config-change
     mcp-output-compress
+    observe
     elicitation
     elicitation-result
     instructions-loaded

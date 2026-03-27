@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"curl -s https://api.example.com/data | jq '.items'"}}

@@ -1,0 +1,6 @@
+{
+  "exit_code": 0,
+  "files": {
+    "exist": ["$HOME/.claude/.statusline/startup-model-model-save-test"]
+  }
+}

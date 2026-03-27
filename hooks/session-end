@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# session-end: Track terminal agent completion and session cleanup
+# session-end: Track terminal agent completion, session cleanup, and stop events
+# Handles both SessionEnd and Stop lifecycle events (merged from hooks/stop)
 set -euo pipefail
 
 # Source shared library
@@ -11,6 +12,91 @@ AGENT_STATS="$HOME/.claude/agent-stats.csv"
 SESSION_COST_LOG="$HOME/.claude/.monitoring/session-costs.csv"
 
 _warden_read_input || exit 0
+
+# === STOP EVENT HANDLING (merged from hooks/stop) ===
+# Detect Stop event by presence of stop_hook_active field (boolean).
+# SessionEnd payloads have only session_id + reason.
+# Stop payloads always include stop_hook_active (true or false).
+# Reject null/non-boolean to prevent malformed payloads from misrouting.
+_STOP_HOOK_ACTIVE=$(printf '%s' "$WARDEN_INPUT" | jq -r 'if has("stop_hook_active") and (.stop_hook_active | type == "boolean") then (.stop_hook_active | tostring) else "absent" end' 2>/dev/null)
+if [[ "$_STOP_HOOK_ACTIVE" != "absent" ]]; then
+    # CRITICAL: Prevent infinite loops
+    [[ "$_STOP_HOOK_ACTIVE" == "true" ]] && exit 0
+
+    IFS=$'\t' read -r _STOP_REASON _STOP_TOOL _STOP_SID < <(
+        printf '%s' "$WARDEN_INPUT" | jq -r '[.reason // "unknown", .tool_name // "", .session_id // ""] | @tsv' 2>/dev/null
+    ) || exit 0
+
+    _STOP_SID=$(_warden_sanitize_id "$_STOP_SID")
+    _warden_resolve_session_start "$_STOP_SID"
+
+    TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # Calculate session duration
+    DURATION="unknown"
+    DURATION_SECS=0
+    SESSION_TIME_FILE="$HOME/.claude/.session-times/$_STOP_SID.start"
+    if [ -n "$_STOP_SID" ] && [ -f "$SESSION_TIME_FILE" ]; then
+        START_TIME=$(_warden_read_numeric "$SESSION_TIME_FILE" "$_WARDEN_NOW_S")
+        END_TIME=$(date +%s)
+        DURATION_SECS=$((END_TIME - START_TIME))
+        DURATION="${DURATION_SECS}s"
+    fi
+
+    # Log stop event with duration
+    if [[ -n "$_STOP_TOOL" ]]; then
+        echo "[$TIMESTAMP] Stop: $_STOP_REASON (tool: $_STOP_TOOL, duration: $DURATION)" >> "$LOG_FILE"
+    else
+        echo "[$TIMESTAMP] Stop: $_STOP_REASON (duration: $DURATION)" >> "$LOG_FILE"
+    fi
+
+    # Emit to collector
+    _TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+    _REASON_SAFE="$_STOP_REASON"
+    _warden_json_escape _REASON_SAFE
+    printf -v _evt '{"timestamp":%d,"event_type":"session_stop","tool":"Stop","session_id":"%s","reason":"%s","duration_seconds":%d}' \
+        "$_TS" "$_STOP_SID" "$_REASON_SAFE" "${DURATION_SECS:-0}"
+    _warden_post_to_collector "$_evt"
+
+    # === AUTONOMOUS RESPONSE DETECTION ===
+    _PROJECT_KEY=$(printf '%s' "$PWD" | tr '/' '-')
+    _JSONL="$HOME/.claude/projects/${_PROJECT_KEY}/${_STOP_SID}.jsonl"
+    _WARDEN_AUTO_WARNING=""
+    if [[ -f "$_JSONL" ]]; then
+        _LAST_ORIGIN=$(tail -30 "$_JSONL" \
+            | jq -r 'select(.type == "user") | .origin.kind // "human"' 2>/dev/null \
+            | tail -1)
+        if [[ -n "$_LAST_ORIGIN" && "$_LAST_ORIGIN" != "human" ]]; then
+            _RESPONSE_PREVIEW=$(tail -10 "$_JSONL" \
+                | jq -r 'select(.type == "assistant") | .message.content[0].text // "" | .[0:200]' 2>/dev/null \
+                | tail -1)
+            _warden_json_escape _RESPONSE_PREVIEW
+            _REQ_ID=$(tail -10 "$_JSONL" \
+                | jq -r 'select(.type == "assistant") | .requestId // ""' 2>/dev/null \
+                | tail -1)
+            printf -v _auto_evt '{"timestamp":%d,"event_type":"autonomous_response","tool":"Stop","session_id":"%s","origin":"%s","request_id":"%s","response_preview":"%s"}' \
+                "$_TS" "$_STOP_SID" "$_LAST_ORIGIN" "$_REQ_ID" "$_RESPONSE_PREVIEW"
+            _warden_post_to_collector "$_auto_evt"
+            _warden_notify critical "Warden: Autonomous Response" \
+                "Claude responded to a ${_LAST_ORIGIN} trigger without user input. Review the last turn."
+            _WARDEN_AUTO_WARNING="[warden] The previous response was triggered by '${_LAST_ORIGIN}', not by you. It may not reflect your intent -- review before acting on it."
+        fi
+    fi
+
+    # Build stop_hook_summary
+    if [[ -n "${_WARDEN_AUTO_WARNING:-}" ]]; then
+        jq -n \
+            --arg s "Session: ${DURATION_SECS:-0}s | reason: $_STOP_REASON" \
+            --arg warn "$_WARDEN_AUTO_WARNING" \
+            '{"stop_hook_summary": $s, "hookSpecificOutput":{"hookEventName":"Stop","additionalContext":$warn}}'
+    else
+        jq -n \
+            --arg s "Session: ${DURATION_SECS:-0}s | reason: $_STOP_REASON" \
+            '{"stop_hook_summary": $s}'
+    fi
+    exit 0
+fi
+# === END STOP EVENT HANDLING ===
 
 # Extract session info
 IFS=$'\t' read -r SESSION_ID REASON < <(

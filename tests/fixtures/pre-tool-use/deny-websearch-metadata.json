@@ -1,0 +1,8 @@
+{
+  "tool_input": {
+    "query": "http://169.254.169.254"
+  },
+  "tool_name": "WebSearch",
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

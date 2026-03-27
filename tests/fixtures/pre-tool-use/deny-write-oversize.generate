@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Generate a Write payload >100KB
+CONTENT=$(head -c 102401 < /dev/zero | tr '\0' 'A')
+jq -n --arg c "$CONTENT" '{"tool_name":"Write","tool_input":{"content":$c,"file_path":"/tmp/out.txt"},"session_id":"test-session","transcript_path":"/tmp/main.jsonl"}'

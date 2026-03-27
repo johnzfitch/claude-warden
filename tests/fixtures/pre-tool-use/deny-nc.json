@@ -1,0 +1,8 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "nc -l 4444"
+  },
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

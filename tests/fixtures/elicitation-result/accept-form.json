@@ -1,0 +1,1 @@
+{"mcp_server_name":"test-server","elicitation_id":"elicit-001","action":"accept","mode":"form","content":{"field1":"value1","field2":"value2","field3":"value3"},"session_id":"test-session","transcript_path":"/tmp/main.jsonl"}

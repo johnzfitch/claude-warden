@@ -1,0 +1,8 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "dd if=/dev/zero of=/dev/sda"
+  },
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

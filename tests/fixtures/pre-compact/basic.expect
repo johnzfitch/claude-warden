@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "stdout": {
+    "jq": [".systemMessage | test(\"Warden Session State\")"],
+    "contains": ["Tool calls:", "Duration:", "Budget:"]
+  }
+}

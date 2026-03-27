@@ -1,0 +1,16 @@
+{
+  "tool_name": "Read",
+  "session_id": "test-session",
+  "tool_input": {
+    "file_path": "src/main.ts"
+  },
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "const x = 1;\n"
+      }
+    ]
+  },
+  "transcript_path": "/tmp/main.jsonl"
+}

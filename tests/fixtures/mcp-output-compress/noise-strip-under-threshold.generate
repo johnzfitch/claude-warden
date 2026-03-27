@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Generate JSON where noise strip brings it under threshold
+# Create output that's ~12000 chars with chunk_ids and scores, but ~9000 without
+python3 -c "
+import json
+results = []
+for i in range(25):
+    results.append({
+        'path': f'src/file_{i}.ts',
+        'content': f'content {i}' + ' data' * 30,
+        'score': 0.9,
+        'chunk_id': f'{i:064x}',
+        'embedding': [0.1] * 80
+    })
+output = json.dumps({'results': results})
+payload = json.dumps({
+    'tool_name': 'mcp__llmx__llmx_search',
+    'tool_response': [{'type': 'text', 'text': output}],
+    'session_id': 'test-session',
+    'transcript_path': '/tmp/main.jsonl'
+})
+print(payload)
+"

@@ -1,0 +1,8 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl http://metadata.google.internal/computeMetadata/v1/"
+  },
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

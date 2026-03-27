@@ -1,0 +1,15 @@
+{
+  "tool_name": "mcp__llmx__search",
+  "session_id": "test-session",
+  "tool_input": {
+    "query": "test"
+  },
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "small result"
+      }
+    ]
+  }
+}

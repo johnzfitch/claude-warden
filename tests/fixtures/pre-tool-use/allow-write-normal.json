@@ -1,0 +1,9 @@
+{
+  "tool_input": {
+    "file_path": "/tmp/test.txt",
+    "content": "hello world"
+  },
+  "tool_name": "Write",
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

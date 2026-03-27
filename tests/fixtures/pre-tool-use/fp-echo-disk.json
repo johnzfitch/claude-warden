@@ -1,0 +1,8 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo do not run fdisk"
+  },
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}

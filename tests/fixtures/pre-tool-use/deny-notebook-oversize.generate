@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Generate a NotebookEdit payload >50KB
+SRC=$(head -c 51201 < /dev/zero | tr '\0' 'A')
+jq -n --arg s "$SRC" '{"tool_name":"NotebookEdit","tool_input":{"new_source":$s,"notebook_path":"/tmp/nb.ipynb"},"session_id":"test-session","transcript_path":"/tmp/main.jsonl"}'
