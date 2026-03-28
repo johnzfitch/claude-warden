@@ -15,9 +15,17 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/johnzfitch/claude-warden/collector/hooks"
 )
 
 func main() {
+	// Hook subcommand: warden-collector hook <name>
+	// Dispatches stdin to the named hook handler, writes result to stdout.
+	if len(os.Args) >= 3 && os.Args[1] == "hook" {
+		os.Exit(hooks.Dispatch(os.Args[2], os.Stdin, os.Stdout))
+	}
+
 	var (
 		dbPath   string
 		otlpAddr string

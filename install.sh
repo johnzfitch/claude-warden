@@ -26,11 +26,13 @@ MODE="symlink"
 DRY_RUN=false
 PROFILE=""
 MONITORING=""
+GO_HOOKS=false
 
 for arg in "$@"; do
     case "$arg" in
         --copy) MODE="copy" ;;
         --dry-run) DRY_RUN=true ;;
+        --go) GO_HOOKS=true ;;
         --monitoring) MONITORING="yes" ;;
         --no-monitoring) MONITORING="no" ;;
         --profile=*) PROFILE="${arg#--profile=}" ;;
@@ -45,6 +47,7 @@ for arg in "$@"; do
             echo "Options:"
             echo "  --copy            Copy files instead of symlinking (default: symlink)"
             echo "  --dry-run         Show what would be done without making changes"
+            echo "  --go              Use Go hook binary instead of bash scripts (faster)"
             echo "  --monitoring      Start optional Docker monitoring stack (Grafana, Loki, Prometheus, OTEL)"
             echo "  --no-monitoring   Skip monitoring stack setup"
             echo "  --profile NAME    Use a configuration profile:"
@@ -332,12 +335,21 @@ for hook in "${DEPRECATED_HOOKS[@]}"; do
     fi
 done
 
-info "Installing hooks ($MODE mode)..."
+if $GO_HOOKS; then
+    HOOK_SRC_DIR="$WARDEN_DIR/hooks/shims"
+    info "Installing hooks (Go shims)..."
+else
+    HOOK_SRC_DIR="$WARDEN_DIR/hooks"
+    info "Installing hooks ($MODE mode)..."
+fi
+
 for hook in "${HOOK_FILES[@]}"; do
-    SRC="$WARDEN_DIR/hooks/$hook"
+    SRC="$HOOK_SRC_DIR/$hook"
     DST="$HOOKS_DIR/$hook"
 
     if [[ ! -f "$SRC" ]]; then
+        # Go shims don't have 'observe' — skip silently
+        $GO_HOOKS && continue
         warn "Source hook not found: $SRC (skipping)"
         continue
     fi
@@ -346,7 +358,11 @@ for hook in "${HOOK_FILES[@]}"; do
         run rm -f "$DST"
     fi
 
-    if [[ "$MODE" == "symlink" ]]; then
+    if $GO_HOOKS; then
+        run cp "$SRC" "$DST"
+        run chmod +x "$DST"
+        dim "$hook (Go shim)"
+    elif [[ "$MODE" == "symlink" ]]; then
         run ln -s "$SRC" "$DST"
         dim "$hook -> $SRC"
     else

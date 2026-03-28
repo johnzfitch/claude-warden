@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+[[ -f "$HOME/.claude/.warden/warden.env" ]] && . "$HOME/.claude/.warden/warden.env"
+exec "$HOME/.local/bin/warden-collector" hook "$(basename "$0")" <&0

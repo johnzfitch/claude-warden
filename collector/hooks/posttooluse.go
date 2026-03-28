@@ -43,6 +43,7 @@ var (
 
 func init() {
 	hookHandlers["post-tool-use"] = handlePostToolUse
+	hookHandlers["mcp-output-compress"] = handlePostToolUse
 }
 
 type postToolUseContext struct {
