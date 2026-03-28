@@ -30,6 +30,13 @@ func handleSessionStart(input HookInput) ([]byte, int) {
 		_ = os.WriteFile(filepath.Join(sessionTimesDir(), sid+".start"), []byte(strconv.FormatInt(now.Unix(), 10)+"\n"), 0o644)
 		_ = os.WriteFile(filepath.Join(statuslineDir(), ".session_start-"+sid), []byte(formatSecondNanos(now)+"\n"), 0o644)
 
+		// Save model name for statusline (avoids stale cache from previous sessions)
+		if input.Model != "" {
+			modelFile := filepath.Join(statuslineDir(), "startup-model-"+sid)
+			_ = os.WriteFile(modelFile+".tmp", []byte(input.Model+"\n"), 0o644)
+			_ = os.Rename(modelFile+".tmp", modelFile)
+		}
+
 		if snapshot, err := exportBudgetJSON(); err == nil {
 			_ = os.MkdirAll(sessionBudgetDir(), 0o755)
 			_ = os.WriteFile(sessionBudgetSnapshotPath(sid), snapshot, 0o644)

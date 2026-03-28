@@ -35,6 +35,7 @@ func (r *HookToolResponse) UnmarshalJSON(data []byte) error {
 type HookInput struct {
 	SessionID      string           `json:"session_id,omitempty"`
 	TranscriptPath string           `json:"transcript_path,omitempty"`
+	Model          string           `json:"model,omitempty"`
 	ToolName       string           `json:"tool_name,omitempty"`
 	ToolInput      json.RawMessage  `json:"tool_input,omitempty"`
 	ToolResponse   HookToolResponse `json:"tool_response,omitempty"`
