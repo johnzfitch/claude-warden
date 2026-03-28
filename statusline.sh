@@ -500,20 +500,16 @@ if [ -n "$SESSION_ID" ] && [ "$PREV_SESSION" = "$SESSION_ID" ]; then
     SAME_SESSION=1
 fi
 
-# Model source priority:
-# 1. Collector model (authoritative per-session, populated from OTLP spans)
-# 2. Cached per-session model when Claude Code's polled statusline payload is idle/stale
-# 3. Session-start snapshot before the first OTLP span arrives
-# 4. Raw statusline JSON model as the last fallback
-if [ -n "$COLLECTOR_MODEL" ]; then
-    MODEL="$COLLECTOR_MODEL"
-elif [ -n "$STARTUP_MODEL" ]; then
-    # Startup snapshot is written fresh on every session-start — prefer it
-    # over stale cache (which may carry a model from a previous resume)
-    MODEL="$STARTUP_MODEL"
-elif [ "$SAME_SESSION" -eq 1 ] && [ -n "$PREV_MODEL" ] \
-    && [ "$TOTAL" -eq "$PREV_TOTAL" ] && [ "$COST_USD" = "$PREV_COST_USD" ]; then
-    MODEL="$PREV_MODEL"
+# Model source: Claude Code's statusline JSON is authoritative (refreshed every poll).
+# Only fall back to collector/cache when the payload is empty (e.g. between API calls).
+if [ -z "$MODEL" ] || [ "$MODEL" = "Unknown" ]; then
+    if [ -n "$COLLECTOR_MODEL" ]; then
+        MODEL="$COLLECTOR_MODEL"
+    elif [ -n "$STARTUP_MODEL" ]; then
+        MODEL="$STARTUP_MODEL"
+    elif [ "$SAME_SESSION" -eq 1 ] && [ -n "$PREV_MODEL" ]; then
+        MODEL="$PREV_MODEL"
+    fi
 fi
 
 # Token reset and context clear only valid within the same session.
