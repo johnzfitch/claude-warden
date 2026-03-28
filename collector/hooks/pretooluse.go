@@ -27,10 +27,17 @@ var (
 	homeRecursivePatternRE = regexp.MustCompile(`^(/home/[^/]+|~|/Users/[^/]+|/root)/\*\*`)
 	localhostWebRE         = regexp.MustCompile(`^https?://(localhost|127\.[0-9]+\.[0-9]+\.[0-9]+|0\.0\.0\.0|\[::1\])`)
 	privateWebRE           = regexp.MustCompile(`^https?://(10\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+|192\.168\.[0-9]+)\.[0-9]+`)
+	// Disk tools with sudo/doas/env prefix and absolute path support
+	diskToolRE             = regexp.MustCompile(`(^|[;&|]\s*)((sudo|doas)\s+|(env\s+[A-Za-z_]+=[^\s]+\s+))*(/[^\s]*/)?` +
+		`(mkfs|wipefs|fdisk|gdisk|parted|cfdisk|sfdisk|blockdev|hdparm)([\s.]|$)`)
 	forkBombRE             = regexp.MustCompile(`:\(\)[[:space:]]*\{[[:space:]]*:\|:[[:space:]]*\&[[:space:]]*\}`)
-	rceDirectPipeRE        = regexp.MustCompile(`\|[[:space:]]*(bash|sh|zsh|dash|python[23]?|perl|ruby|node)([[:space:];]|$)`)
-	rcePathPipeRE          = regexp.MustCompile(`\|[[:space:]]*/[^[:space:]]*/+(bash|sh|zsh|dash|python[23]?|perl|ruby|node)([[:space:];]|$)`)
-	rceProcSubRE           = regexp.MustCompile(`(bash|sh|zsh|dash|python[23]?|perl|ruby|node)[[:space:]]+<\((curl|wget)`)
+	rceDirectPipeRE   = regexp.MustCompile(`\|[[:space:]]*(bash|sh|zsh|dash|python[23]?|perl|ruby|node)([[:space:];]|$)`)
+	rcePathPipeRE     = regexp.MustCompile(`\|[[:space:]]*/[^[:space:]]*/+(bash|sh|zsh|dash|python[23]?|perl|ruby|node)([[:space:];]|$)`)
+	rceProcSubRE      = regexp.MustCompile(`(bash|sh|zsh|dash|python[23]?|perl|ruby|node)[[:space:]]+<\((curl|wget)`)
+	rceEvalRE         = regexp.MustCompile(`eval[[:space:]]+("?\$\(|'?\x60).*(curl|wget)`)
+	rceSourceRE       = regexp.MustCompile(`(source|[.])[[:space:]]+<\((curl|wget)`)
+	rceInterpCRE      = regexp.MustCompile(`((bash|sh|zsh|dash|python[23]?|perl|ruby|node)|/[^[:space:]]*/+(bash|sh|zsh|dash|python[23]?|perl|ruby|node))[[:space:]]+-c[[:space:]]+("?\$\(|'?\x60).*(curl|wget)`)
+	rceHerestringRE   = regexp.MustCompile(`((bash|sh|zsh|dash|python[23]?|perl|ruby|node)|/[^[:space:]]*/+(bash|sh|zsh|dash|python[23]?|perl|ruby|node))[[:space:]]+<<<[[:space:]]*("?\$\(|'?\x60).*(curl|wget)`)
 	envCmdRE               = regexp.MustCompile(`(^|[;&|])[[:space:]]*(env|printenv)($|[[:space:];|&])`)
 	filteredEnvPipeRE      = regexp.MustCompile(`\|[[:space:]]*(grep|awk|sed|head|tail|wc)`)
 	printenvSpecificRE     = regexp.MustCompile(`printenv[[:space:]]+[A-Za-z_]`)
@@ -382,10 +389,11 @@ func (c *preToolUseContext) enforceSubagentBudget() ([]byte, bool) {
 }
 
 func (c *preToolUseContext) checkDestructive() ([]byte, bool) {
+	// Content-position patterns (safe from false positives in grep args)
 	patterns := []string{
 		"rm -rf /", "rm -fr /", "rm -rf ~", "rm -fr ~", "rm -rf .", "rm -fr .",
 		"rm -rf *", "rm -fr *", "rm --recursive --force", "rm --force --recursive",
-		"rm -rf --no-preserve-root", "mkfs", "dd if=", "dd of=/dev/", "> /dev/sd",
+		"rm -rf --no-preserve-root", "dd if=", "dd of=/dev/", "> /dev/sd",
 		"> /dev/nvme", "chmod -R 777 /", "chown -R", "chown --recursive",
 	}
 	for _, p := range patterns {
@@ -393,6 +401,11 @@ func (c *preToolUseContext) checkDestructive() ([]byte, bool) {
 			c.emitBlocked("destructive_cmd", 0, "")
 			return c.deny("Blocked destructive command"), true
 		}
+	}
+	// Disk tools: command-position regex with sudo/doas/env prefix + absolute path support
+	if diskToolRE.MatchString(c.normCommand) {
+		c.emitBlocked("destructive_cmd", 0, "")
+		return c.deny("Blocked destructive command"), true
 	}
 	return nil, false
 }
@@ -411,6 +424,22 @@ func (c *preToolUseContext) checkRCE() ([]byte, bool) {
 	}
 	if rceDirectPipeRE.MatchString(c.normCommand) || rcePathPipeRE.MatchString(c.normCommand) || rceProcSubRE.MatchString(c.normCommand) {
 		c.emitBlocked("rce_pipe", 0, "")
+		return c.deny("Blocked remote code execution"), true
+	}
+	if rceEvalRE.MatchString(c.normCommand) {
+		c.emitBlocked("rce_eval", 0, "")
+		return c.deny("Blocked remote code execution"), true
+	}
+	if rceSourceRE.MatchString(c.normCommand) {
+		c.emitBlocked("rce_source", 0, "")
+		return c.deny("Blocked remote code execution"), true
+	}
+	if rceInterpCRE.MatchString(c.normCommand) {
+		c.emitBlocked("rce_exec_c", 0, "")
+		return c.deny("Blocked remote code execution"), true
+	}
+	if rceHerestringRE.MatchString(c.normCommand) {
+		c.emitBlocked("rce_herestring", 0, "")
 		return c.deny("Blocked remote code execution"), true
 	}
 	return nil, false
@@ -468,15 +497,13 @@ func (c *preToolUseContext) checkBashSSRF() ([]byte, bool) {
 		c.emitBlocked("ssrf_metadata_bash", 0, "")
 		return c.deny(fmt.Sprintf("Network boundary violation: '%s' targets a cloud metadata endpoint. These addresses expose instance credentials and are never safe to query from model context.", truncateString(c.command, 120))), true
 	}
-	if localhostBashRE.MatchString(lower) {
-		c.emitBlocked("ssrf_localhost_bash", 0, "")
-		return c.deny(fmt.Sprintf("Network boundary violation: '%s' targets localhost/loopback. If you need local service data, ask the user to provide it or check specific log files.", truncateString(c.command, 120))), true
-	}
+	// Note: localhost via Bash curl is ALLOWED (used for collector, Ollama, etc.)
+	// Only WebFetch/WebSearch block localhost (in handleWebTool).
 	if privateBashRE.MatchString(lower) {
 		c.emitBlocked("ssrf_private_bash", 0, "")
 		return c.deny(fmt.Sprintf("Network boundary violation: '%s' targets a private network address. Internal network access via curl/wget is not allowed. Ask the user to provide the data or check specific files.", truncateString(c.command, 120))), true
 	}
-	if nonLocalhostHTTPURL(lower) && (curlDataUploadRE.MatchString(c.command) || curlWriteMethodRE.MatchString(strings.ToUpper(c.command))) {
+	if !localhostBashRE.MatchString(lower) && (curlDataUploadRE.MatchString(c.command) || curlWriteMethodRE.MatchString(strings.ToUpper(c.command))) {
 		c.emitBlocked("data_exfil_curl", 0, "")
 		return c.deny(fmt.Sprintf("Data upload blocked: '%s' sends data to a remote server. Upload flags and write methods are restricted for curl/wget.", truncateString(c.command, 120))), true
 	}
@@ -511,9 +538,45 @@ func (c *preToolUseContext) checkSSH() ([]byte, bool) {
 }
 
 func (c *preToolUseContext) checkSettingsTampering() ([]byte, bool) {
-	if settingsRefRE.MatchString(c.command) && (settingsTamperCmdRE.MatchString(c.command) || settingsRedirectRE.MatchString(c.command)) {
+	if !settingsRefRE.MatchString(c.command) {
+		return nil, false
+	}
+	// Redirects and in-place modifiers: always block
+	if settingsRedirectRE.MatchString(c.command) {
 		c.emitBlocked("settings_tamper_bash", 0, "")
-		return c.deny(fmt.Sprintf("Sandbox violation: '%s' modifies Claude settings or hook files. These files are protected. Reading is allowed but writes are blocked.", truncateString(c.command, 100))), true
+		return c.deny(fmt.Sprintf("Sandbox violation: '%s' modifies Claude settings or hook files. These files are protected.", truncateString(c.command, 100))), true
+	}
+	if regexp.MustCompile(`(tee|sed\s+-i)\s`).MatchString(c.command) {
+		c.emitBlocked("settings_tamper_bash", 0, "")
+		return c.deny(fmt.Sprintf("Sandbox violation: '%s' modifies Claude settings or hook files. These files are protected.", truncateString(c.command, 100))), true
+	}
+	// cp/mv/ln: allow if settings path is clearly the source (backup/read)
+	if m := regexp.MustCompile(`(cp|mv|ln)\s`).FindString(c.command); m != "" {
+		cmd := strings.TrimSpace(m)
+		// Extract the portion after the command
+		idx := strings.Index(c.command, m)
+		portion := c.command[idx+len(m):]
+		// Parse non-flag args, stop at shell metacharacters
+		var args []string
+		for _, w := range strings.Fields(portion) {
+			if strings.HasPrefix(w, "-") {
+				continue
+			}
+			if strings.ContainsAny(w, ";&|>") {
+				break
+			}
+			args = append(args, w)
+		}
+		if len(args) == 2 {
+			src, dest := args[0], args[1]
+			if settingsRefRE.MatchString(src) && !settingsRefRE.MatchString(dest) {
+				// Source is settings, dest is not — backup/read, allow
+				return nil, false
+			}
+		}
+		_ = cmd
+		c.emitBlocked("settings_tamper_bash", 0, "")
+		return c.deny(fmt.Sprintf("Sandbox violation: '%s' writes to Claude settings or hook files.", truncateString(c.command, 100))), true
 	}
 	return nil, false
 }
