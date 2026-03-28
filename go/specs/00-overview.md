@@ -258,6 +258,9 @@ Hooks read thresholds via env vars set in `~/.claude/.warden/warden.env`:
 | `WARDEN_NOTEBOOK_MAX_BYTES` | 25600 | pre-tool-use |
 | `WARDEN_SUBAGENT_READ_BYTES` | 10240 | post-tool-use |
 | `WARDEN_READ_GUARD_MAX_MB` | 2 | read-guard |
+| `WARDEN_DENSE_MIN_BYTES` | 8192 | read-guard |
+| `WARDEN_DENSE_BPL_THRESHOLD` | 500 | read-guard |
+| `WARDEN_DENSE_LINE_CAP` | 100 | read-guard |
 | `WARDEN_MCP_THRESHOLD_BYTES` | 10500 | mcp-output-compress |
 
 Read these via `os.Getenv` with fallback defaults. Do NOT read warden.env file directly.

@@ -164,6 +164,9 @@ All thresholds are configurable via `config/defaults.json`, profiles, or `config
 | Subagent read cap | `warden.subagent_read_bytes` | 10KB | 6KB |
 | Output suppression | `warden.suppress_bytes` | 512KB | 256KB |
 | Read file size limit | `warden.read_guard_max_mb` | 2MB | 1MB |
+| Dense file min bytes | `warden.dense_min_bytes` | 8KB | 8KB |
+| Dense bytes/line threshold | `warden.dense_bpl_threshold` | 500 | 500 |
+| Dense file line cap | `warden.dense_line_cap` | 100 | 100 |
 | Write max size | `warden.write_max_bytes` | 100KB | 50KB |
 | Edit max size | `warden.edit_max_bytes` | 50KB | 25KB |
 | Subagent call limits | `warden.subagent_call_limits.*` | 15&ndash;40 | 10&ndash;25 |
@@ -419,7 +422,7 @@ cat demo/mock-inputs/post-tool-use-reminder-bash.json | hooks/post-tool-use | jq
 <details>
 <summary>Read is being blocked unexpectedly</summary>
 
-`read-guard` blocks bundled/generated patterns (`node_modules/`, `dist/`, minified JS) and files larger than 2MB (configurable via `warden.read_guard_max_mb`). Use bounded reads or find the source file.
+`read-guard` has three tiers: (1) blocks bundled/generated patterns (`node_modules/`, `dist/`, minified JS), (2) blocks files larger than 2MB (`warden.read_guard_max_mb`), and (3) reroutes dense/minified files (>500 bytes/line avg) by capping the Read to 100 lines via `updatedInput`. Dense reroutes are not blocks &mdash; the Read succeeds with a bounded `limit` and guidance in `additionalContext`. Configure with `warden.dense_min_bytes`, `warden.dense_bpl_threshold`, `warden.dense_line_cap`.
 
 </details>
 

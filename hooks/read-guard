@@ -46,6 +46,67 @@ if [[ -f "$FILE_PATH" ]]; then
         echo "Blocked: '$FILE_PATH' is ${SIZE_MB}MB (max ${MAX_SIZE_MB}MB)" >&2
         exit 2
     fi
+
+    # Minified/dense content detection: high bytes-per-line ratio.
+    # A normal source file averages 30-60 bytes/line. Minified JS, giant JSONL,
+    # single-line JSON, or bundled CSS average 500+ bytes/line.
+    # Only check files >8KB (small files are cheap regardless of density).
+    # Instead of blocking, reroute: cap the Read to 100 lines via updatedInput
+    # so the model gets a useful preview without blowing the context window.
+    WARDEN_DENSE_MIN_BYTES=${WARDEN_DENSE_MIN_BYTES:-8192}
+    WARDEN_DENSE_BPL_THRESHOLD=${WARDEN_DENSE_BPL_THRESHOLD:-500}
+    WARDEN_DENSE_LINE_CAP=${WARDEN_DENSE_LINE_CAP:-100}
+    if (( FILE_SIZE > WARDEN_DENSE_MIN_BYTES )); then
+        LINE_COUNT=$(wc -l < "$FILE_PATH" 2>/dev/null) || LINE_COUNT=0
+        LINE_COUNT=${LINE_COUNT##* }  # strip leading whitespace (macOS wc)
+        [[ "$LINE_COUNT" =~ ^[0-9]+$ ]] || LINE_COUNT=0
+        IS_DENSE=false
+        if (( LINE_COUNT > 0 )); then
+            BPL=$(( FILE_SIZE / LINE_COUNT ))
+            (( BPL > WARDEN_DENSE_BPL_THRESHOLD )) && IS_DENSE=true
+        elif (( FILE_SIZE > WARDEN_DENSE_MIN_BYTES )); then
+            # 0 newlines but >8KB = single-line blob
+            BPL="$FILE_SIZE"
+            IS_DENSE=true
+        fi
+        if [[ "$IS_DENSE" == true ]]; then
+            SIZE_KB=$(( FILE_SIZE / 1024 ))
+            WARDEN_TOOL_NAME="Read" WARDEN_COMMAND="$FILE_PATH" \
+                _warden_emit_event "allowed" "$FILE_SIZE" 0 "read_dense_reroute"
+            # Extract existing offset from the tool input (default 0)
+            IFS=$'\t' read -r EXISTING_OFFSET EXISTING_LIMIT < <(
+                printf '%s' "$WARDEN_INPUT" | jq -r '[
+                    (.tool_input.offset // 0),
+                    (.tool_input.limit // 0)
+                ] | @tsv' 2>/dev/null
+            ) || { EXISTING_OFFSET=0; EXISTING_LIMIT=0; }
+            [[ "$EXISTING_OFFSET" =~ ^[0-9]+$ ]] || EXISTING_OFFSET=0
+            [[ "$EXISTING_LIMIT" =~ ^[0-9]+$ ]] || EXISTING_LIMIT=0
+            # If the model already set a limit, respect it (it knows what it's doing)
+            if (( EXISTING_LIMIT > 0 && EXISTING_LIMIT <= WARDEN_DENSE_LINE_CAP )); then
+                exit 0
+            fi
+            GUIDANCE="[warden] Dense file: ${SIZE_KB}KB, ${LINE_COUNT} lines, ~${BPL} bytes/line. Capped to ${WARDEN_DENSE_LINE_CAP} lines. Use offset+limit to page through, or Bash jq/head -c for structured extraction."
+            jq -n \
+                --arg path "$FILE_PATH" \
+                --argjson offset "$EXISTING_OFFSET" \
+                --argjson limit "$WARDEN_DENSE_LINE_CAP" \
+                --arg ctx "$GUIDANCE" \
+                '{
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "allow",
+                        "updatedInput": {
+                            "file_path": $path,
+                            "offset": $offset,
+                            "limit": $limit
+                        },
+                        "additionalContext": $ctx
+                    }
+                }'
+            exit 0
+        fi
+    fi
 fi
 
 exit 0

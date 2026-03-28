@@ -81,6 +81,8 @@ type EditToolInput struct {
 
 type ReadToolInput struct {
 	FilePath string `json:"file_path"`
+	Offset   int    `json:"offset,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
 }
 
 type GlobToolInput struct {
@@ -111,7 +113,10 @@ type hookSpecificOutput struct {
 }
 
 type updatedInput struct {
-	Command string `json:"command"`
+	Command  string `json:"command,omitempty"`
+	FilePath string `json:"file_path,omitempty"`
+	Offset   int    `json:"offset,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
 }
 
 type permissionDecision struct {
@@ -156,6 +161,19 @@ func QuietOverride(modifiedCmd string) []byte {
 		HookEventName:      "PreToolUse",
 		PermissionDecision: "allow",
 		UpdatedInput:       &updatedInput{Command: modifiedCmd},
+	}})
+}
+
+func ReadReroute(filePath string, offset, limit int, ctx string) []byte {
+	return mustJSON(hookEnvelope{HookSpecificOutput: hookSpecificOutput{
+		HookEventName:      "PreToolUse",
+		PermissionDecision: "allow",
+		UpdatedInput: &updatedInput{
+			FilePath: filePath,
+			Offset:   offset,
+			Limit:    limit,
+		},
+		AdditionalContext: ctx,
 	}})
 }
 

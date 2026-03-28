@@ -52,7 +52,10 @@ These are set in `config/defaults.json` under `"warden"` and exported as env var
 | `WARDEN_WRITE_MAX_BYTES` | `102400` (100KB) | Max bytes for a single Write tool call. Blocks oversized generated files. |
 | `WARDEN_EDIT_MAX_BYTES` | `51200` (50KB) | Max bytes for a single Edit tool call. |
 | `WARDEN_NOTEBOOK_MAX_BYTES` | `51200` (50KB) | Max bytes for a single NotebookEdit tool call. |
-| `WARDEN_READ_GUARD_MAX_MB` | `2` | Max file size (MB) that Read will pass through. Larger files get structural extraction. |
+| `WARDEN_READ_GUARD_MAX_MB` | `2` | Max file size (MB) that Read will pass through. Larger files are blocked. |
+| `WARDEN_DENSE_MIN_BYTES` | `8192` | Min file size to check bytes-per-line density. Files below this always pass through. |
+| `WARDEN_DENSE_BPL_THRESHOLD` | `500` | Bytes/line above which a file is considered dense/minified. Normal source is 30-60. |
+| `WARDEN_DENSE_LINE_CAP` | `100` | Line limit injected via `updatedInput` when a dense file is rerouted. |
 
 ---
 
