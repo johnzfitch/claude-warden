@@ -72,9 +72,9 @@ CONSTRAINTS:
   # Run tests after each spec to catch regressions early
   echo "--- Running tests ---"
   if (cd "$WORKDIR/collector" && go test ./hooks/... 2>&1 | tail -5); then
-    ((PASS++))
+    PASS=$((PASS + 1))
   else
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
     echo "WARNING: tests failed after $spec"
   fi
   echo ""
