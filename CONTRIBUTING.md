@@ -100,6 +100,16 @@ Guidelines:
 - **Locking**: use `_warden_with_lock LOCKFILE FUNC [ARGS...]` for read-modify-write operations on shared state files. Uses fd-based `flock` on Linux/WSL (kernel-level, race-free) with `mkdir` fallback on macOS. Lock files use `.lock` extension.
 - **Per-invocation state**: when pre-tool-use writes state for post-tool-use to consume, use per-invocation filenames (e.g., `.quiet-override-${TOOL}-$$`) to prevent races when multiple tool calls overlap. Post-tool-use finds the most recent file by mtime.
 
+### Known Claude Code artifacts
+
+Claude Code can write debug/telemetry files into the working directory that are easy to commit accidentally via `git add .`:
+
+| File | Cause | Notes |
+|---|---|---|
+| `1` | `CLAUDE_CODE_FRAME_TIMING_LOG=1` | Frame timing log; can exceed 170 K lines. See commit [`e00d6d7`](https://github.com/johnzfitch/claude-warden/commit/e00d6d7b74fdf9f650ca6cad6e23ee850cc791d9). |
+
+All known artifacts are listed in `.gitignore`. If you discover a new one, add an ignore rule **and** a check in `tests/run.sh` (look for the `[checks] no accidental frame-timing file` block).
+
 ## Pull Requests
 
 Please include:

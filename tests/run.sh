@@ -37,6 +37,13 @@ bash -n "$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/statusline.sh
 echo "[checks] jq (json validity)"
 jq . "$ROOT_DIR/settings.hooks.json" >/dev/null
 
+echo "[checks] no accidental frame-timing file"
+# CLAUDE_CODE_FRAME_TIMING_LOG=1 writes a file named "1" to $CWD.
+# If it ends up tracked, the repo balloons (170K lines).  See e00d6d7b74fd.
+if [[ -f "$ROOT_DIR/1" ]]; then
+  fail "Accidental file '1' found in repo root (CLAUDE_CODE_FRAME_TIMING_LOG artifact). Remove it and check .gitignore."
+fi
+
 FIXTURES=()
 if command -v git >/dev/null 2>&1 && [[ -d "$ROOT_DIR/.git" ]]; then
   while IFS= read -r f; do
