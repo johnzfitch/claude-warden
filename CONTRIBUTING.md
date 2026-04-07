@@ -106,7 +106,7 @@ Claude Code can write debug/telemetry files into the working directory that are 
 
 | File | Cause | Notes |
 |---|---|---|
-| `1` | `CLAUDE_CODE_FRAME_TIMING_LOG=1` | Frame timing log; can exceed 170 K lines. See commit [`e00d6d7`](https://github.com/johnzfitch/claude-warden/commit/e00d6d7b74fdf9f650ca6cad6e23ee850cc791d9). |
+| `1` | `CLAUDE_CODE_FRAME_TIMING_LOG=1` | Frame timing log; can exceed 170K lines. See commit [`e00d6d7b74fd`](https://github.com/johnzfitch/claude-warden/commit/e00d6d7b74fdf9f650ca6cad6e23ee850cc791d9). |
 
 All known artifacts are listed in `.gitignore`. If you discover a new one, add an ignore rule **and** a check in `tests/run.sh` (look for the `[checks] no accidental frame-timing file` block).
 
