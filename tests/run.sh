@@ -339,15 +339,15 @@ assert_exit 0 "$rc" "pre-tool-use WebFetch private"
 assert_structured_deny "$out" "pre-tool-use WebFetch private"
 rm -f "$DENY_FIXTURE"
 
-echo "[tests] pre-tool-use (security: WebFetch localhost allowed — user decides via PermissionRequest)"
-ALLOW_FIXTURE="$(mktemp)"
-cat > "$ALLOW_FIXTURE" <<'JSON'
+echo "[tests] pre-tool-use (security: WebFetch localhost blocked)"
+DENY_FIXTURE="$(mktemp)"
+cat > "$DENY_FIXTURE" <<'JSON'
 {"tool_name":"WebFetch","tool_input":{"url":"http://localhost:3000/api/secrets"},"session_id":"demo-session","transcript_path":"/tmp/main.jsonl"}
 JSON
-IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$ALLOW_FIXTURE")
+IFS=$'\t' read -r rc out err < <(run_hook pre-tool-use "$DENY_FIXTURE")
 assert_exit 0 "$rc" "pre-tool-use WebFetch localhost"
-assert_stdout_json_has "$out" '.suppressOutput == true' "pre-tool-use WebFetch localhost"
-rm -f "$ALLOW_FIXTURE"
+assert_structured_deny "$out" "pre-tool-use WebFetch localhost"
+rm -f "$DENY_FIXTURE"
 
 echo "[tests] pre-tool-use (security: Write to settings blocked)"
 DENY_FIXTURE="$(mktemp)"
@@ -418,8 +418,8 @@ echo "[tests] read-guard (blocking)"
 for f in read-guard-bundle.json read-guard-dist.json; do
   fixture="$ROOT_DIR/demo/mock-inputs/$f"
   IFS=$'\t' read -r rc out err < <(run_hook read-guard "$fixture")
-  assert_exit 2 "$rc" "read-guard $f"
-  assert_stderr_contains "$err" "Blocked:" "read-guard $f"
+  assert_exit 0 "$rc" "read-guard $f"
+  assert_structured_deny "$out" "read-guard $f"
 done
 
 echo "[tests] post-tool-use (basic behavior)"

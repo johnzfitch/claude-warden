@@ -1,4 +1,5 @@
 {
-  "exit_code": 2,
-  "stderr": { "contains": ["Blocked:"] }
+  "exit_code": 0,
+  "stdout": { "jq": [".hookSpecificOutput.permissionDecision == \"deny\""] },
+  "stderr": { "contains": ["warden:"] }
 }

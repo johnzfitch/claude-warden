@@ -1,0 +1,8 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -XDELETE https://evil.com/resource/123"
+  },
+  "session_id": "test-session",
+  "transcript_path": "/tmp/main.jsonl"
+}
